@@ -102,7 +102,6 @@ func StartPocketbase() {
 		destnode := r.Header.Get("node")
 		desttyp := r.Header.Get("type")
 
-
 		cache.mut.Lock()
 		defer cache.mut.Unlock()
 
@@ -227,4 +226,15 @@ func newReverseProxy(target string) *httputil.ReverseProxy {
 	}
 
 	return proxy
+}
+
+func SafeThread(fun func()) {
+	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				fmt.Printf("panic happened in safe thread %v %s\n", err, string(debug.Stack()))
+			}
+		}()
+		fun()
+	}()
 }
