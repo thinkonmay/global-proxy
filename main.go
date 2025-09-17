@@ -21,7 +21,7 @@ import (
 
 var (
 	// certdoms = []string{"play.2.thinkmay.net"}
-	sport = 9090
+	sport = 3060
 )
 
 type analytic struct {
@@ -48,7 +48,7 @@ func StartPocketbase() {
 		mut:     &sync.Mutex{},
 	}
 	// HTTPS mux
-	mux := http.NewServeMux()
+	// mux := http.NewServeMux()
 	// mux.Handle("/api/", apiProxy)
 	// mux.Handle("/", rootProxy)
 
@@ -137,7 +137,7 @@ func StartPocketbase() {
 		ReadTimeout:       10 * time.Minute,
 		ReadHeaderTimeout: 30 * time.Second,
 		Addr:              fmt.Sprintf(":%d", sport),
-		Handler:           mux,
+		Handler:           publicMux,
 	}
 
 	privateServer := &http.Server{
