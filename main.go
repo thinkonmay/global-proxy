@@ -98,32 +98,26 @@ func StartPocketbase() {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		type res struct {
-			Type     string `json:"type"`
-			NodeName string `json:"nodeName"`
-			Data     string `json:"data"`
-		}
-		result := []res{}
+
+		destnode := r.Header.Get("node")
+		desttyp := r.Header.Get("type")
+
 
 		cache.mut.Lock()
-		for nname, node := range cache.nodeMap {
-			node.mut.Lock()
-			for typ, val := range node.typeMap {
-				if time.Since(val.timestamp) <= 5*time.Minute {
-					result = append(result, res{
-						Type:     typ,
-						Data:     string(val.data),
-						NodeName: nname,
-					})
-				}
-			}
-			node.mut.Unlock()
-		}
-		cache.mut.Unlock()
+		defer cache.mut.Unlock()
 
-		dataJSON, _ := json.Marshal(result)
+		nodeData, found := cache.nodeMap[destnode]
+		if !found {
+			return
+		}
+
+		nodeData.mut.Lock()
+		defer nodeData.mut.Unlock()
+
+		dataJSON, _ := json.Marshal(nodeData.typeMap[desttyp])
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(dataJSON)
+		return
 	})
 
 	server := &http.Server{
