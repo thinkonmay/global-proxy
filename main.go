@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,14 +17,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"golang.org/x/crypto/acme"
-	"golang.org/x/crypto/acme/autocert"
 )
 
 var (
-	certdoms = []string{"play.2.thinkmay.net"}
-	sport    = 446
+	// certdoms = []string{"play.2.thinkmay.net"}
+	sport = 9090
 )
 
 type analytic struct {
@@ -44,8 +40,8 @@ type analyticCache struct {
 
 func StartPocketbase() {
 	// Reverse proxies
-	apiProxy := newReverseProxy("http://localhost:3001")
-	rootProxy := newReverseProxy("http://localhost:3002")
+	// apiProxy := newReverseProxy("http://localhost:3001")
+	// rootProxy := newReverseProxy("http://localhost:3002")
 
 	cache := analyticCache{
 		nodeMap: map[string]*nodeCache{},
@@ -53,14 +49,14 @@ func StartPocketbase() {
 	}
 	// HTTPS mux
 	mux := http.NewServeMux()
-	mux.Handle("/api/", apiProxy)
-	mux.Handle("/", rootProxy)
+	// mux.Handle("/api/", apiProxy)
+	// mux.Handle("/", rootProxy)
 
-	certManager := &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
-		HostPolicy: autocert.HostWhitelist(certdoms...),
-	}
+	// certManager := &autocert.Manager{
+	// 	Prompt:     autocert.AcceptTOS,
+	// 	Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
+	// 	HostPolicy: autocert.HostWhitelist(certdoms...),
+	// }
 	// base request context used for cancelling long running requests
 	// like the SSE connections
 	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
@@ -132,11 +128,11 @@ func StartPocketbase() {
 
 	server := &http.Server{
 		BaseContext: func(l net.Listener) context.Context { return baseCtx },
-		TLSConfig: &tls.Config{
-			MinVersion:     tls.VersionTLS12,
-			GetCertificate: certManager.GetCertificate,
-			NextProtos:     []string{acme.ALPNProto},
-		},
+		// TLSConfig: &tls.Config{
+		// 	MinVersion:     tls.VersionTLS12,
+		// 	GetCertificate: certManager.GetCertificate,
+		// 	NextProtos:     []string{acme.ALPNProto},
+		// },
 
 		ReadTimeout:       10 * time.Minute,
 		ReadHeaderTimeout: 30 * time.Second,
