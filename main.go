@@ -151,7 +151,7 @@ func StartPocketbase() {
 		}
 	}()
 
-	panic(server.ListenAndServeTLS("", ""))
+	panic(server.ListenAndServe())
 }
 
 func main() {
