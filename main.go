@@ -46,11 +46,21 @@ type analyticCache struct {
 }
 
 func init() {
-	sport = *flag.Int("sport", 445, "secure global port")
-	sport = *flag.Int("qport", 3000, "unsecure query port")
+	psport := flag.Int("sport", 445, "secure global port")
+	pqport := flag.Int("qport", 3000, "unsecure query port")
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
-	analyticCred = *flag.String("cred", "", "report analytics credential")
+	panalyticCred := flag.String("cred", "", "report analytics credential")
 	flag.Parse()
+
+	if psport != nil {
+		sport = *psport
+	}
+	if pqport != nil {
+		qport = *pqport
+	}
+	if panalyticCred != nil {
+		analyticCred = *panalyticCred
+	}
 }
 
 func main() {
@@ -65,7 +75,7 @@ func main() {
 	case err := <-stop1:
 		fmt.Printf("receive error %v from supabase proxy\n", err)
 	case err := <-stop2:
-		fmt.Printf("receive error %v from supabase proxy\n", err)
+		fmt.Printf("receive error %v from query analytics\n", err)
 	case sig := <-sigchan:
 		fmt.Printf("receive signal %s from os\n", sig.String())
 	}
@@ -73,6 +83,7 @@ func main() {
 
 func StartGlobalProxy() <-chan error {
 	if len(certdoms) == 0 {
+		fmt.Println("no certdoms provided, don't start global proxy")
 		return make(<-chan error)
 	}
 
@@ -89,7 +100,6 @@ func StartGlobalProxy() <-chan error {
 	// base request context used for cancelling long running requests
 	// like the SSE connections
 	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
-	defer cancelBaseCtx()
 
 	server := &http.Server{
 		BaseContext: func(l net.Listener) context.Context { return baseCtx },
@@ -106,7 +116,9 @@ func StartGlobalProxy() <-chan error {
 	}
 	res := make(chan error)
 	SafeThread(func() {
+		fmt.Printf("global proxy listening on port %d\n",sport)
 		res <- server.ListenAndServe()
+		cancelBaseCtx()
 	})
 	return res
 }
@@ -171,6 +183,7 @@ func StartQueryAnalytics() <-chan error {
 
 	res := make(chan error)
 	SafeThread(func() {
+		fmt.Printf("query analytics listening on port %d\n",qport)
 		res <- privateServer.ListenAndServe()
 	})
 	return res
