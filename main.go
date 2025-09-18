@@ -3,18 +3,13 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/signal"
-	"runtime/debug"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,15 +19,16 @@ import (
 )
 
 var (
-	certdoms = []string{}
-	sport    = 0
-	rport    = 0
-	qport    = 0
-	cache    = analyticCache{
+	certdoms     = StringSlice{}
+	sport, qport = 0, 0
+	analyticCred = ""
+	cache        = analyticCache{
 		nodeMap: make(map[string]*nodeCache),
 		mut:     &sync.Mutex{},
 	}
-	credentialAnalytics = ""
+
+	publicMux  = http.NewServeMux()
+	privateMux = http.NewServeMux()
 )
 
 type analytic struct {
@@ -49,145 +45,75 @@ type analyticCache struct {
 	mut     *sync.Mutex
 }
 
-func StartPocketbase() {
-	mux := http.NewServeMux()
-	if len(certdoms) > 0 {
-		apiProxy := newReverseProxy("http://localhost:3001")
-		rootProxy := newReverseProxy("http://localhost:3002")
-		mux.Handle("/api/", apiProxy)
-		mux.Handle("/", rootProxy)
-		// Reverse proxies
-		rportAnalytics := newReverseProxy("http://localhost:3050")
-		// // HTTPS mux
-		mux.Handle("/report", rportAnalytics)
-
-		certManager := &autocert.Manager{
-			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
-			HostPolicy: autocert.HostWhitelist(certdoms...),
-		}
-		// base request context used for cancelling long running requests
-		// like the SSE connections
-		baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
-		defer cancelBaseCtx()
-
-		server := &http.Server{
-			BaseContext: func(l net.Listener) context.Context { return baseCtx },
-			TLSConfig: &tls.Config{
-				MinVersion:     tls.VersionTLS12,
-				GetCertificate: certManager.GetCertificate,
-				NextProtos:     []string{acme.ALPNProto},
-			},
-
-			ReadTimeout:       10 * time.Minute,
-			ReadHeaderTimeout: 30 * time.Second,
-			Addr:              fmt.Sprintf(":%d", sport),
-			Handler:           mux,
-		}
-		panic(server.ListenAndServe())
-	}
+func init() {
+	sport = *flag.Int("sport", 445, "secure global port")
+	sport = *flag.Int("qport", 3000, "unsecure query port")
+	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
+	analyticCred = *flag.String("cred", "", "report analytics credential")
+	flag.Parse()
 }
 
 func main() {
-	args := os.Args
-	var err error
-	if sport, err = strconv.Atoi(args[1]); err != nil {
-		return
-	} else if qport, err = strconv.Atoi(args[2]); err != nil {
-		return
-	} else if rport, err = strconv.Atoi(args[3]); err != nil {
-		return
-	} else if credentialAnalytics = args[4]; len(credentialAnalytics) == 0 {
-		return
-	} else {
-		certdoms = args[5:]
-		SafeThread(StartPocketbase)
-		SafeThread(StartQueryAnalytics)
-		SafeThread(StartReportAnalytics)
+	PrepareReportHandler()
+	stop1 := StartGlobalProxy()
+	stop2 := StartQueryAnalytics()
 
-		sigchan := make(chan os.Signal, 16)
-		signal.Notify(sigchan, syscall.SIGTERM, os.Interrupt)
-		sig := <-sigchan
+	sigchan := make(chan os.Signal, 16)
+	signal.Notify(sigchan, syscall.SIGTERM, os.Interrupt)
 
+	select {
+	case err := <-stop1:
+		fmt.Printf("receive error %v from supabase proxy\n", err)
+	case err := <-stop2:
+		fmt.Printf("receive error %v from supabase proxy\n", err)
+	case sig := <-sigchan:
 		fmt.Printf("receive signal %s from os\n", sig.String())
 	}
 }
 
-func SafeLoop(sleep_period time.Duration, fun func() bool) {
-	loop := func() bool {
-		defer func() {
-			if err := recover(); err != nil {
-				fmt.Printf("panic happened in safe loop %s\n", string(debug.Stack()))
-			}
-		}()
-
-		return fun()
+func StartGlobalProxy() <-chan error {
+	if len(certdoms) == 0 {
+		return make(<-chan error)
 	}
 
-	go func() {
-		for {
-			if !loop() {
-				break
-			}
-			if sleep_period > 0 {
-				time.Sleep(sleep_period)
-			}
-		}
-	}()
+	apiProxy := newReverseProxy("http://localhost:3001")
+	rootProxy := newReverseProxy("http://localhost:3002")
+	publicMux.Handle("/api/", apiProxy)
+	publicMux.Handle("/", rootProxy)
+
+	certManager := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
+		HostPolicy: autocert.HostWhitelist(certdoms...),
+	}
+	// base request context used for cancelling long running requests
+	// like the SSE connections
+	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
+	defer cancelBaseCtx()
+
+	server := &http.Server{
+		BaseContext: func(l net.Listener) context.Context { return baseCtx },
+		TLSConfig: &tls.Config{
+			MinVersion:     tls.VersionTLS12,
+			GetCertificate: certManager.GetCertificate,
+			NextProtos:     []string{acme.ALPNProto},
+		},
+
+		ReadTimeout:       10 * time.Minute,
+		ReadHeaderTimeout: 30 * time.Second,
+		Addr:              fmt.Sprintf(":%d", sport),
+		Handler:           publicMux,
+	}
+	res := make(chan error)
+	SafeThread(func() {
+		res <- server.ListenAndServe()
+	})
+	return res
 }
 
-// Extract client IP
-func getRemoteIP(req *http.Request) string {
-	ip, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err != nil {
-		return req.RemoteAddr
-	}
-	return ip
-}
-
-// Append to X-Forwarded-For
-func appendXForwardedFor(req *http.Request) string {
-	ip := getRemoteIP(req)
-	if prior, ok := req.Header["X-Forwarded-For"]; ok {
-		return strings.Join(prior, ", ") + ", " + ip
-	}
-	return ip
-}
-
-// Determine scheme
-func getScheme(req *http.Request) string {
-	if req.TLS != nil {
-		return "https"
-	}
-	return "http"
-}
-
-// newReverseProxy returns a configured reverse proxy to target
-func newReverseProxy(target string) *httputil.ReverseProxy {
-	u, err := url.Parse(target)
-	if err != nil {
-		log.Fatal(err)
-	}
-	proxy := httputil.NewSingleHostReverseProxy(u)
-
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-
-		// Set headers like Nginx does
-		req.Header.Set("Host", req.Host)
-		req.Header.Set("X-Real-IP", getRemoteIP(req))
-		req.Header.Set("X-Forwarded-For", appendXForwardedFor(req))
-		req.Header.Set("X-Forwarded-Proto", getScheme(req))
-	}
-
-	return proxy
-}
-
-func StartReportAnalytics() {
-	publicMux := http.NewServeMux()
+func PrepareReportHandler() {
 	publicMux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {
-		if credential := r.Header.Get("Authorization"); credential != credentialAnalytics {
+		if credential := r.Header.Get("Authorization"); credential != analyticCred {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		} else if typ := r.Header.Get("type"); len(typ) == 0 {
@@ -214,17 +140,11 @@ func StartReportAnalytics() {
 			}
 		}
 	})
-	publicSever := &http.Server{
-		Addr:    fmt.Sprintf(":%d", rport),
-		Handler: publicMux,
-	}
-	panic(publicSever.ListenAndServe())
 }
 
-func StartQueryAnalytics() {
-	privateMux := http.NewServeMux()
+func StartQueryAnalytics() <-chan error {
 	privateMux.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
-		if credential := r.Header.Get("Authorization"); credential != credentialAnalytics {
+		if credential := r.Header.Get("Authorization"); credential != analyticCred {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		} else if destnode := r.Header.Get("node"); len(destnode) == 0 {
@@ -248,16 +168,10 @@ func StartQueryAnalytics() {
 		Addr:    fmt.Sprintf(":%d", qport),
 		Handler: privateMux,
 	}
-	panic(privateServer.ListenAndServe())
-}
 
-func SafeThread(fun func()) {
-	go func() {
-		defer func() {
-			if err := recover(); err != nil {
-				fmt.Printf("panic happened in safe thread %v %s\n", err, string(debug.Stack()))
-			}
-		}()
-		fun()
-	}()
+	res := make(chan error)
+	SafeThread(func() {
+		res <- privateServer.ListenAndServe()
+	})
+	return res
 }
