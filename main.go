@@ -124,14 +124,12 @@ func PrepareReportHandler() {
 	publicMux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {
 		if credential := r.Header.Get("Authorization"); credential != analyticCred {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
 		} else if typ := r.Header.Get("type"); len(typ) == 0 {
-			return
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 		} else if node := r.Header.Get("node"); len(node) == 0 {
-			return
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 		} else if data, err := io.ReadAll(r.Body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
 			cache.mut.Lock()
 			defer cache.mut.Unlock()
@@ -153,12 +151,10 @@ func PrepareReportHandler() {
 
 func StartQueryAnalytics() <-chan error {
 	privateMux.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
-		if credential := r.Header.Get("Authorization"); credential != analyticCred {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		} else if destnode := r.Header.Get("node"); len(destnode) == 0 {
-			return
+		if destnode := r.Header.Get("node"); len(destnode) == 0 {
+			w.WriteHeader(404)
 		} else if desttyp := r.Header.Get("type"); len(desttyp) == 0 {
+			w.WriteHeader(404)
 		} else {
 			cache.mut.Lock()
 			defer cache.mut.Unlock()
@@ -167,6 +163,7 @@ func StartQueryAnalytics() <-chan error {
 			} else {
 				nodeData.mut.Lock()
 				defer nodeData.mut.Unlock()
+				w.WriteHeader(200)
 				w.Write(nodeData.typeMap[desttyp].data)
 				return
 			}
