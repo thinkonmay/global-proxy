@@ -87,10 +87,7 @@ func StartGlobalProxy() <-chan error {
 		return make(<-chan error)
 	}
 
-	apiProxy := newReverseProxy("http://localhost:3001")
-	rootProxy := newReverseProxy("http://localhost:3002")
-	publicMux.Handle("/api/", apiProxy)
-	publicMux.Handle("/", rootProxy)
+	publicMux.Handle("/", withCORS(newReverseProxy("http://127.0.0.1:8000")))
 
 	certManager := &autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
@@ -116,8 +113,8 @@ func StartGlobalProxy() <-chan error {
 	}
 	res := make(chan error)
 	SafeThread(func() {
-		fmt.Printf("global proxy listening on port %d\n",sport)
-		res <- server.ListenAndServe()
+		fmt.Printf("global proxy listening on port %d\n", sport)
+		res <- server.ListenAndServeTLS("", "")
 		cancelBaseCtx()
 	})
 	return res
@@ -183,7 +180,7 @@ func StartQueryAnalytics() <-chan error {
 
 	res := make(chan error)
 	SafeThread(func() {
-		fmt.Printf("query analytics listening on port %d\n",qport)
+		fmt.Printf("query analytics listening on port %d\n", qport)
 		res <- privateServer.ListenAndServe()
 	})
 	return res
