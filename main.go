@@ -19,10 +19,10 @@ import (
 )
 
 var (
-	certdoms     = StringSlice{}
-	sport, qport = 0, 0
-	analyticCred = ""
-	cache        = analyticCache{
+	certdoms            = StringSlice{}
+	sport, qport, rport = 0, 0, 0
+	analyticCred        = ""
+	cache               = analyticCache{
 		nodeMap: make(map[string]*nodeCache),
 		mut:     &sync.Mutex{},
 	}
@@ -46,8 +46,9 @@ type analyticCache struct {
 }
 
 func init() {
-	psport := flag.Int("sport", 445, "secure global port")
-	pqport := flag.Int("qport", 3000, "unsecure query port")
+	psport := flag.Int("sport", 0, "secure global port")
+	pqport := flag.Int("qport", 0, "unsecure query port")
+	prport := flag.Int("rport", 0, "rybbit port")
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
 	panalyticCred := flag.String("cred", "", "report analytics credential")
 	flag.Parse()
@@ -58,6 +59,9 @@ func init() {
 	if pqport != nil {
 		qport = *pqport
 	}
+	if prport != nil {
+		rport = *prport
+	}
 	if panalyticCred != nil {
 		analyticCred = *panalyticCred
 	}
@@ -65,8 +69,10 @@ func init() {
 
 func main() {
 	PrepareReportHandler()
+
 	stop1 := StartGlobalProxy()
 	stop2 := StartQueryAnalytics()
+	stop3 := StartRybbit()
 
 	sigchan := make(chan os.Signal, 16)
 	signal.Notify(sigchan, syscall.SIGTERM, os.Interrupt)
@@ -76,6 +82,8 @@ func main() {
 		fmt.Printf("receive error %v from supabase proxy\n", err)
 	case err := <-stop2:
 		fmt.Printf("receive error %v from query analytics\n", err)
+	case err := <-stop3:
+		fmt.Printf("receive error %v from rybbit\n", err)
 	case sig := <-sigchan:
 		fmt.Printf("receive signal %s from os\n", sig.String())
 	}
@@ -85,9 +93,12 @@ func StartGlobalProxy() <-chan error {
 	if len(certdoms) == 0 {
 		fmt.Println("no certdoms provided, don't start global proxy")
 		return make(<-chan error)
+	} else if sport == 0 {
+		fmt.Println("no sport provided, don't start global proxy")
+		return make(<-chan error)
 	}
 
-	publicMux.Handle("/", withCORS(newReverseProxy("http://127.0.0.1:8000")))
+	publicMux.Handle("/", withCORS(newReverseProxy("http://kong:8000")))
 
 	certManager := &autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
@@ -150,6 +161,11 @@ func PrepareReportHandler() {
 }
 
 func StartQueryAnalytics() <-chan error {
+	if qport == 0 {
+		fmt.Println("no qport provided, don't start query API")
+		return make(<-chan error)
+	}
+
 	privateMux.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
 		if destnode := r.Header.Get("node"); len(destnode) == 0 {
 			w.WriteHeader(404)
@@ -180,5 +196,50 @@ func StartQueryAnalytics() <-chan error {
 		fmt.Printf("query analytics listening on port %d\n", qport)
 		res <- privateServer.ListenAndServe()
 	})
+	return res
+}
+
+func StartRybbit() <-chan error {
+	if len(certdoms) == 0 {
+		fmt.Println("no certdoms provided, don't rybbit proxy")
+		return make(<-chan error)
+	} else if rport == 0 {
+		fmt.Println("no rport provided, don't start rybbit proxy")
+		return make(<-chan error)
+	}
+
+	publicMux.Handle("/api/", withCORS(newReverseProxy("http://backend:3001")))
+	publicMux.Handle("/", withCORS(newReverseProxy("http://client:3002")))
+
+	certManager := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
+		HostPolicy: autocert.HostWhitelist(certdoms...),
+	}
+	// base request context used for cancelling long running requests
+	// like the SSE connections
+	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
+
+	server := &http.Server{
+		BaseContext: func(l net.Listener) context.Context { return baseCtx },
+		TLSConfig: &tls.Config{
+			MinVersion:     tls.VersionTLS12,
+			GetCertificate: certManager.GetCertificate,
+			NextProtos:     []string{acme.ALPNProto},
+		},
+
+		ReadTimeout:       10 * time.Minute,
+		ReadHeaderTimeout: 30 * time.Second,
+		Addr:              fmt.Sprintf(":%d", rport),
+		Handler:           publicMux,
+	}
+
+	res := make(chan error)
+	SafeThread(func() {
+		fmt.Printf("rybbit listening on port %d\n", rport)
+		res <- server.ListenAndServeTLS("", "")
+		cancelBaseCtx()
+	})
+
 	return res
 }
