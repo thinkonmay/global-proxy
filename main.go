@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -19,10 +20,10 @@ import (
 )
 
 var (
-	certdoms            = StringSlice{}
-	sport, qport, rport = 0, 0, 0
-	analyticCred        = ""
-	cache               = analyticCache{
+	certdoms                   = StringSlice{}
+	sport, qport, rport, gport = 0, 0, 0, 0
+	analyticCred               = ""
+	cache                      = analyticCache{
 		nodeMap: make(map[string]*nodeCache),
 		mut:     &sync.Mutex{},
 	}
@@ -49,6 +50,7 @@ func init() {
 	psport := flag.Int("sport", 0, "secure global port")
 	pqport := flag.Int("qport", 0, "unsecure query port")
 	prport := flag.Int("rport", 0, "rybbit port")
+	pgport := flag.Int("gport", 0, "g4global port")
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
 	panalyticCred := flag.String("cred", "", "report analytics credential")
 	flag.Parse()
@@ -62,6 +64,9 @@ func init() {
 	if prport != nil {
 		rport = *prport
 	}
+	if pgport != nil {
+		gport = *pgport
+	}
 	if panalyticCred != nil {
 		analyticCred = *panalyticCred
 	}
@@ -73,6 +78,7 @@ func main() {
 	stop1 := StartGlobalProxy()
 	stop2 := StartQueryAnalytics()
 	stop3 := StartRybbit()
+	stop4 := StartG4Global()
 
 	sigchan := make(chan os.Signal, 16)
 	signal.Notify(sigchan, syscall.SIGTERM, os.Interrupt)
@@ -84,6 +90,8 @@ func main() {
 		fmt.Printf("receive error %v from query analytics\n", err)
 	case err := <-stop3:
 		fmt.Printf("receive error %v from rybbit\n", err)
+	case err := <-stop4:
+		fmt.Printf("receive error %v from g4global\n", err)
 	case sig := <-sigchan:
 		fmt.Printf("receive signal %s from os\n", sig.String())
 	}
@@ -186,6 +194,27 @@ func StartQueryAnalytics() <-chan error {
 		}
 	})
 
+	privateMux.HandleFunc("/all", func(w http.ResponseWriter, r *http.Request) {
+		cache.mut.Lock()
+		defer cache.mut.Unlock()
+
+		keys := make([]string, 0, len(cache.nodeMap))
+		for k := range cache.nodeMap {
+			keys = append(keys, k)
+		}
+		res, err := json.Marshal(keys)
+
+		if err != nil {
+			w.WriteHeader(400)
+			w.Write([]byte(err.Error()))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write(res)
+		return
+
+	})
+
 	privateServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", qport),
 		Handler: privateMux,
@@ -237,6 +266,50 @@ func StartRybbit() <-chan error {
 	res := make(chan error)
 	SafeThread(func() {
 		fmt.Printf("rybbit listening on port %d\n", rport)
+		res <- server.ListenAndServeTLS("", "")
+		cancelBaseCtx()
+	})
+
+	return res
+}
+
+func StartG4Global() <-chan error {
+	if len(certdoms) == 0 {
+		fmt.Println("no certdoms provided, don't g4global proxy")
+		return make(<-chan error)
+	} else if gport == 0 {
+		fmt.Println("no gport provided, don't start g4global proxy")
+		return make(<-chan error)
+	}
+
+	publicMux.Handle("/", withCORS(newReverseProxy("http://kong:8000")))
+
+	certManager := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
+		HostPolicy: autocert.HostWhitelist(certdoms...),
+	}
+	// base request context used for cancelling long running requests
+	// like the SSE connections
+	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
+
+	server := &http.Server{
+		BaseContext: func(l net.Listener) context.Context { return baseCtx },
+		TLSConfig: &tls.Config{
+			MinVersion:     tls.VersionTLS12,
+			GetCertificate: certManager.GetCertificate,
+			NextProtos:     []string{acme.ALPNProto},
+		},
+
+		ReadTimeout:       10 * time.Minute,
+		ReadHeaderTimeout: 30 * time.Second,
+		Addr:              fmt.Sprintf(":%d", gport),
+		Handler:           publicMux,
+	}
+
+	res := make(chan error)
+	SafeThread(func() {
+		fmt.Printf("g4global listening on port %d\n", gport)
 		res <- server.ListenAndServeTLS("", "")
 		cancelBaseCtx()
 	})

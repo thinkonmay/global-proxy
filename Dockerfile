@@ -28,6 +28,6 @@ COPY --from=builder /app/globalproxy .
 RUN mkdir -p /app/pb_data/.autocert_cache
 
 # Expose ports
-EXPOSE 445 3000 9446
+EXPOSE 445 3000 9446 9445
 
 ENTRYPOINT ["./globalproxy"]
