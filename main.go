@@ -187,6 +187,9 @@ func StartQueryAnalytics() <-chan error {
 			} else {
 				nodeData.mut.Lock()
 				defer nodeData.mut.Unlock()
+				if time.Since(nodeData.typeMap[desttyp].timestamp) > 1*time.Minute {
+					return
+				}
 				w.WriteHeader(200)
 				w.Write(nodeData.typeMap[desttyp].data)
 				return
