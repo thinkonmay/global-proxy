@@ -1,0 +1,22 @@
+name: globalproxy
+
+services:
+  fe:
+    image: pigeatgarlic/fe
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+
+
+  globalproxy:
+    image: pigeatgarlic/global-proxy:latest
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - /home/huyhoang/assets/pb_data/.autocert_cache:/app/pb_data/.autocert_cache
+    command:
+      - '-dom'
+      - 'fe.thinkmay.net'
+      - '-feport'
+      - '443'

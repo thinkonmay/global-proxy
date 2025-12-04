@@ -22,7 +22,7 @@ import (
 
 var (
 	certdoms                   = StringSlice{}
-	sport, qport, rport, gport = 0, 0, 0, 0
+	sport, qport, rport, gport, fport = 0, 0, 0, 0, 0
 	analyticCred               = ""
 	wafAllowedIPsStr           = ""
 	wafAllowedPathsStr         = ""
@@ -58,7 +58,7 @@ func init() {
 	pqport := flag.Int("qport", 0, "unsecure query port")
 	prport := flag.Int("rport", 0, "rybbit port")
 	pgport := flag.Int("gport", 0, "g4global port")
-
+	feport := flag.Int("feport", 0, "feglobal port")
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
 	flag.StringVar(&wafAllowedIPsStr, "waf-ips", "", "Comma separated allowed IPs for WAF")
 	flag.StringVar(&wafAllowedPathsStr, "waf-paths", "", "Comma separated allowed paths for WAF bypass")
@@ -79,6 +79,10 @@ func init() {
 	if pgport != nil {
 		gport = *pgport
 	}
+	if feport != nil {
+		fport = *feport
+	}
+
 	if cred != nil {
 		analyticCred = *cred
 		PrepareReportHandler()
@@ -116,6 +120,7 @@ func main() {
 	stop2 := StartQueryAnalytics()
 	stop3 := StartRybbit()
 	stop4 := StartG4Global()
+	stop5 := StartFeGlobal()
 
 	sigchan := make(chan os.Signal, 16)
 	signal.Notify(sigchan, syscall.SIGTERM, os.Interrupt)
@@ -129,6 +134,8 @@ func main() {
 		fmt.Printf("receive error %v from rybbit\n", err)
 	case err := <-stop4:
 		fmt.Printf("receive error %v from g4global\n", err)
+	case err := <-stop5:
+		fmt.Printf("receive error %v from feglobal\n", err)
 	case sig := <-sigchan:
 		fmt.Printf("receive signal %s from os\n", sig.String())
 	}
@@ -334,4 +341,47 @@ func StartG4Global() <-chan error {
 	})
 
 	return res
+}
+func StartFeGlobal() <-chan error {
+	if len(certdoms) == 0 {
+                fmt.Println("no certdoms provided, don't feglobal proxy")
+                return make(<-chan error)
+        } else if fport == 0 {
+                fmt.Println("no feport provided, don't start feglobal proxy")
+                return make(<-chan error)
+        }
+
+        publicMux.Handle("/", withCORS(newReverseProxy("http://fe:3000")))
+
+        certManager := &autocert.Manager{
+                Prompt:     autocert.AcceptTOS,
+                Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
+                HostPolicy: autocert.HostWhitelist(certdoms...),
+        }
+        // base request context used for cancelling long running requests
+        // like the SSE connections
+        baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
+
+        server := &http.Server{
+                BaseContext: func(l net.Listener) context.Context { return baseCtx },
+                TLSConfig: &tls.Config{
+                        MinVersion:     tls.VersionTLS12,
+                        GetCertificate: certManager.GetCertificate,
+                        NextProtos:     []string{acme.ALPNProto},
+                },
+
+                ReadTimeout:       10 * time.Minute,
+                ReadHeaderTimeout: 30 * time.Second,
+                Addr:              fmt.Sprintf(":%d", fport),
+                Handler:           publicMux,
+        }
+
+        res := make(chan error)
+        SafeThread(func() {
+                fmt.Printf("feglobal listening on port %d\n", fport)
+                res <- server.ListenAndServeTLS("", "")
+                cancelBaseCtx()
+        })
+
+        return res
 }
