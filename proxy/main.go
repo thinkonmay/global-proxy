@@ -23,13 +23,17 @@ var (
 	certdoms                   = StringSlice{}
 	sport, qport, rport, gport = 0, 0, 0, 0
 	analyticCred               = ""
-	cache                      = analyticCache{
+
+	publicMux   = http.NewServeMux()
+	privateMux  = http.NewServeMux()
+	certManager = &autocert.Manager{
+		Prompt: autocert.AcceptTOS,
+		Cache:  autocert.DirCache("./pb_data/.autocert_cache"),
+	}
+	cache = analyticCache{
 		nodeMap: make(map[string]*nodeCache),
 		mut:     &sync.Mutex{},
 	}
-
-	publicMux  = http.NewServeMux()
-	privateMux = http.NewServeMux()
 )
 
 type analytic struct {
@@ -51,8 +55,10 @@ func init() {
 	pqport := flag.Int("qport", 0, "unsecure query port")
 	prport := flag.Int("rport", 0, "rybbit port")
 	pgport := flag.Int("gport", 0, "g4global port")
+
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
-	panalyticCred := flag.String("cred", "", "report analytics credential")
+	certManager.HostPolicy = autocert.HostWhitelist(certdoms...)
+
 	flag.Parse()
 
 	if psport != nil {
@@ -67,14 +73,13 @@ func init() {
 	if pgport != nil {
 		gport = *pgport
 	}
-	if panalyticCred != nil {
-		analyticCred = *panalyticCred
+	if cred := flag.String("cred", "", "report analytics credential"); cred != nil {
+		analyticCred = *cred
+		PrepareReportHandler()
 	}
 }
 
 func main() {
-	PrepareReportHandler()
-
 	stop1 := StartGlobalProxy()
 	stop2 := StartQueryAnalytics()
 	stop3 := StartRybbit()
@@ -108,11 +113,6 @@ func StartGlobalProxy() <-chan error {
 
 	publicMux.Handle("/", withCORS(newReverseProxy("http://kong:8000")))
 
-	certManager := &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
-		HostPolicy: autocert.HostWhitelist(certdoms...),
-	}
 	// base request context used for cancelling long running requests
 	// like the SSE connections
 	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
@@ -182,17 +182,13 @@ func StartQueryAnalytics() <-chan error {
 		} else {
 			cache.mut.Lock()
 			defer cache.mut.Unlock()
-			if nodeData, found := cache.nodeMap[destnode]; !found {
-				return
-			} else {
+			if nodeData, found := cache.nodeMap[destnode]; found {
 				nodeData.mut.Lock()
 				defer nodeData.mut.Unlock()
-				if time.Since(nodeData.typeMap[desttyp].timestamp) > 1*time.Minute {
-					return
+				if time.Since(nodeData.typeMap[desttyp].timestamp) < 1*time.Minute {
+					w.WriteHeader(200)
+					w.Write(nodeData.typeMap[desttyp].data)
 				}
-				w.WriteHeader(200)
-				w.Write(nodeData.typeMap[desttyp].data)
-				return
 			}
 		}
 	})
@@ -210,12 +206,10 @@ func StartQueryAnalytics() <-chan error {
 		if err != nil {
 			w.WriteHeader(400)
 			w.Write([]byte(err.Error()))
-			return
+		} else {
+			w.WriteHeader(200)
+			w.Write(res)
 		}
-		w.WriteHeader(200)
-		w.Write(res)
-		return
-
 	})
 
 	privateServer := &http.Server{
@@ -243,11 +237,6 @@ func StartRybbit() <-chan error {
 	publicMux.Handle("/api/", withCORS(newReverseProxy("http://backend:3001")))
 	publicMux.Handle("/", withCORS(newReverseProxy("http://client:3002")))
 
-	certManager := &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
-		HostPolicy: autocert.HostWhitelist(certdoms...),
-	}
 	// base request context used for cancelling long running requests
 	// like the SSE connections
 	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
@@ -287,11 +276,6 @@ func StartG4Global() <-chan error {
 
 	publicMux.Handle("/", withCORS(newReverseProxy("http://kong:8000")))
 
-	certManager := &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
-		HostPolicy: autocert.HostWhitelist(certdoms...),
-	}
 	// base request context used for cancelling long running requests
 	// like the SSE connections
 	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
