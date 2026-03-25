@@ -60,8 +60,8 @@ func init() {
 	pgport := flag.Int("gport", 0, "g4global port")
 
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
-	flag.StringVar(&wafAllowedIPsStr, "waf-ips", "103.72.56.110", "Comma separated allowed IPs for WAF")
-	flag.StringVar(&wafAllowedPathsStr, "waf-paths", "/rest/v1/stores,/rest/v1/addons,/rest/v1/plans,/rest/v1/currency_rates,/rest/v1/rpc/get_depotkey", "Comma separated allowed paths for WAF bypass")
+	flag.StringVar(&wafAllowedIPsStr, "waf-ips", "", "Comma separated allowed IPs for WAF")
+	flag.StringVar(&wafAllowedPathsStr, "waf-paths", "", "Comma separated allowed paths for WAF bypass")
 	certManager.HostPolicy = autocert.HostWhitelist(certdoms...)
 
 	flag.Parse()
