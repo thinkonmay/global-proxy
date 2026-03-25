@@ -80,6 +80,10 @@ func init() {
 }
 
 func main() {
+	if err := initWAF(); err != nil {
+		fmt.Printf("failed to initialize WAF: %v\n", err)
+	}
+
 	stop1 := StartGlobalProxy()
 	stop2 := StartQueryAnalytics()
 	stop3 := StartRybbit()
@@ -111,7 +115,7 @@ func StartGlobalProxy() <-chan error {
 		return make(<-chan error)
 	}
 
-	publicMux.Handle("/", withCORS(newReverseProxy("http://kong:8000")))
+	publicMux.Handle("/", withWAF(withCORS(newReverseProxy("http://kong:8000"))))
 
 	// base request context used for cancelling long running requests
 	// like the SSE connections
