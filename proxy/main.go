@@ -64,8 +64,6 @@ func init() {
 	flag.StringVar(&wafAllowedPathsStr, "waf-paths", "", "Comma separated allowed paths for WAF bypass")
 	certManager.HostPolicy = autocert.HostWhitelist(certdoms...)
 
-	flag.Parse()
-
 	if psport != nil {
 		sport = *psport
 	}
@@ -82,6 +80,8 @@ func init() {
 		analyticCred = *cred
 		PrepareReportHandler()
 	}
+
+	flag.Parse()
 }
 
 func main() {
