@@ -27,8 +27,12 @@ SecAuditLogType Serial
 SecAuditLogFormat Native`
 
 var globalWAF coraza.WAF
+var wafAllowedIPs []string
+var wafAllowedPaths []string
 
-func initWAF() error {
+func initWAF(allowedIPs []string, allowedPaths []string) error {
+	wafAllowedIPs = allowedIPs
+	wafAllowedPaths = allowedPaths
 	conf := coraza.NewWAFConfig().
 		WithDirectives(wafConf)
 	waf, err := coraza.NewWAF(conf)
@@ -39,8 +43,36 @@ func initWAF() error {
 	return nil
 }
 
+func isAllowedPath(path string) bool {
+	for _, allowed := range wafAllowedPaths {
+		if path == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedIP(ip string) bool {
+	if len(wafAllowedIPs) == 0 {
+		return true // Allow all if no IPs are configured
+	}
+	for _, allowed := range wafAllowedIPs {
+		if ip == allowed {
+			return true
+		}
+	}
+	return false
+}
+
 func withWAF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		clientIP := getRemoteIP(req)
+		
+		if !isAllowedPath(req.URL.Path) && !isAllowedIP(clientIP) {
+			http.Error(w, "Forbidden: IP not authorized", http.StatusForbidden)
+			return
+		}
+
 		if globalWAF == nil {
 			next.ServeHTTP(w, req)
 			return

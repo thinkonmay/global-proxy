@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +24,8 @@ var (
 	certdoms                   = StringSlice{}
 	sport, qport, rport, gport = 0, 0, 0, 0
 	analyticCred               = ""
+	wafAllowedIPsStr           = ""
+	wafAllowedPathsStr         = ""
 
 	publicMux   = http.NewServeMux()
 	privateMux  = http.NewServeMux()
@@ -57,6 +60,8 @@ func init() {
 	pgport := flag.Int("gport", 0, "g4global port")
 
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
+	flag.StringVar(&wafAllowedIPsStr, "waf-ips", "103.72.56.110", "Comma separated allowed IPs for WAF")
+	flag.StringVar(&wafAllowedPathsStr, "waf-paths", "/rest/v1/stores,/rest/v1/addons,/rest/v1/plans,/rest/v1/currency_rates,/rest/v1/rpc/get_depotkey", "Comma separated allowed paths for WAF bypass")
 	certManager.HostPolicy = autocert.HostWhitelist(certdoms...)
 
 	flag.Parse()
@@ -80,7 +85,29 @@ func init() {
 }
 
 func main() {
-	if err := initWAF(); err != nil {
+	ips := wafAllowedIPsStr
+	if env := os.Getenv("WAF_ALLOW_IPS"); env != "" {
+		ips = env
+	}
+	var allowedIPs []string
+	if ips != "" {
+		for _, ip := range strings.Split(ips, ",") {
+			allowedIPs = append(allowedIPs, strings.TrimSpace(ip))
+		}
+	}
+
+	paths := wafAllowedPathsStr
+	if env := os.Getenv("WAF_ALLOW_PATHS"); env != "" {
+		paths = env
+	}
+	var allowedPaths []string
+	if paths != "" {
+		for _, p := range strings.Split(paths, ",") {
+			allowedPaths = append(allowedPaths, strings.TrimSpace(p))
+		}
+	}
+
+	if err := initWAF(allowedIPs, allowedPaths); err != nil {
 		fmt.Printf("failed to initialize WAF: %v\n", err)
 	}
 
