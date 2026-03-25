@@ -164,8 +164,8 @@ func StartGlobalProxy() <-chan error {
 	res := make(chan error)
 	SafeThread(func() {
 		fmt.Printf("global proxy listening on port %d\n", sport)
+		defer cancelBaseCtx()
 		res <- server.ListenAndServeTLS("", "")
-		cancelBaseCtx()
 	})
 	return res
 }
