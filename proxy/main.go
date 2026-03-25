@@ -62,6 +62,9 @@ func init() {
 	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
 	flag.StringVar(&wafAllowedIPsStr, "waf-ips", "", "Comma separated allowed IPs for WAF")
 	flag.StringVar(&wafAllowedPathsStr, "waf-paths", "", "Comma separated allowed paths for WAF bypass")
+	cred := flag.String("cred", "", "report analytics credential")
+	flag.Parse()
+
 	certManager.HostPolicy = autocert.HostWhitelist(certdoms...)
 
 	if psport != nil {
@@ -76,12 +79,10 @@ func init() {
 	if pgport != nil {
 		gport = *pgport
 	}
-	if cred := flag.String("cred", "", "report analytics credential"); cred != nil {
+	if cred != nil {
 		analyticCred = *cred
 		PrepareReportHandler()
 	}
-
-	flag.Parse()
 }
 
 func main() {
