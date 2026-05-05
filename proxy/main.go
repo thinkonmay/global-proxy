@@ -4,28 +4,45 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"gopkg.in/yaml.v2"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
+type Config struct {
+	Domains     []string    `yaml:"domains"`
+	Ports       PortsConfig `yaml:"ports"`
+	AnalyticCred string     `yaml:"analytic_cred"`
+	WAF         WAFConfig   `yaml:"waf"`
+}
+
+type PortsConfig struct {
+	Sport int `yaml:"sport"`
+	Qport int `yaml:"qport"`
+	Rport int `yaml:"rport"`
+	Gport int `yaml:"gport"`
+	Feport int `yaml:"feport"`
+}
+
+type WAFConfig struct {
+	AllowedIPs   []string `yaml:"allowed_ips"`
+	AllowedPaths []string `yaml:"allowed_paths"`
+}
+
 var (
-	certdoms                   = StringSlice{}
+	certdoms                          = StringSlice{}
 	sport, qport, rport, gport, fport = 0, 0, 0, 0, 0
-	analyticCred               = ""
-	wafAllowedIPsStr           = ""
-	wafAllowedPathsStr         = ""
+	analyticCred                      = ""
 
 	publicMux   = http.NewServeMux()
 	privateMux  = http.NewServeMux()
@@ -37,6 +54,8 @@ var (
 		nodeMap: make(map[string]*nodeCache),
 		mut:     &sync.Mutex{},
 	}
+
+	cfg = Config{}
 )
 
 type analytic struct {
@@ -54,65 +73,35 @@ type analyticCache struct {
 }
 
 func init() {
-	psport := flag.Int("sport", 0, "secure global port")
-	pqport := flag.Int("qport", 0, "unsecure query port")
-	prport := flag.Int("rport", 0, "rybbit port")
-	pgport := flag.Int("gport", 0, "g4global port")
-	feport := flag.Int("feport", 0, "feglobal port")
-	flag.Var(&certdoms, "dom", "Specify multiple string values (e.g., -s val1 -s val2)")
-	flag.StringVar(&wafAllowedIPsStr, "waf-ips", "", "Comma separated allowed IPs for WAF")
-	flag.StringVar(&wafAllowedPathsStr, "waf-paths", "", "Comma separated allowed paths for WAF bypass")
-	cred := flag.String("cred", "", "report analytics credential")
-	flag.Parse()
+	data, err := os.ReadFile("/etc/gateway/config.yaml")
+	if err != nil {
+		fmt.Printf("failed to read config file: %v\n", err)
+		os.Exit(1)
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		fmt.Printf("failed to parse config file: %v\n", err)
+		os.Exit(1)
+	}
 
+	for _, d := range cfg.Domains {
+		certdoms = append(certdoms, d)
+	}
 	certManager.HostPolicy = autocert.HostWhitelist(certdoms...)
 
-	if psport != nil {
-		sport = *psport
-	}
-	if pqport != nil {
-		qport = *pqport
-	}
-	if prport != nil {
-		rport = *prport
-	}
-	if pgport != nil {
-		gport = *pgport
-	}
-	if feport != nil {
-		fport = *feport
-	}
+	sport = cfg.Ports.Sport
+	qport = cfg.Ports.Qport
+	rport = cfg.Ports.Rport
+	gport = cfg.Ports.Gport
+	fport = cfg.Ports.Feport
+	analyticCred = cfg.AnalyticCred
 
-	if cred != nil {
-		analyticCred = *cred
+	if analyticCred != "" {
 		PrepareReportHandler()
 	}
 }
 
 func main() {
-	ips := wafAllowedIPsStr
-	if env := os.Getenv("WAF_ALLOW_IPS"); env != "" {
-		ips = env
-	}
-	var allowedIPs []string
-	if ips != "" {
-		for _, ip := range strings.Split(ips, ",") {
-			allowedIPs = append(allowedIPs, strings.TrimSpace(ip))
-		}
-	}
-
-	paths := wafAllowedPathsStr
-	if env := os.Getenv("WAF_ALLOW_PATHS"); env != "" {
-		paths = env
-	}
-	var allowedPaths []string
-	if paths != "" {
-		for _, p := range strings.Split(paths, ",") {
-			allowedPaths = append(allowedPaths, strings.TrimSpace(p))
-		}
-	}
-
-	if err := initWAF(allowedIPs, allowedPaths); err != nil {
+	if err := initWAF(cfg.WAF.AllowedIPs, cfg.WAF.AllowedPaths); err != nil {
 		fmt.Printf("failed to initialize WAF: %v\n", err)
 	}
 

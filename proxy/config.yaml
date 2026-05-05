@@ -1,0 +1,15 @@
+domains:
+  - "saigon2.thinkmay.net"
+ports:
+  sport: 445
+  qport: 50050
+  rport: 0
+  gport: 0
+  feport: 0
+
+analytic_cred: "abc"
+
+waf:
+  allowed_ips:
+    - 192.168.1.1
+  allowed_paths: []

@@ -6,15 +6,5 @@ services:
     # ports:
     #   - 445:445
     volumes:
-      - /home/huyhoang/assets/pb_data/.autocert_cache:/app/pb_data/.autocert_cache
-    command:
-      - '-dom'
-      - 'saigon2.thinkmay.net'
-      - '-cred'
-      - 'abc'
-      - '-sport'
-      - '445'
-      - '-qport'
-      - '50050'
-      - '-waf-ips'
-      - '192.168.1.1'
+      - /home/huyhoang/assets/pb_data/.autocert_cache:/app/pb_data/.autoce
+      - /home/huyhoang/assets/config.yaml:/app/config.yaml

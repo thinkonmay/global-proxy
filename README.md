@@ -35,3 +35,6 @@ docker build -t pigeatgarlic/global-proxy .
 ```shell
 docker push pigeatgarlic/global-proxy:latest
 ```
+
+### Build 
+docker build -t gateway .
