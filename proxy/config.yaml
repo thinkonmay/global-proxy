@@ -4,9 +4,9 @@ email: huyhoangdo@contact.thinkmay.net
 # Public domains — no IP restriction
 domains:
   thinkmay.net:
-    upstream: http://thinkmay-website:3000
+    upstream: http://website:3000
   www.thinkmay.net:
-    upstream: http://thinkmay-website:3000
+    upstream: http://website:3000
   analytics.thinkmay.net:
     paths:
       "/api/": http://rybbit-backend:3001
@@ -21,4 +21,6 @@ internal:
     - 10.0.0.0/8
     - 172.16.0.0/12
     - 192.168.0.0/16
-  routes: []
+  routes:
+    9router:
+      upstream: http://9router:20128
