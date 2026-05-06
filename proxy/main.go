@@ -1,376 +1,240 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
-	"encoding/json"
-	"fmt"
-	"io"
+	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-	"time"
+	"strings"
 
-	"gopkg.in/yaml.v2"
-	"golang.org/x/crypto/acme"
+	"github.com/corazawaf/coraza/v3"
+	txhttp "github.com/corazawaf/coraza/v3/http"
+	"github.com/rs/cors"
 	"golang.org/x/crypto/acme/autocert"
+	"gopkg.in/yaml.v3"
 )
+
+type RouteEntry struct {
+	Upstream string            `yaml:"upstream"`
+	Paths    map[string]string `yaml:"paths"`
+}
 
 type Config struct {
-	Domains     []string    `yaml:"domains"`
-	Ports       PortsConfig `yaml:"ports"`
-	AnalyticCred string     `yaml:"analytic_cred"`
-	WAF         WAFConfig   `yaml:"waf"`
-}
+	CertDir string `yaml:"cert_dir"`
+	Email   string `yaml:"email"`
 
-type PortsConfig struct {
-	Sport int `yaml:"sport"`
-	Qport int `yaml:"qport"`
-	Rport int `yaml:"rport"`
-	Gport int `yaml:"gport"`
-	Feport int `yaml:"feport"`
-}
+	Domains map[string]RouteEntry `yaml:"domains"`
 
-type WAFConfig struct {
-	AllowedIPs   []string `yaml:"allowed_ips"`
-	AllowedPaths []string `yaml:"allowed_paths"`
-}
-
-var (
-	certdoms                          = StringSlice{}
-	sport, qport, rport, gport, fport = 0, 0, 0, 0, 0
-	analyticCred                      = ""
-
-	publicMux   = http.NewServeMux()
-	privateMux  = http.NewServeMux()
-	certManager = &autocert.Manager{
-		Prompt: autocert.AcceptTOS,
-		Cache:  autocert.DirCache("./pb_data/.autocert_cache"),
-	}
-	cache = analyticCache{
-		nodeMap: make(map[string]*nodeCache),
-		mut:     &sync.Mutex{},
-	}
-
-	cfg = Config{}
-)
-
-type analytic struct {
-	timestamp time.Time
-	data      []byte
-}
-type nodeCache struct {
-	typeMap map[string]*analytic
-	mut     *sync.Mutex
-}
-
-type analyticCache struct {
-	nodeMap map[string]*nodeCache
-	mut     *sync.Mutex
-}
-
-func init() {
-	data, err := os.ReadFile("/etc/gateway/config.yaml")
-	if err != nil {
-		fmt.Printf("failed to read config file: %v\n", err)
-		os.Exit(1)
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		fmt.Printf("failed to parse config file: %v\n", err)
-		os.Exit(1)
-	}
-
-	for _, d := range cfg.Domains {
-		certdoms = append(certdoms, d)
-	}
-	certManager.HostPolicy = autocert.HostWhitelist(certdoms...)
-
-	sport = cfg.Ports.Sport
-	qport = cfg.Ports.Qport
-	rport = cfg.Ports.Rport
-	gport = cfg.Ports.Gport
-	fport = cfg.Ports.Feport
-	analyticCred = cfg.AnalyticCred
-
-	if analyticCred != "" {
-		PrepareReportHandler()
-	}
+	Internal struct {
+		DomainSuffix string            `yaml:"domain_suffix"`
+		AllowedCIDRs []string          `yaml:"allowed_cidrs"`
+		Routes       map[string]RouteEntry `yaml:"routes"`
+	} `yaml:"internal"`
 }
 
 func main() {
-	if err := initWAF(cfg.WAF.AllowedIPs, cfg.WAF.AllowedPaths); err != nil {
-		fmt.Printf("failed to initialize WAF: %v\n", err)
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "/etc/gateway/config.yaml"
 	}
 
-	stop1 := StartGlobalProxy()
-	stop2 := StartQueryAnalytics()
-	stop3 := StartRybbit()
-	stop4 := StartG4Global()
-	stop5 := StartFeGlobal()
-
-	sigchan := make(chan os.Signal, 16)
-	signal.Notify(sigchan, syscall.SIGTERM, os.Interrupt)
-
-	select {
-	case err := <-stop1:
-		fmt.Printf("receive error %v from supabase proxy\n", err)
-	case err := <-stop2:
-		fmt.Printf("receive error %v from query analytics\n", err)
-	case err := <-stop3:
-		fmt.Printf("receive error %v from rybbit\n", err)
-	case err := <-stop4:
-		fmt.Printf("receive error %v from g4global\n", err)
-	case err := <-stop5:
-		fmt.Printf("receive error %v from feglobal\n", err)
-	case sig := <-sigchan:
-		fmt.Printf("receive signal %s from os\n", sig.String())
-	}
-}
-
-func StartGlobalProxy() <-chan error {
-	if len(certdoms) == 0 {
-		fmt.Println("no certdoms provided, don't start global proxy")
-		return make(<-chan error)
-	} else if sport == 0 {
-		fmt.Println("no sport provided, don't start global proxy")
-		return make(<-chan error)
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Fatalf("failed to read config: %v", err)
 	}
 
-	publicMux.Handle("/", withWAF(withCORS(newReverseProxy("http://kong:8000"))))
-
-	// base request context used for cancelling long running requests
-	// like the SSE connections
-	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
-
-	server := &http.Server{
-		BaseContext: func(l net.Listener) context.Context { return baseCtx },
-		TLSConfig: &tls.Config{
-			MinVersion:     tls.VersionTLS12,
-			GetCertificate: certManager.GetCertificate,
-			NextProtos:     []string{acme.ALPNProto},
-		},
-
-		ReadTimeout:       10 * time.Minute,
-		ReadHeaderTimeout: 30 * time.Second,
-		Addr:              fmt.Sprintf(":%d", sport),
-		Handler:           publicMux,
-	}
-	res := make(chan error)
-	SafeThread(func() {
-		fmt.Printf("global proxy listening on port %d\n", sport)
-		defer cancelBaseCtx()
-		res <- server.ListenAndServeTLS("", "")
-	})
-	return res
-}
-
-func PrepareReportHandler() {
-	publicMux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {
-		if credential := r.Header.Get("Authorization"); credential != analyticCred {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-		} else if typ := r.Header.Get("type"); len(typ) == 0 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-		} else if node := r.Header.Get("node"); len(node) == 0 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-		} else if data, err := io.ReadAll(r.Body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			cache.mut.Lock()
-			defer cache.mut.Unlock()
-			if nodeData, found := cache.nodeMap[node]; found {
-				nodeData.mut.Lock()
-				nodeData.typeMap[typ] = &analytic{timestamp: time.Now(), data: data}
-				nodeData.mut.Unlock()
-			} else {
-				cache.nodeMap[node] = &nodeCache{
-					mut: &sync.Mutex{},
-					typeMap: map[string]*analytic{
-						typ: {timestamp: time.Now(), data: data},
-					},
-				}
-			}
-		}
-	})
-}
-
-func StartQueryAnalytics() <-chan error {
-	if qport == 0 {
-		fmt.Println("no qport provided, don't start query API")
-		return make(<-chan error)
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		log.Fatalf("failed to parse config: %v", err)
 	}
 
-	privateMux.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
-		if destnode := r.Header.Get("node"); len(destnode) == 0 {
-			w.WriteHeader(404)
-		} else if desttyp := r.Header.Get("type"); len(desttyp) == 0 {
-			w.WriteHeader(404)
-		} else {
-			cache.mut.Lock()
-			defer cache.mut.Unlock()
-			if nodeData, found := cache.nodeMap[destnode]; found {
-				nodeData.mut.Lock()
-				defer nodeData.mut.Unlock()
-				if time.Since(nodeData.typeMap[desttyp].timestamp) < 1*time.Minute {
-					w.WriteHeader(200)
-					w.Write(nodeData.typeMap[desttyp].data)
-				}
-			}
-		}
-	})
+	if cfg.CertDir == "" {
+		cfg.CertDir = "/var/lib/gateway/certs"
+	}
 
-	privateMux.HandleFunc("/all", func(w http.ResponseWriter, r *http.Request) {
-		cache.mut.Lock()
-		defer cache.mut.Unlock()
-
-		keys := make([]string, 0, len(cache.nodeMap))
-		for k := range cache.nodeMap {
-			keys = append(keys, k)
-		}
-		res, err := json.Marshal(keys)
-
+	// Parse allowed CIDRs for internal services
+	var allowedNets []*net.IPNet
+	for _, cidr := range cfg.Internal.AllowedCIDRs {
+		_, ipNet, err := net.ParseCIDR(cidr)
 		if err != nil {
-			w.WriteHeader(400)
-			w.Write([]byte(err.Error()))
-		} else {
-			w.WriteHeader(200)
-			w.Write(res)
+			log.Fatalf("invalid CIDR %q: %v", cidr, err)
 		}
-	})
-
-	privateServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", qport),
-		Handler: privateMux,
+		allowedNets = append(allowedNets, ipNet)
 	}
 
-	res := make(chan error)
-	SafeThread(func() {
-		fmt.Printf("query analytics listening on port %d\n", qport)
-		res <- privateServer.ListenAndServe()
-	})
-	return res
-}
-
-func StartRybbit() <-chan error {
-	if len(certdoms) == 0 {
-		fmt.Println("no certdoms provided, don't rybbit proxy")
-		return make(<-chan error)
-	} else if rport == 0 {
-		fmt.Println("no rport provided, don't start rybbit proxy")
-		return make(<-chan error)
+	// Build reverse proxies for public domains (thinkmay.net → website)
+	publicProxies := make(map[string]http.Handler)
+	var allDomains []string
+	for domain, route := range cfg.Domains {
+		if len(route.Paths) > 0 {
+			mux := http.NewServeMux()
+			for path, upstream := range route.Paths {
+				target, err := url.Parse(upstream)
+				if err != nil {
+					log.Fatalf("invalid upstream %q for path %q on domain %q: %v", upstream, path, domain, err)
+				}
+				mux.Handle(path, httputil.NewSingleHostReverseProxy(target))
+				log.Printf("route: %s%s → %s", domain, path, upstream)
+			}
+			publicProxies[domain] = mux
+		} else {
+			target, err := url.Parse(route.Upstream)
+			if err != nil {
+				log.Fatalf("invalid upstream %q for domain %q: %v", route.Upstream, domain, err)
+			}
+			publicProxies[domain] = httputil.NewSingleHostReverseProxy(target)
+			log.Printf("route: %s → %s", domain, route.Upstream)
+		}
+		allDomains = append(allDomains, domain)
 	}
 
-	publicMux.Handle("/api/", withCORS(newReverseProxy("http://backend:3001")))
-	publicMux.Handle("/", withCORS(newReverseProxy("http://client:3002")))
+	// Build reverse proxies for internal routes (*.api.thinkmay.net → services)
+	internalProxies := make(map[string]http.Handler)
+	suffix := "." + cfg.Internal.DomainSuffix
+	for name, route := range cfg.Internal.Routes {
+		fqdn := name + suffix
+		if len(route.Paths) > 0 {
+			mux := http.NewServeMux()
+			for path, upstream := range route.Paths {
+				target, err := url.Parse(upstream)
+				if err != nil {
+					log.Fatalf("invalid upstream %q for path %q on route %q: %v", upstream, path, name, err)
+				}
+				mux.Handle(path, httputil.NewSingleHostReverseProxy(target))
+				log.Printf("route: %s%s → %s [ip-restricted]", fqdn, path, upstream)
+			}
+			internalProxies[name] = mux
+		} else {
+			target, err := url.Parse(route.Upstream)
+			if err != nil {
+				log.Fatalf("invalid upstream %q for route %q: %v", route.Upstream, name, err)
+			}
+			internalProxies[name] = httputil.NewSingleHostReverseProxy(target)
+			log.Printf("route: %s → %s [ip-restricted]", fqdn, route.Upstream)
+		}
+		allDomains = append(allDomains, fqdn)
+	}
 
-	// base request context used for cancelling long running requests
-	// like the SSE connections
-	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
+	log.Printf("allowed CIDRs for internal routes: %v", cfg.Internal.AllowedCIDRs)
 
-	server := &http.Server{
-		BaseContext: func(l net.Listener) context.Context { return baseCtx },
+	// Initialize Coraza WAF
+	waf, err := coraza.NewWAF(
+		coraza.NewWAFConfig().
+			WithDirectives(`
+				SecRuleEngine On
+			`),
+	)
+	if err != nil {
+		log.Fatalf("failed to initialize WAF: %v", err)
+	}
+
+	// Main handler
+	baseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := stripPort(r.Host)
+
+		// 1. Check public domains
+		if proxy, ok := publicProxies[host]; ok {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+
+		// 2. Check internal routes (*.api.thinkmay.net)
+		if strings.HasSuffix(host, suffix) {
+			name := strings.TrimSuffix(host, suffix)
+			if proxy, ok := internalProxies[name]; ok {
+				clientIP := extractClientIP(r)
+				if !isAllowed(clientIP, allowedNets) {
+					log.Printf("BLOCKED %s → %s from %s", host, name, clientIP)
+					http.Error(w, "403 Forbidden", http.StatusForbidden)
+					return
+				}
+				proxy.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		http.Error(w, "404 Not Found", http.StatusNotFound)
+	})
+
+	handler := txhttp.WrapHandler(waf, baseHandler)
+
+	// Apply CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowCredentials: true,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders:   []string{"*"},
+	})
+	handler = c.Handler(handler)
+
+	// autocert manager for Let's Encrypt
+	certManager := autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Email:      cfg.Email,
+		HostPolicy: autocert.HostWhitelist(allDomains...),
+		Cache:      autocert.DirCache(cfg.CertDir),
+	}
+
+	// HTTPS server
+	tlsSrv := &http.Server{
+		Addr:    ":443",
+		Handler: handler,
 		TLSConfig: &tls.Config{
-			MinVersion:     tls.VersionTLS12,
 			GetCertificate: certManager.GetCertificate,
-			NextProtos:     []string{acme.ALPNProto},
+			MinVersion:     tls.VersionTLS12,
 		},
-
-		ReadTimeout:       10 * time.Minute,
-		ReadHeaderTimeout: 30 * time.Second,
-		Addr:              fmt.Sprintf(":%d", rport),
-		Handler:           publicMux,
 	}
 
-	res := make(chan error)
-	SafeThread(func() {
-		fmt.Printf("rybbit listening on port %d\n", rport)
-		res <- server.ListenAndServeTLS("", "")
-		cancelBaseCtx()
-	})
+	// HTTP server — serves ACME challenges, redirects everything else to HTTPS
+	go func() {
+		httpSrv := &http.Server{
+			Addr: ":80",
+			Handler: certManager.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				target := "https://" + r.Host + r.URL.RequestURI()
+				http.Redirect(w, r, target, http.StatusMovedPermanently)
+			})),
+		}
+		log.Fatal(httpSrv.ListenAndServe())
+	}()
 
-	return res
+	log.Printf("gateway listening on :80 (HTTP) and :443 (HTTPS)")
+	log.Fatal(tlsSrv.ListenAndServeTLS("", ""))
 }
 
-func StartG4Global() <-chan error {
-	if len(certdoms) == 0 {
-		fmt.Println("no certdoms provided, don't g4global proxy")
-		return make(<-chan error)
-	} else if gport == 0 {
-		fmt.Println("no gport provided, don't start g4global proxy")
-		return make(<-chan error)
+// stripPort removes the port from a host:port string.
+func stripPort(hostport string) string {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return hostport // no port
 	}
-
-	publicMux.Handle("/", withCORS(newReverseProxy("http://kong:8000")))
-
-	// base request context used for cancelling long running requests
-	// like the SSE connections
-	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
-
-	server := &http.Server{
-		BaseContext: func(l net.Listener) context.Context { return baseCtx },
-		TLSConfig: &tls.Config{
-			MinVersion:     tls.VersionTLS12,
-			GetCertificate: certManager.GetCertificate,
-			NextProtos:     []string{acme.ALPNProto},
-		},
-
-		ReadTimeout:       10 * time.Minute,
-		ReadHeaderTimeout: 30 * time.Second,
-		Addr:              fmt.Sprintf(":%d", gport),
-		Handler:           publicMux,
-	}
-
-	res := make(chan error)
-	SafeThread(func() {
-		fmt.Printf("g4global listening on port %d\n", gport)
-		res <- server.ListenAndServeTLS("", "")
-		cancelBaseCtx()
-	})
-
-	return res
+	return host
 }
-func StartFeGlobal() <-chan error {
-	if len(certdoms) == 0 {
-                fmt.Println("no certdoms provided, don't feglobal proxy")
-                return make(<-chan error)
-        } else if fport == 0 {
-                fmt.Println("no feport provided, don't start feglobal proxy")
-                return make(<-chan error)
-        }
 
-        publicMux.Handle("/", withCORS(newReverseProxy("http://fe:3000")))
+// extractClientIP returns the client IP, respecting X-Forwarded-For and X-Real-IP.
+func extractClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return host
+}
 
-        certManager := &autocert.Manager{
-                Prompt:     autocert.AcceptTOS,
-                Cache:      autocert.DirCache("./pb_data/.autocert_cache"),
-                HostPolicy: autocert.HostWhitelist(certdoms...),
-        }
-        // base request context used for cancelling long running requests
-        // like the SSE connections
-        baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
-
-        server := &http.Server{
-                BaseContext: func(l net.Listener) context.Context { return baseCtx },
-                TLSConfig: &tls.Config{
-                        MinVersion:     tls.VersionTLS12,
-                        GetCertificate: certManager.GetCertificate,
-                        NextProtos:     []string{acme.ALPNProto},
-                },
-
-                ReadTimeout:       10 * time.Minute,
-                ReadHeaderTimeout: 30 * time.Second,
-                Addr:              fmt.Sprintf(":%d", fport),
-                Handler:           publicMux,
-        }
-
-        res := make(chan error)
-        SafeThread(func() {
-                fmt.Printf("feglobal listening on port %d\n", fport)
-                res <- server.ListenAndServeTLS("", "")
-                cancelBaseCtx()
-        })
-
-        return res
+// isAllowed checks if the IP is in one of the allowed CIDRs.
+func isAllowed(ip string, nets []*net.IPNet) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }

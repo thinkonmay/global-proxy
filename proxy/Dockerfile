@@ -1,33 +1,11 @@
-# ---- Build Stage ----
-FROM golang:1.25.0-alpine AS builder
-
-WORKDIR /app
-
-# Install build deps (git for go mod)
-RUN apk add --no-cache git
-
-# Cache go modules
+FROM golang:1.26-alpine AS build
+WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-
-# Copy source
 COPY . .
+RUN CGO_ENABLED=0 go build -o /gateway .
 
-# Build binary
-RUN go build -o globalproxy .
-
-# ---- Runtime Stage ----
 FROM alpine:3.20
-
-WORKDIR /app
-
-# Copy binary only
-COPY --from=builder /app/globalproxy .
-
-# Create autocert cache dir
-RUN mkdir -p /app/pb_data/.autocert_cache
-
-# Expose ports
-EXPOSE 445 3000 9446 9445
-
-ENTRYPOINT ["./globalproxy"]
+RUN apk add --no-cache ca-certificates
+COPY --from=build /gateway /gateway
+ENTRYPOINT ["/gateway"]

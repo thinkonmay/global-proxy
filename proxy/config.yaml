@@ -1,15 +1,24 @@
+cert_dir: /var/lib/gateway/certs
+email: huyhoangdo@contact.thinkmay.net
+
+# Public domains — no IP restriction
 domains:
-  - "saigon2.thinkmay.net"
-ports:
-  sport: 445
-  qport: 50050
-  rport: 0
-  gport: 0
-  feport: 0
+  thinkmay.net:
+    upstream: http://thinkmay-website:3000
+  www.thinkmay.net:
+    upstream: http://thinkmay-website:3000
+  analytics.thinkmay.net:
+    paths:
+      "/api/": http://rybbit-backend:3001
+      "/": http://rybbit-client:3002
 
-analytic_cred: "abc"
 
-waf:
-  allowed_ips:
-    - 192.168.1.1
-  allowed_paths: []
+# Internal services — IP whitelisted
+internal:
+  domain_suffix: api.thinkmay.net
+  allowed_cidrs:
+    - 127.0.0.0/8
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  routes: []
