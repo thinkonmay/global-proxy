@@ -17,9 +17,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type PathRoute struct {
+	Upstream    string `yaml:"upstream"`
+	StripPrefix string `yaml:"strip_prefix,omitempty"`
+}
+
+// UnmarshalYAML accepts either a bare upstream URL string or a PathRoute object.
+func (p *PathRoute) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		p.Upstream = value.Value
+		return nil
+	}
+	type plain PathRoute
+	var route plain
+	if err := value.Decode(&route); err != nil {
+		return err
+	}
+	*p = PathRoute(route)
+	return nil
+}
+
 type RouteEntry struct {
-	Upstream string            `yaml:"upstream"`
-	Paths    map[string]string `yaml:"paths"`
+	Upstream string               `yaml:"upstream"`
+	Paths    map[string]PathRoute `yaml:"paths"`
 }
 
 type Config struct {
@@ -71,13 +91,18 @@ func main() {
 	for domain, route := range cfg.Domains {
 		if len(route.Paths) > 0 {
 			mux := http.NewServeMux()
-			for path, upstream := range route.Paths {
-				target, err := url.Parse(upstream)
+			for path, pathRoute := range route.Paths {
+				target, err := url.Parse(pathRoute.Upstream)
 				if err != nil {
-					log.Fatalf("invalid upstream %q for path %q on domain %q: %v", upstream, path, domain, err)
+					log.Fatalf("invalid upstream %q for path %q on domain %q: %v", pathRoute.Upstream, path, domain, err)
 				}
-				mux.Handle(path, httputil.NewSingleHostReverseProxy(target))
-				log.Printf("route: %s%s → %s", domain, path, upstream)
+				handler := newReverseProxy(target, pathRoute.StripPrefix)
+				mux.Handle(path, handler)
+				if pathRoute.StripPrefix != "" {
+					log.Printf("route: %s%s → %s (strip %s)", domain, path, pathRoute.Upstream, pathRoute.StripPrefix)
+				} else {
+					log.Printf("route: %s%s → %s", domain, path, pathRoute.Upstream)
+				}
 			}
 			publicProxies[domain] = mux
 		} else {
@@ -98,13 +123,18 @@ func main() {
 		fqdn := name + suffix
 		if len(route.Paths) > 0 {
 			mux := http.NewServeMux()
-			for path, upstream := range route.Paths {
-				target, err := url.Parse(upstream)
+			for path, pathRoute := range route.Paths {
+				target, err := url.Parse(pathRoute.Upstream)
 				if err != nil {
-					log.Fatalf("invalid upstream %q for path %q on route %q: %v", upstream, path, name, err)
+					log.Fatalf("invalid upstream %q for path %q on route %q: %v", pathRoute.Upstream, path, name, err)
 				}
-				mux.Handle(path, httputil.NewSingleHostReverseProxy(target))
-				log.Printf("route: %s%s → %s [ip-restricted]", fqdn, path, upstream)
+				handler := newReverseProxy(target, pathRoute.StripPrefix)
+				mux.Handle(path, handler)
+				if pathRoute.StripPrefix != "" {
+					log.Printf("route: %s%s → %s (strip %s) [ip-restricted]", fqdn, path, pathRoute.Upstream, pathRoute.StripPrefix)
+				} else {
+					log.Printf("route: %s%s → %s [ip-restricted]", fqdn, path, pathRoute.Upstream)
+				}
 			}
 			internalProxies[name] = mux
 		} else {
@@ -237,4 +267,21 @@ func isAllowed(ip string, nets []*net.IPNet) bool {
 		}
 	}
 	return false
+}
+
+func newReverseProxy(target *url.URL, stripPrefix string) http.Handler {
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	if stripPrefix == "" {
+		return proxy
+	}
+
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, stripPrefix)
+		if req.URL.Path == "" {
+			req.URL.Path = "/"
+		}
+	}
+	return proxy
 }
