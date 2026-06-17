@@ -1,0 +1,17 @@
+port: "4000"
+
+log:
+  level: debug
+  format: json
+  addSource: true
+
+postgres:
+  host: localhost
+  port: 5432
+  username: thinkmay
+  password: peakthinkmaypassword
+  database: postgres
+  sslmode: disable
+
+redis:
+  addr: localhost:6379
