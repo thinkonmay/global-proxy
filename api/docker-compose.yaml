@@ -1,0 +1,248 @@
+name: thinkmay
+
+# No host ports on infra — services reach each other by name on the compose
+# network (postgrest:3000, kafka:9092, redis:6379, ...). Nothing binds to the
+# host, so no collisions with other stacks. To reach a service from the host:
+#   docker compose exec <svc> <cmd>        (run inside the network)
+# Only the gateway publishes one localhost port for dev curls (override below).
+
+x-jwt-secret: &jwt-secret "super-secret-jwt-token-with-at-least-32-characters-long"
+
+# Shared dev runner for the Go binaries: air hot-reload, source bind-mounted,
+# module/build caches persisted. No image rebuild on code change.
+x-app-dev: &app-dev
+  image: golang:1.26
+  working_dir: /src
+  volumes:
+    - .:/src                                           # api/ module root (incl. config/config.yaml)
+    - go-mod-cache:/go
+    - go-build-cache:/root/.cache/go-build
+  restart: unless-stopped
+
+services:
+  # ───────────────────────── Global plane ─────────────────────────
+  postgres:
+    container_name: thinkmay-postgres
+    image: supabase/postgres:17.6.1.136
+    environment:
+      POSTGRES_USER: thinkmay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-peakthinkmaypassword}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./compose/postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thinkmay -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  postgrest:
+    container_name: thinkmay-postgrest
+    image: postgrest/postgrest:v12.2.8
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD:-peakthinkmaypassword}@postgres:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: *jwt-secret
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    container_name: thinkmay-redis
+    image: redis:8
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  kafka:
+    container_name: thinkmay-kafka
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  clickhouse:
+    container_name: thinkmay-clickhouse
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: thinkmay
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-peakthinkmaypassword}
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./compose/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ───────────────────────── Admin (internal) ─────────────────────────
+  postgres-meta:
+    container_name: thinkmay-pg-meta
+    image: supabase/postgres-meta:v0.86.1
+    environment:
+      PG_META_PORT: "8080"
+      PG_META_DB_HOST: postgres
+      PG_META_DB_PORT: "5432"
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: thinkmay
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:-peakthinkmaypassword}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  studio:
+    container_name: thinkmay-studio
+    image: supabase/studio:2025.12.17-sha-43f4f7f
+    environment:
+      STUDIO_PG_META_URL: http://postgres-meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-peakthinkmaypassword}
+      DEFAULT_ORGANIZATION_NAME: thinkmay
+      DEFAULT_PROJECT_NAME: thinkmay-global
+      SUPABASE_URL: http://gateway:4000
+      SUPABASE_PUBLIC_URL: http://localhost:4000
+      # NOTE: Studio expects the full platform API (Kong) which is removed (D7).
+      # Schema browse via pg-meta works; some panels will be degraded.
+    depends_on:
+      - postgres-meta
+    restart: unless-stopped
+
+  # ───────────────────────── Observability ─────────────────────────
+  prometheus:
+    container_name: thinkmay-prometheus
+    image: prom/prometheus:latest
+    volumes:
+      - ./compose/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  grafana:
+    container_name: thinkmay-grafana
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # ───────────────────────── Node runtime island (P11) ─────────────────────────
+  pocketbase:
+    container_name: thinkmay-pocketbase
+    image: ghcr.io/muchobien/pocketbase:latest
+    volumes:
+      - pocketbase-data:/pb_data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ───────────────────────── App (hot reload via air) ─────────────────────────
+  gateway:
+    <<: *app-dev
+    container_name: thinkmay-gateway
+    command: >
+      sh -c "command -v air >/dev/null 2>&1 || go install github.com/air-verse/air@latest;
+             exec air -c compose/air.gateway.toml"
+    # Only published port (localhost). Override GATEWAY_PORT if 4000 is busy,
+    # or delete this block and curl via: docker compose exec gateway wget ...
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-4000}:4000"
+    depends_on:
+      postgrest:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app-dev
+    container_name: thinkmay-worker
+    command: >
+      sh -c "command -v air >/dev/null 2>&1 || go install github.com/air-verse/air@latest;
+             exec air -c compose/air.worker.toml"
+    depends_on:
+      postgrest:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  # ───────────────────────── Stubbed / out of scope ─────────────────────────
+  # elasticsearch : stores search + audit logs (Phase 2)
+  # rybbit-*      : product analytics stack (compose/rybbit.yaml)
+  # ntfy, listmonk: push + mail (D12)
+  # mcp           : catalog write path (D9)
+  # payment, storj: external SaaS — not locally mockable
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  clickhouse-data:
+  prometheus-data:
+  grafana-data:
+  pocketbase-data:
+  go-mod-cache:
+  go-build-cache:

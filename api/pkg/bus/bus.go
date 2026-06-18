@@ -1,0 +1,112 @@
+// Package bus provides a type-safe pub/sub event bus over codec-agnostic byte transports.
+package bus
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+)
+
+type Client interface {
+	Publish(ctx context.Context, topic string, payload []byte) error
+	Subscribe(topic, group string, h Handler, opts SubscribeOptions)
+
+	Ping() error
+	Close() error
+}
+
+// Handler consumes a batch of raw payloads (one payload unless batch options are set).
+type Handler func(ctx context.Context, payloads [][]byte) error
+
+// SubscribeOptions controls how a transport groups payloads before delivery.
+type SubscribeOptions struct {
+	BatchSize int           // flush once the batch holds this many payloads (min 1)
+	Linger    time.Duration // max wait after the first payload before flushing a partial batch
+}
+
+type SubscribeOption func(*SubscribeOptions)
+
+// ErrClosed is returned by Publish after Close.
+var ErrClosed = errors.New("bus: closed")
+
+// WithBatchSize delivers payloads in batches of up to n (pair with WithLinger to flush partials).
+func WithBatchSize(n int) SubscribeOption {
+	return func(o *SubscribeOptions) {
+		if n > 1 {
+			o.BatchSize = n
+		}
+	}
+}
+
+// WithLinger flushes a partial batch d after its first payload arrives.
+func WithLinger(d time.Duration) SubscribeOption {
+	return func(o *SubscribeOptions) {
+		if d > 0 {
+			o.Linger = d
+		}
+	}
+}
+
+// Topic binds a name to payload type T at compile time.
+type Topic[T any] struct {
+	Name string
+}
+
+func NewTopic[T any](name string) Topic[T] {
+	return Topic[T]{Name: name}
+}
+
+// Publish marshals payload and fans it out to every group subscribed to topic.
+func Publish[T any](ctx context.Context, c Client, topic Topic[T], payload T) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("bus: marshal %s: %w", topic.Name, err)
+	}
+	return c.Publish(ctx, topic.Name, data)
+}
+
+// Subscribe registers h under group for topic, invoked once per payload.
+func Subscribe[T any](
+	c Client,
+	topic Topic[T],
+	group string,
+	h func(ctx context.Context, payload T) error,
+) {
+	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) error {
+		for _, raw := range raws {
+			var payload T
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				return fmt.Errorf("bus: unmarshal %s: %w", topic.Name, err)
+			}
+			if err := h(ctx, payload); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, SubscribeOptions{BatchSize: 1})
+}
+
+// SubscribeBatch registers h under group for topic; batches are shaped by WithBatchSize/WithLinger (default one payload per call).
+func SubscribeBatch[T any](
+	c Client,
+	topic Topic[T],
+	group string,
+	h func(ctx context.Context, payloads []T) error,
+	opts ...SubscribeOption,
+) {
+	options := SubscribeOptions{BatchSize: 1, Linger: 0}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) error {
+		payloads := make([]T, len(raws))
+		for i, raw := range raws {
+			if err := json.Unmarshal(raw, &payloads[i]); err != nil {
+				return fmt.Errorf("bus: unmarshal %s: %w", topic.Name, err)
+			}
+		}
+		return h(ctx, payloads)
+	}, options)
+}

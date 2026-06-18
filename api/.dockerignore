@@ -1,0 +1,11 @@
+.git
+.claude
+docs
+doc
+tmp
+*.md
+compose
+Dockerfile
+.dockerignore
+.env
+.env.*
