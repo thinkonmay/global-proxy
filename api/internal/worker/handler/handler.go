@@ -1,23 +1,23 @@
 package handler
 
 import (
-	"time"
+	"context"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
+	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
-	"github.com/thinkonmay/global-proxy/api/shared/repo"
 )
 
-// claimLease is the lock lease; ~matches the bus AckWait redelivery window.
-const claimLease = 30 * time.Second
-
 type Handler struct {
-	repo     *repo.Repo
+	idem     *idempotency.Guard
 	eventBus bus.Client
+	run      func(ctx context.Context, m model.JobMsg) error // side-effect (overridable in tests)
 }
 
-func New(r *repo.Repo, eventBus bus.Client) *Handler {
-	return &Handler{repo: r, eventBus: eventBus}
+func New(idem *idempotency.Guard, eventBus bus.Client) *Handler {
+	h := &Handler{idem: idem, eventBus: eventBus}
+	h.run = h.runJob
+	return h
 }
 
 func (h *Handler) Init() {

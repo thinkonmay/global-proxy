@@ -500,6 +500,39 @@ func TestNats_PoisonMessageGoesToDLQ(t *testing.T) {
 	assert.Equal(t, int64(maxDeliver), calls.Load(), "no redelivery after DLQ park")
 }
 
+// Handler error naks → redelivered; a later nil acks it. No DLQ, no extra delivery.
+func TestNats_HandlerErrorRedeliveredThenAcked(t *testing.T) {
+	if natsURL == "" {
+		t.Skip("nats backend unavailable")
+	}
+	c, err := busnats.Connect([]string{natsURL}, discardLogger(), busnats.WithMaxDeliver(5))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	topic := bus.NewTopic[event](uniqueTopic(t))
+	var calls atomic.Int64
+	acked := make(chan struct{})
+	bus.Subscribe(c, topic, "workers", func(_ context.Context, _ event) error {
+		if calls.Add(1) == 1 {
+			return fmt.Errorf("transient boom") // first attempt naks -> redeliver
+		}
+		close(acked) // second attempt succeeds -> ack
+		return nil
+	})
+	probeNatsConsumer(t, topic.Name, "workers")
+	require.NoError(t, bus.Publish(context.Background(), c, topic, event{ID: 1, Msg: "retry"}))
+
+	select {
+	case <-acked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("message was not redelivered after a handler error")
+	}
+	// Exactly two attempts: one fail, one success. No redelivery after the ack.
+	assert.Eventually(t, func() bool { return calls.Load() == 2 }, 5*time.Second, 50*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	assert.Equal(t, int64(2), calls.Load(), "no further redelivery after the successful ack")
+}
+
 // --- concurrency / stress ---
 
 // many publishers fan into a multi-consumer group; every id must arrive at

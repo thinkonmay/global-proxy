@@ -16,9 +16,9 @@ type createJobRequest struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-// Create publishes a job to the bus and fast-returns its id — the idempotency
+// CreateJob publishes a job to the bus and fast-returns its id — the idempotency
 // key the worker dedups on. No DB write.
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})

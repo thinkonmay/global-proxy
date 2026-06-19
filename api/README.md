@@ -84,16 +84,16 @@ Full Kong plugin matrix (request-transformer, basic-auth, per-path ACL) is
 ### 2.2 PostgREST client (`pkg/postgrest`)
 
 The **worker** (not the gateway) calls PostgREST over HTTP rather than SQL, via
-RPCs that keep the claim atomic:
+RPCs that register the message atomically:
 
 | Op | PostgREST call |
 |----|----------------|
-| Claim message | `POST /rpc/claim_message` → `acquired` \| `done` \| `locked` |
+| Register message | `POST /rpc/register_message` → `acquired` \| `skip` |
 | Mark outcome | `POST /rpc/mark_done` / `POST /rpc/mark_error` |
 
 Every call wraps `context.WithTimeout` (checklist **G2**: timeouts before
-breakers) and sets `apikey` + bearer JWT. The client also exposes `RPC` and
-`IsConflict`.
+breakers) and sets `apikey` + bearer JWT. The client also exposes typed CRUD
+(`Select` / `Insert` / `Update` / `Delete`), `RPC`, and `IsConflict`.
 
 ### 2.3 Outbound guard — circuit breaker + bulkhead + timeout (TDD §2.1.1)
 
@@ -187,19 +187,24 @@ flowchart TD
 ## 3. Async jobs — gateway → bus → worker
 
 The gateway **publishes** to the bus and fast-returns; the worker subscribes,
-claims, and executes. The full flow is **§3.1** below (this is what the code does).
+registers, and executes. The full flow is **§3.1** below (this is what the code does).
 
 - **Model** (`shared/model`): `TopicJob = bus.NewTopic[JobMsg]("jobs")` + `JobMsg` (carries the idempotency `id`);
   `TopicUsage = bus.NewTopic[UsageEvent]("usage.snapshot")` for the analytics sink.
-- **Bus** (`pkg/bus`): type-safe pub/sub with **per-message ack** (`Handler` returns `[]error`); `nats` (JetStream) in prod, `memory`/`redis` for tests.
+- **Bus** (`pkg/bus`): type-safe pub/sub with **per-message ack** (`Handler` returns `[]error`); `nats` (JetStream) in prod, `memory` for tests.
 
-### 3.1 Target flow — gateway publishes, worker owns dedup + lock
+### 3.1 Target flow — gateway publishes, worker runs at most once
 
 The gateway holds **no DB**: an enqueue API just **publishes** to the topic
 (`jobs`, `analytics`, …) and fast-returns the moment the bus accepts the message
-— it never checks a downstream result. All durable state lives at the **worker**,
-in one table that merges the idempotency ledger and the processing lock:
-`processed_message`.
+— it never checks a downstream result. Dedup state lives at the **worker** in one
+table, `processed_message` (`pkg/idempotency`).
+
+The worker runs each id **at most once**: `register_message` is a register-first
+claim (`INSERT … ON CONFLICT DO NOTHING`) — the consume commitment. The first
+delivery runs the side-effect; any later delivery (duplicate or crash redelivery)
+sees the row and **skips**. The side-effect is **never retried** — chosen because
+the destination cannot dedup, so a double-run is worse than a drop (§4b).
 
 ```mermaid
 sequenceDiagram
@@ -213,85 +218,81 @@ sequenceDiagram
     C->>GW: enqueue {topic, payload}
     GW->>Bus: Publish(topic, msg)
     GW-->>C: 202 — publish ok, no DB write
-    Bus-->>W: msg (at-least-once)
-    W->>PG: claim_message(id, lease)
-    alt status = done
-        PG-->>W: "done" (already processed)
-        W->>Bus: Ack — idempotent skip
-    else locked by another worker
-        PG-->>W: "locked"
-        W->>Bus: Nak — retry after lease
-    else acquired (free / expired / prior error)
-        PG-->>W: "acquired", locked_until = now()+lease
-        W->>DST: run side-effect
+    Bus-->>W: msg (at-least-once delivery)
+    W->>PG: register_message(id)
+    alt row already exists (any status)
+        PG-->>W: "skip"
+        W->>Bus: Ack — already attempted, no rerun
+    else fresh insert
+        PG-->>W: "acquired"
+        W->>DST: run side-effect (the one and only attempt)
         alt success
-            W->>PG: mark done (clear lock)
-            W->>Bus: Ack
+            W->>PG: mark_done
         else failure
-            W->>PG: mark error (clear lock)
-            W->>Bus: Nak — redeliver, DLQ after maxDeliver
+            W->>PG: mark_error (recorded, not retried)
         end
+        W->>Bus: Ack — always (never redeliver for a rerun)
     end
+    note over W,PG: register RPC itself fails (DB down) ⇒ Nak, retry the claim (safe: DO NOTHING)
 ```
 
-`claim_message` is a single PostgREST **RPC** = one Postgres transaction, so the
-idempotency check and the lock acquire are atomic — there is no window where two
-workers both "see free, then both lock". The merged table:
+`register_message` is a single PostgREST **RPC** = one Postgres transaction; the
+INSERT…ON CONFLICT is atomic, so two concurrent workers can't both acquire. The
+table:
 
 | column | role |
 |--------|------|
 | `id` | message id = **idempotency key** (PK) |
-| `status` | `pending` / `done` / `error` |
-| `locked_until` | **lease**; `< now()` = free (a dead worker auto-releases) |
-| `attempts` | claim / redelivery count |
+| `status` | `pending` / `done` / `error` — **observability only** (never gates re-run) |
+| `updated_at` | last write |
 
-- **Idempotency:** `status = done` ⇒ skip (Ack). `error` or absent ⇒ run the side-effect.
-- **Lock:** `locked_until` blocks a second worker until the lease expires. A worker
-  that dies mid-process never unlocks explicitly — the lease lapses and the next
-  delivery re-acquires. Postgres has no row TTL; the lease column **is** the TTL,
-  checked lazily at claim time — no reaper job.
+- **Dedup by existence:** a fresh INSERT ⇒ `acquired` (run). Any existing row ⇒
+  `skip` (Ack, no rerun) — regardless of status.
+- **At most once:** the INSERT is the consume fence. Once it commits the message
+  is never run again — duplicate, slow-job redelivery, or crash all skip.
+- **No retry:** a side-effect failure is recorded (`mark_error`) and **Ack'd** — a
+  retry would be a second attempt. Only a `register` RPC error (claim not
+  committed) Naks, and re-running the claim is safe (`DO NOTHING`).
 
-> **Residual at-least-once gap (by design, not a bug).** The lock kills
-> *concurrent* doubles and `done` skips *redelivered* ones — but if a worker
-> finishes the side-effect and crashes **before** `mark done`, the lease lapses
-> and the side-effect re-runs. Closing that last window needs either an
-> **idempotent side-effect** (destination unique key, §4b) or folding the
-> side-effect + `mark done` into one transaction (impossible across an HTTP
-> destination). So `processed_message` is the **claim-then-do** primary; a
-> dedup-capable destination is the belt-and-suspenders.
+> **Trade-off (at most once, by choice).** A worker that crashes between the
+> register commit and finishing the side-effect drops the message (0 runs) — the
+> bus redelivers, but `register` now skips it. We accept loss over double-run
+> because the destination is **not idempotent** (§4b). To instead never lose, the
+> destination must dedup by message id; then flip to at-least-once (skip on `done`
+> only, retry on error).
 
 ---
 
 ## 4. Worker
 
-A thin loop: subscribe to `TopicJob` → `claim_message` (idempotency + lock) → run
-the side-effect → `mark_done` / `mark_error`. Full flow in §3.1.
+A thin loop: subscribe to `TopicJob` → `idem.Run(id, fn)` → the guard registers,
+runs the side-effect, and records the outcome. Full flow in §3.1.
+
+**Idempotency** (`pkg/idempotency`): a `Guard` over a `Store` interface — backends
+`PostgrestStore` (durable, prod) and `MemStore` (tests). `Guard.Run` is the
+at-most-once orchestration: register → skip-or-run → `mark_done`/`mark_error`,
+always Ack (only a register error Naks).
 
 **Bus today:** `pkg/bus/nats` is **NATS JetStream** — durable pull consumers,
-explicit Ack, redelivery on restart, **DLQ + max-deliver** (§4b). At-least-once,
-**not** fire-and-forget. (`redis` Streams + `memory` backends remain for
-tests / as options.)
+explicit Ack, redelivery on restart, **DLQ + max-deliver** (§4b). The transport is
+at-least-once; the worker turns it into **at-most-once** via register-first
+(§3.1). (`memory` backend remains for tests.)
 
-**State:** the worker owns one table — `processed_message`, merging the
-idempotency ledger and the processing lock — reached over **PostgREST RPC**, no
-direct DB handle (P2/P3). The old `job` / `outbox` / `processed_jobs` tables are
-gone.
+**State:** the worker owns one table — `processed_message` (the at-most-once
+ledger) — reached over **PostgREST RPC**, no direct DB handle (P2/P3).
 
-**OPEN — transport (Kafka vs NATS JetStream).** `planning.md` D3 / checklist Q1
-say **Kafka**; the code currently uses **NATS JetStream**. JetStream gives durable
-streams + replay + DLQ in one light binary (fits the single-host, solo-dev lean
-goal), and analytics goes NATS → a Go sink → ClickHouse (`cmd/usagesink`) since CH
-has no native NATS engine. This **contradicts a resolved D-decision** and must be
-reconciled in `planning.md` before adoption, not chosen silently here.
+**Transport:** **NATS JetStream** — durable streams + replay + DLQ in one light
+binary (fits the single-host, solo-dev lean goal); analytics goes NATS → a Go
+sink → ClickHouse (`cmd/usagesink`) since CH has no native NATS engine. This
+supersedes the earlier Kafka pick in `planning.md` D3.
 
 ---
 
-## 4b. Delivery semantics — at-least-once, DLQ, idempotency
+## 4b. Delivery semantics — at-least-once bus, at-most-once worker, DLQ
 
-The bus is **NATS JetStream** (`pkg/bus/nats`). Delivery contract across every
-backend: each message is **Ack'd only when its verdict is nil** — `Handler`
-returns `[]error`, one slot per payload, so one poison message in a batch naks
-**only itself**, not its neighbours ⇒ **at-least-once**. An error/panic/crash
+The bus **transport** is at-least-once: each message is **Ack'd only when its
+verdict is nil** — `Handler` returns `[]error`, one slot per payload, so one poison
+message in a batch naks **only itself**, not its neighbours. An error/panic/crash
 leaves it un-acked ⇒ redelivered. After `maxDeliver` attempts it is parked in
 `<topic>.DLQ` so a poison message can't crash-loop the consumer forever.
 
@@ -308,47 +309,28 @@ flowchart TD
     R --> F
 ```
 
-**Two ways the same message gets processed twice** (both inherent to
-at-least-once — not bugs to remove):
+So the bus may **deliver** a message more than once (competing consumers, or a
+crash before Ack). The **worker** makes *processing* **at most once** on top of
+that: `register_message` (§3.1) is a DB-atomic `INSERT … ON CONFLICT DO NOTHING`,
+so the first delivery acquires and every later one skips — no in-process mutex
+(a `sync.Mutex` guards one process only, useless across competing consumers /
+multi-host, TDD F3).
 
-| Root | Cause |
-|------|-------|
-| **Concurrent** | two consumers (competing group / multi-instance) get the same key at once |
-| **Sequential** | handler did the work, then crashed/closed **before** Ack ⇒ redelivered on restart |
+| Bus delivers twice because… | Worker outcome |
+|------|------|
+| **Concurrent** — two consumers get the same id at once | one INSERT wins (`acquired`), the other `skip`s |
+| **Redelivery** — handler ran then crashed before Ack | `register` sees the row ⇒ `skip` (the side-effect is **not** re-run) |
 
-**Both are solved by a DB-atomic claim, not by an in-process mutex** (a
-`sync.Mutex` only guards one process — useless across competing consumers /
-multi-host, TDD F3). The primary mechanism is the worker's **`processed_message`
-claim** (§3.1): `claim_message` is one transaction, so check-idempotency +
-acquire-lock can't race. A dedup-capable **destination** (below) closes the
-remaining "side-effect done, crash before `mark_done`" window.
-
-```mermaid
-sequenceDiagram
-    participant W as Worker (consumer)
-    participant PB as Node PocketBase (destination)
-
-    Note over W,PB: at-least-once ⇒ msg may arrive >1× (concurrent or redeliver)
-    W->>PB: POST volume record (idempotency_key = job id)
-    alt key unseen
-        PB->>PB: INSERT (unique job_id) — do the work
-        PB-->>W: 201 created
-    else key already processed
-        PB-->>W: 409 / no-op (unique conflict)
-    end
-    Note over W: Ack after PB confirms — 201 AND 409 both = success
-```
-
-> Why also destination-side: the consumer dispatches the side-effect over **HTTP**,
-> not inside the `processed_message` transaction — so it can't fold the dedup row
-> and the side-effect into one tx. The worker claim is **claim-then-do** (acquire
-> → work → `mark_done`); if it crashes between work and `mark_done`, the lease
-> lapses and the work re-runs. A unique key at the destination makes that re-run a
-> no-op — belt-and-suspenders for true exactly-once.
+**Why at-most-once (not idempotent-destination exactly-once).** The destination
+**cannot dedup** by message id, so a double side-effect is unacceptable — worse
+than a drop. The register-first claim guarantees ≤1 run; the cost is that a worker
+crashing mid-side-effect drops the message (the redelivery skips). If the
+destination later gains a dedup key, switch to at-least-once (skip on `done`,
+retry on error) for no-loss exactly-once.
 
 **DLQ knobs** (`pkg/bus/nats`): `WithMaxDeliver(n)` (default 5; `n<=0` = unlimited).
-Poison → `<topic>.DLQ`. `bus.Attempt(ctx)` exposes the redelivery count to a
-handler. Covered by `TestNats_PoisonMessageGoesToDLQ` (real JetStream container).
+Poison → `<topic>.DLQ`. Covered by `TestNats_PoisonMessageGoesToDLQ` (real
+JetStream container).
 
 ---
 

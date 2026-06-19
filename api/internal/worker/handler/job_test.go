@@ -2,68 +2,83 @@ package handler
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
+	"errors"
+	"sync"
 	"testing"
 
-	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
+	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
-	"github.com/thinkonmay/global-proxy/api/shared/repo"
 )
 
-type hits struct{ claim, done, fail atomic.Bool }
-
-// newJobHandler wires a Handler against a fake PostgREST whose claim_message RPC
-// returns claimStatus.
-func newJobHandler(t *testing.T, claimStatus string) (*Handler, *hits) {
-	t.Helper()
-	h := &hits{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/rpc/claim_message":
-			h.claim.Store(true)
-			_, _ = w.Write([]byte(`"` + claimStatus + `"`))
-		case "/rpc/mark_done":
-			h.done.Store(true)
-		case "/rpc/mark_error":
-			h.fail.Store(true)
-		default:
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	hd := New(repo.NewRepo(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})), nil)
-	return hd, h
+func newHandler() *Handler {
+	return New(idempotency.New(idempotency.NewMemStore()), nil)
 }
 
-func TestHandleJob_AcquiredRunsAndMarksDone(t *testing.T) {
-	hd, h := newJobHandler(t, repo.ClaimAcquired)
-	if err := hd.handleJob(context.Background(), model.JobMsg{ID: "j1", Command: "x"}); err != nil {
-		t.Fatalf("handleJob: %v", err)
+// fakeBus captures Publish topics; failPub simulates a down DLQ.
+type fakeBus struct {
+	mu      sync.Mutex
+	topics  []string
+	failPub bool
+}
+
+func (f *fakeBus) Publish(_ context.Context, topic string, _ []byte) error {
+	if f.failPub {
+		return errors.New("bus down")
 	}
-	if !h.claim.Load() || !h.done.Load() {
-		t.Errorf("claim=%v done=%v, want both true", h.claim.Load(), h.done.Load())
-	}
-	if h.fail.Load() {
-		t.Error("mark_error called on success, want not")
+	f.mu.Lock()
+	f.topics = append(f.topics, topic)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeBus) Subscribe(string, string, bus.Handler, bus.SubscribeOptions) {}
+func (f *fakeBus) Ping() error  { return nil }
+func (f *fakeBus) Close() error { return nil }
+
+// failMarkStore is a MemStore whose MarkError always fails (db down).
+type failMarkStore struct{ *idempotency.MemStore }
+
+func (failMarkStore) MarkError(context.Context, string) error { return errors.New("db down") }
+
+func TestHandleJob_RunsAndAcks(t *testing.T) {
+	h := newHandler()
+	if err := h.handleJob(context.Background(), model.JobMsg{ID: "j1", Command: "x"}); err != nil {
+		t.Fatalf("handleJob = %v, want nil (ack)", err)
 	}
 }
 
-func TestHandleJob_DoneSkips(t *testing.T) {
-	hd, h := newJobHandler(t, repo.ClaimDone)
-	if err := hd.handleJob(context.Background(), model.JobMsg{ID: "j1"}); err != nil {
-		t.Fatalf("done should ack (nil), got: %v", err)
+// A duplicate id skips and still acks (nil) — never re-runs, never errors.
+func TestHandleJob_DuplicateSkipsAndAcks(t *testing.T) {
+	h := newHandler()
+	ctx := context.Background()
+	if err := h.handleJob(ctx, model.JobMsg{ID: "j1"}); err != nil {
+		t.Fatalf("first = %v", err)
 	}
-	if h.done.Load() {
-		t.Error("mark_done called on skip, want not")
+	if err := h.handleJob(ctx, model.JobMsg{ID: "j1"}); err != nil {
+		t.Fatalf("duplicate = %v, want nil (skip-ack)", err)
 	}
 }
 
-func TestHandleJob_LockedNaks(t *testing.T) {
-	hd, _ := newJobHandler(t, repo.ClaimLocked)
-	if err := hd.handleJob(context.Background(), model.JobMsg{ID: "j1"}); err == nil {
-		t.Fatal("locked should return error so the bus naks")
+// fn fails AND the store can't record it -> escalate to the DLQ topic, then ack.
+func TestHandleJob_EscalatesToDLQWhenRecordFails(t *testing.T) {
+	fb := &fakeBus{}
+	h := New(idempotency.New(failMarkStore{idempotency.NewMemStore()}), fb)
+	h.run = func(context.Context, model.JobMsg) error { return errors.New("fn boom") }
+
+	if err := h.handleJob(context.Background(), model.JobMsg{ID: "j1"}); err != nil {
+		t.Fatalf("handleJob = %v, want nil (acked after DLQ)", err)
+	}
+	if len(fb.topics) != 1 || fb.topics[0] != "jobs.DLQ" {
+		t.Fatalf("DLQ publishes = %v, want [jobs.DLQ]", fb.topics)
+	}
+}
+
+// DLQ also down: ack anyway (no recovery possible), don't nak.
+func TestHandleJob_DLQDownStillAcks(t *testing.T) {
+	h := New(idempotency.New(failMarkStore{idempotency.NewMemStore()}), &fakeBus{failPub: true})
+	h.run = func(context.Context, model.JobMsg) error { return errors.New("fn boom") }
+
+	if err := h.handleJob(context.Background(), model.JobMsg{ID: "j1"}); err != nil {
+		t.Fatalf("handleJob = %v, want nil (ack, accept loss)", err)
 	}
 }

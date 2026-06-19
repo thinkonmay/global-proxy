@@ -20,7 +20,6 @@ const (
 	natsRetryBackoff    = time.Second      // wait after a real fetch error
 	natsAckWait         = 30 * time.Second // redelivery window for un-acked msgs
 	natsDefaultMaxDeliv = 5                // handler attempts before a msg goes to DLQ
-	dlqSuffix           = ".DLQ"           // DLQ subject = <topic>.DLQ
 )
 
 var _ bus.Client = (*Nats)(nil)
@@ -189,9 +188,7 @@ func (n *Nats) consume(topic, group string, h bus.Handler, opts bus.SubscribeOpt
 
 		// Per-message verdict: errs[i] nil => Ack msg i, non-nil => Nak it
 		// (redelivered; NumDelivered climbs, eventually crossing maxDeliver -> DLQ).
-		// ctx carries the batch attempt via bus.Attempt.
-		ctx := bus.WithAttempt(n.ctx, attempt)
-		errs := safeHandle(ctx, h, payloads)
+		errs := safeHandle(n.ctx, h, payloads)
 		var failed int
 		for i, m := range live {
 			if bus.Failed(errs, i) {
@@ -212,7 +209,7 @@ func (n *Nats) consume(topic, group string, h bus.Handler, opts bus.SubscribeOpt
 // stream. If the DLQ publish fails the message is left un-acked so it is retried
 // rather than lost.
 func (n *Nats) toDLQ(topic, group string, msg jetstream.Msg, deliv int) {
-	dlq := topic + dlqSuffix
+	dlq := bus.DlqTopic(topic)
 	if err := n.ensureStream(n.ctx, dlq); err != nil {
 		n.logger.Error("bus: nats dlq stream", "topic", dlq, "err", err)
 		return

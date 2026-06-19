@@ -11,8 +11,8 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/handler"
+	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
-	"github.com/thinkonmay/global-proxy/api/shared/repo"
 
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 )
@@ -39,7 +39,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := handler.New(repo.NewRepo(pr), eventBus)
+	h := handler.New(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus)
 	h.Init()
 
 	slog.Info("worker started")

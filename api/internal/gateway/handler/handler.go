@@ -19,7 +19,12 @@ func NewHandler(bus bus.Client) *Handler {
 
 // Route registers the handler's typed endpoints on mux.
 func (h *Handler) Route(mux *http.ServeMux) {
-	mux.HandleFunc("POST /jobs", h.Create)
+	mux.HandleFunc("GET /health", h.Health)
+	mux.HandleFunc("POST /jobs", h.CreateJob)
+}
+
+func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

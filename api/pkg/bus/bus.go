@@ -44,20 +44,8 @@ func Each(n int, err error) []error {
 	return errs
 }
 
-type attemptKey struct{}
-
-// WithAttempt tags ctx with the redelivery attempt for the batch about to be
-// handled (1 = first delivery). Backends that track redelivery call this.
-func WithAttempt(ctx context.Context, n int) context.Context {
-	return context.WithValue(ctx, attemptKey{}, n)
-}
-
-// Attempt reports the redelivery attempt of the batch currently being handled
-// (1 = first delivery). ok is false on backends that don't track redelivery
-// (e.g. memory).
-func Attempt(ctx context.Context) (n int, ok bool) {
-	n, ok = ctx.Value(attemptKey{}).(int)
-	return
+func DlqTopic(topic string) string {
+	return topic + ".DLQ"
 }
 
 // SubscribeOptions controls how a transport groups payloads before delivery.

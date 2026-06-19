@@ -27,12 +27,7 @@ var (
 func newMux(h *handler.Handler, prCfg config.PostgREST, rt http.RoundTripper) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
 	h.Route(mux)
-	// Job status is read through the /rest/v1 proxy (GET /rest/v1/processed_message).
 
 	// Supabase-compatible REST passthrough to PostgREST (P0-A).
 	registerRestProxy(mux, prCfg, rt)
@@ -45,18 +40,4 @@ func newMux(h *handler.Handler, prCfg config.PostgREST, rt http.RoundTripper) ht
 		guard.Allowlist(guard.IPSet(ipWhitelist...)),
 		guard.RateLimit(guard.RateLimitConfig{RPS: rateRPS, Burst: rateBurst}),
 	)
-}
-
-func withCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Headers", "*")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
