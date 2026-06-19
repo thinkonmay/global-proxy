@@ -28,8 +28,7 @@ func TestUpdateSendsPatchWithFilter(t *testing.T) {
 
 	q := url.Values{}
 	q.Set("id", "eq.7")
-	_, err := newTestClient(srv.URL).Update(context.Background(), "job", q, map[string]any{"success": true}, false)
-	if err != nil {
+	if err := newTestClient(srv.URL).Update(context.Background(), "job", q, map[string]any{"success": true}, nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if gotMethod != http.MethodPatch {
@@ -46,14 +45,11 @@ func TestUpdateSendsPatchWithFilter(t *testing.T) {
 	}
 }
 
-func TestInsertReturnsRepresentation(t *testing.T) {
+func TestInsertDecodesRepresentation(t *testing.T) {
 	var gotPrefer, gotContentType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/job" {
-			t.Errorf("path = %s, want /job", r.URL.Path)
+		if r.Method != http.MethodPost || r.URL.Path != "/job" {
+			t.Errorf("got %s %s, want POST /job", r.Method, r.URL.Path)
 		}
 		gotPrefer = r.Header.Get("Prefer")
 		gotContentType = r.Header.Get("Content-Type")
@@ -62,29 +58,24 @@ func TestInsertReturnsRepresentation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	body, err := newTestClient(srv.URL).Insert(context.Background(), "job", map[string]any{"command": "x"}, true)
-	if err != nil {
-		t.Fatalf("Insert: %v", err)
-	}
-	if gotPrefer != "return=representation" {
-		t.Errorf("Prefer = %q, want return=representation", gotPrefer)
-	}
-	if gotContentType != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", gotContentType)
-	}
-
 	var rows []struct {
 		ID int64 `json:"id"`
 	}
-	if err := json.Unmarshal(body, &rows); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if err := newTestClient(srv.URL).Insert(context.Background(), "job", map[string]any{"command": "x"}, &rows); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if gotPrefer != "return=representation" {
+		t.Errorf("Prefer = %q, want return=representation (dest non-nil)", gotPrefer)
+	}
+	if gotContentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotContentType)
 	}
 	if len(rows) != 1 || rows[0].ID != 7 {
 		t.Errorf("rows = %+v, want [{7}]", rows)
 	}
 }
 
-func TestSelectBuildsQuery(t *testing.T) {
+func TestSelectBuildsQueryAndDecodes(t *testing.T) {
 	var gotRawQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotRawQuery = r.URL.RawQuery
@@ -95,15 +86,17 @@ func TestSelectBuildsQuery(t *testing.T) {
 	q := url.Values{}
 	q.Set("id", "eq.5")
 	q.Set("limit", "1")
-	body, err := newTestClient(srv.URL).Select(context.Background(), "job", q)
-	if err != nil {
+	var rows []struct {
+		ID int64 `json:"id"`
+	}
+	if err := newTestClient(srv.URL).Select(context.Background(), "job", q, &rows); err != nil {
 		t.Fatalf("Select: %v", err)
 	}
 	if gotRawQuery != "id=eq.5&limit=1" {
 		t.Errorf("raw query = %q, want id=eq.5&limit=1", gotRawQuery)
 	}
-	if string(body) != `[{"id":5}]` {
-		t.Errorf("body = %s", body)
+	if len(rows) != 1 || rows[0].ID != 5 {
+		t.Errorf("rows = %+v, want [{5}]", rows)
 	}
 }
 
@@ -117,7 +110,7 @@ func TestInjectsAuthHeaders(t *testing.T) {
 	defer srv.Close()
 
 	// reads use the anon key
-	if _, err := newTestClient(srv.URL).Select(context.Background(), "job", nil); err != nil {
+	if err := newTestClient(srv.URL).Select(context.Background(), "job", nil, nil); err != nil {
 		t.Fatalf("Select: %v", err)
 	}
 	if apikey != "anon-key" {
@@ -133,11 +126,10 @@ func TestInsertUsesServiceKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`[]`))
 	}))
 	defer srv.Close()
 
-	if _, err := newTestClient(srv.URL).Insert(context.Background(), "job", map[string]any{}, false); err != nil {
+	if err := newTestClient(srv.URL).Insert(context.Background(), "job", map[string]any{}, nil); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 	if auth != "Bearer service-key" {
@@ -152,8 +144,7 @@ func TestNon2xxIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestClient(srv.URL).Select(context.Background(), "job", nil)
-	if err == nil {
+	if err := newTestClient(srv.URL).Select(context.Background(), "job", nil, nil); err == nil {
 		t.Fatal("expected error on 400, got nil")
 	}
 }
@@ -167,8 +158,7 @@ func TestTimeout(t *testing.T) {
 
 	c := newTestClient(srv.URL)
 	c.timeout = 10 * time.Millisecond
-	_, err := c.Select(context.Background(), "job", nil)
-	if err == nil {
+	if err := c.Select(context.Background(), "job", nil, nil); err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
 }

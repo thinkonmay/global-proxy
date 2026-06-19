@@ -1,7 +1,7 @@
 name: thinkmay
 
 # No host ports on infra — services reach each other by name on the compose
-# network (postgrest:3000, kafka:9092, redis:6379, ...). Nothing binds to the
+# network (postgrest:3000, nats:4222, ...). Nothing binds to the
 # host, so no collisions with other stacks. To reach a service from the host:
 #   docker compose exec <svc> <cmd>        (run inside the network)
 # Only the gateway publishes one localhost port for dev curls (override below).
@@ -53,46 +53,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  redis:
-    container_name: thinkmay-redis
-    image: redis:8
-    command: redis-server --appendonly yes
+  # Event bus — NATS JetStream (replaces both the redis bus and kafka).
+  # Image is a static binary (no shell), so no in-container healthcheck;
+  # dependents gate on service_started. -js = JetStream, -sd = store dir.
+  nats:
+    container_name: thinkmay-nats
+    image: nats:2.10
+    command: ["-js", "-sd", "/data", "-m", "8222"]
     volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-
-  kafka:
-    container_name: thinkmay-kafka
-    image: apache/kafka:3.9.0
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 20s
+      - nats-data:/data
     restart: unless-stopped
 
   clickhouse:
@@ -110,9 +79,6 @@ services:
       nofile:
         soft: 262144
         hard: 262144
-    depends_on:
-      kafka:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -214,8 +180,8 @@ services:
     depends_on:
       postgrest:
         condition: service_started
-      redis:
-        condition: service_healthy
+      nats:
+        condition: service_started
 
   worker:
     <<: *app-dev
@@ -226,7 +192,20 @@ services:
     depends_on:
       postgrest:
         condition: service_started
-      redis:
+      nats:
+        condition: service_started
+
+  # Analytics sink: NATS usage.snapshot -> batch INSERT into ClickHouse
+  usagesink:
+    <<: *app-dev
+    container_name: thinkmay-usagesink
+    command: >
+      sh -c "command -v air >/dev/null 2>&1 || go install github.com/air-verse/air@latest;
+             exec air -c compose/air.usagesink.toml"
+    depends_on:
+      nats:
+        condition: service_started
+      clickhouse:
         condition: service_healthy
 
   # ───────────────────────── Stubbed / out of scope ─────────────────────────
@@ -238,8 +217,7 @@ services:
 
 volumes:
   postgres-data:
-  redis-data:
-  kafka-data:
+  nats-data:
   clickhouse-data:
   prometheus-data:
   grafana-data:

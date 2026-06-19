@@ -15,31 +15,50 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 ALTER ROLE authenticator WITH LOGIN PASSWORD 'peakthinkmaypassword';
 GRANT anon, authenticated, service_role TO authenticator;
 
--- 2. Jobs backbone (gateway enqueues via PostgREST; worker records outcome via PostgREST PATCH)
-CREATE TABLE IF NOT EXISTS job (
-  id          bigserial PRIMARY KEY,
-  command     text        NOT NULL,
-  arguments   jsonb       NOT NULL DEFAULT '{}'::jsonb,
-  cluster     bigint,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  finished_at timestamptz,
-  result      jsonb,
-  success     boolean
+-- 2. Worker state: one table merging the idempotency ledger and the processing
+-- lock. Gateway never touches it — it only publishes; the worker owns all state.
+CREATE TABLE IF NOT EXISTS processed_message (
+  id           text PRIMARY KEY,                  -- message id = idempotency key
+  status       text        NOT NULL DEFAULT 'pending', -- pending | done | error
+  locked_until timestamptz NOT NULL DEFAULT now(),  -- lease; < now() = free
+  attempts     int         NOT NULL DEFAULT 0,
+  updated_at   timestamptz NOT NULL DEFAULT now()
 );
 
--- 3. Transactional outbox (durability authority for jobs/payments; relay reads this)
-CREATE TABLE IF NOT EXISTS outbox (
-  id            bigserial PRIMARY KEY,
-  topic         text        NOT NULL,
-  payload       jsonb       NOT NULL,
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  dispatched_at timestamptz                         -- NULL = pending; poller backstop
-);
-CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox (created_at) WHERE dispatched_at IS NULL;
+-- claim_message: atomic idempotency-check + lock-acquire in one transaction.
+-- Returns 'done' (already processed, skip), 'locked' (held by another worker),
+-- or 'acquired' (lease taken, run the side-effect).
+CREATE OR REPLACE FUNCTION claim_message(p_id text, p_lease_secs int)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE existing text;
+BEGIN
+  INSERT INTO processed_message (id, status, locked_until, attempts)
+    VALUES (p_id, 'pending', now() + make_interval(secs => p_lease_secs), 1)
+  ON CONFLICT (id) DO UPDATE
+    SET locked_until = now() + make_interval(secs => p_lease_secs),
+        attempts     = processed_message.attempts + 1,
+        updated_at   = now()
+    WHERE processed_message.status <> 'done'
+      AND processed_message.locked_until < now();
+  IF FOUND THEN
+    RETURN 'acquired';
+  END IF;
+  SELECT status INTO existing FROM processed_message WHERE id = p_id;
+  IF existing = 'done' THEN RETURN 'done'; END IF;
+  RETURN 'locked';
+END $$;
 
--- 4. Grants. MOCK-ONLY: anon may read job status; service_role writes everything.
+-- mark_done: status='done' alone blocks re-claim. mark_error: expire the lease
+-- (locked_until = now()) so the message is immediately re-acquirable.
+CREATE OR REPLACE FUNCTION mark_done(p_id text) RETURNS void LANGUAGE sql AS $$
+  UPDATE processed_message SET status = 'done',  updated_at = now() WHERE id = p_id;
+$$;
+CREATE OR REPLACE FUNCTION mark_error(p_id text) RETURNS void LANGUAGE sql AS $$
+  UPDATE processed_message SET status = 'error', locked_until = now(), updated_at = now() WHERE id = p_id;
+$$;
+
+-- 3. Grants. MOCK-ONLY: anon may read status; service_role drives the worker RPCs.
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT SELECT                         ON job, outbox TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON job, outbox TO service_role;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO service_role;
+GRANT SELECT                 ON processed_message TO anon;
+GRANT SELECT, INSERT, UPDATE ON processed_message TO service_role;
+GRANT EXECUTE ON FUNCTION claim_message(text, int), mark_done(text), mark_error(text) TO service_role;

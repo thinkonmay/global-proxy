@@ -103,9 +103,18 @@ func (m *Memory) consume(topic, group string, sub *memorySub, h bus.Handler, opt
 			return
 		}
 		batch := fillBatch(sub, first, opts)
-		if err := h(ctx, batch); err != nil {
+		// In-process bus: no redelivery, so a per-message failure is logged and
+		// dropped (the verdict slice only matters to durable transports).
+		errs := h(ctx, batch)
+		var failed int
+		for i := range batch {
+			if bus.Failed(errs, i) {
+				failed++
+			}
+		}
+		if failed > 0 {
 			m.logger.ErrorContext(ctx, "bus: handler failed",
-				"topic", topic, "group", group, "batch", len(batch), "err", err)
+				"topic", topic, "group", group, "batch", len(batch), "failed", failed)
 		}
 		m.inflight.Add(-len(batch))
 	}

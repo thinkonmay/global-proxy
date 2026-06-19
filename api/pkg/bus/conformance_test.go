@@ -13,27 +13,29 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/rueidis"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busmemory "github.com/thinkonmay/global-proxy/api/pkg/bus/memory"
-	busredis "github.com/thinkonmay/global-proxy/api/pkg/bus/redis"
+	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 )
 
-// Conformance suite: shared cases run against every bus.Client. Backend-specific
-// behaviour (redis redelivery, memory drop) gets its own tests below. Redis runs
-// in a throwaway container from TestMain; skipped if Docker is unavailable.
-
-// mirrors the unexported prefix in the redis backend.
-const redisStreamPrefix = "bus:"
+// Conformance suite: the shared cases (TestConformance_*) run against every
+// available backend. Adding a backend = append one entry to `registry` and write
+// its setup func — everything that backend needs (container, client, readiness
+// probe, teardown) lives in that one func. Backends whose container can't start
+// (no Docker) are skipped, not failed.
 
 var (
-	redisAddr string         // empty => redis backend skipped
-	redisRaw  rueidis.Client // side channel used only to probe subscription readiness
-	topicSeq  atomic.Uint64
+	topicSeq atomic.Uint64
+
+	// Set by setupNats; used only by the nats-specific tests below.
+	natsURL string
 )
 
 func discardLogger() *slog.Logger {
@@ -44,33 +46,7 @@ func TestMain(m *testing.M) {
 	os.Exit(runMain(m))
 }
 
-func runMain(m *testing.M) int {
-	ctx := context.Background()
-	ctr, err := tcredis.Run(ctx, "redis:7-alpine")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "bus tests: redis container unavailable, skipping redis backend: %v\n", err)
-		return m.Run()
-	}
-	defer func() { _ = ctr.Terminate(ctx) }()
-
-	endpoint, err := ctr.Endpoint(ctx, "")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "bus tests: redis endpoint: %v\n", err)
-		return m.Run()
-	}
-	raw, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{endpoint}})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "bus tests: redis probe client: %v\n", err)
-		return m.Run()
-	}
-	defer raw.Close()
-
-	redisAddr = endpoint
-	redisRaw = raw
-	return m.Run()
-}
-
-// backend is one named implementation under test.
+// backend is one named bus implementation under test.
 type backend struct {
 	name string
 	// newClient returns a fresh client, registering its shutdown on t.Cleanup.
@@ -79,66 +55,123 @@ type backend struct {
 	ready func(t *testing.T, topic, group string, want int)
 }
 
-func backends() []backend {
-	bs := []backend{{
+// setupFunc brings a backend up once for the whole suite. A non-nil error means
+// "unavailable" (skipped). cleanup runs at suite teardown (nil if nothing to do).
+type setupFunc func(ctx context.Context) (b backend, cleanup func(), err error)
+
+// registry — to add a backend, append ONE entry here and write its setup func.
+// Nothing else in this file changes.
+var registry = []struct {
+	name  string
+	setup setupFunc
+}{
+	{"memory", setupMemory},
+	{"nats", setupNats},
+}
+
+var activeBackends []backend
+
+func runMain(m *testing.M) int {
+	ctx := context.Background()
+	var cleanups []func()
+	for _, entry := range registry {
+		b, cleanup, err := entry.setup(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bus tests: %s unavailable, skipping: %v\n", entry.name, err)
+			continue
+		}
+		if cleanup != nil {
+			cleanups = append(cleanups, cleanup)
+		}
+		activeBackends = append(activeBackends, b)
+	}
+	code := m.Run()
+	for _, c := range cleanups {
+		c()
+	}
+	return code
+}
+
+func forEachBackend(t *testing.T, fn func(t *testing.T, b backend)) {
+	for _, b := range activeBackends {
+		t.Run(b.name, func(t *testing.T) { fn(t, b) })
+	}
+}
+
+// --- backend setups (one self-contained block each) ---
+
+func setupMemory(context.Context) (backend, func(), error) {
+	return backend{
 		name: "memory",
 		newClient: func(t *testing.T) bus.Client {
 			m := busmemory.NewMemory(discardLogger())
 			t.Cleanup(func() { _ = m.Close() })
 			return m
 		},
-		// memory subscribes synchronously; nothing to wait for.
-		ready: func(*testing.T, string, string, int) {},
-	}}
-
-	if redisAddr != "" {
-		bs = append(bs, backend{
-			name: "redis",
-			newClient: func(t *testing.T) bus.Client {
-				r, err := busredis.Connect([]string{redisAddr}, discardLogger())
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = r.Close() })
-				return r
-			},
-			ready: redisReady,
-		})
-	}
-	return bs
+		ready: func(*testing.T, string, string, int) {}, // subscribes synchronously
+	}, nil, nil
 }
 
-func forEachBackend(t *testing.T, fn func(t *testing.T, b backend)) {
-	for _, b := range backends() {
-		t.Run(b.name, func(t *testing.T) { fn(t, b) })
+func setupNats(ctx context.Context) (backend, func(), error) {
+	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "nats:2.10",
+			Cmd:          []string{"-js"}, // enable JetStream (valueless flag)
+			ExposedPorts: []string{"4222/tcp"},
+			WaitingFor:   wait.ForListeningPort("4222/tcp"),
+		},
+		Started: true,
+	})
+	if err != nil {
+		return backend{}, nil, err
 	}
-}
+	host, err := ctr.Host(ctx)
+	if err != nil {
+		_ = ctr.Terminate(ctx)
+		return backend{}, nil, err
+	}
+	port, err := ctr.MappedPort(ctx, "4222/tcp")
+	if err != nil {
+		_ = ctr.Terminate(ctx)
+		return backend{}, nil, err
+	}
+	url := fmt.Sprintf("nats://%s:%s", host, port.Port())
+	nc, err := nats.Connect(url)
+	if err != nil {
+		_ = ctr.Terminate(ctx)
+		return backend{}, nil, err
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		nc.Close()
+		_ = ctr.Terminate(ctx)
+		return backend{}, nil, err
+	}
+	natsURL = url // for the nats-specific tests
 
-// redisReady polls XINFO GROUPS until the group has >= want consumers (each
-// appears after its first XREADGROUP, i.e. its read loop is live).
-func redisReady(t *testing.T, topic, group string, want int) {
-	t.Helper()
-	stream := redisStreamPrefix + topic
-	ctx := context.Background()
-	for range 200 { // ~10s
-		arr, err := redisRaw.Do(ctx, redisRaw.B().XinfoGroups().Key(stream).Build()).ToArray()
-		if err == nil {
-			for _, g := range arr {
-				mp, err := g.AsMap()
-				if err != nil {
-					continue
-				}
-				nameMsg, consMsg := mp["name"], mp["consumers"]
-				name, _ := nameMsg.ToString()
-				if name != group {
-					continue
-				}
-				if n, _ := consMsg.ToInt64(); int(n) >= want {
-					return
-				}
+	// ready: poll until the durable consumer (group) exists on the topic's stream.
+	ready := func(t *testing.T, topic, group string, _ int) {
+		t.Helper()
+		stream := strings.NewReplacer(".", "_", "*", "_", ">", "_", " ", "_").Replace(topic)
+		for range 200 { // ~10s
+			if _, err := js.Consumer(ctx, stream, group); err == nil {
+				return
 			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		time.Sleep(50 * time.Millisecond)
+		t.Fatalf("nats consumer %q on stream %q not ready", group, stream)
 	}
-	t.Fatalf("redis group %q on stream %q not ready (want %d consumers)", group, stream, want)
+	b := backend{
+		name: "nats",
+		newClient: func(t *testing.T) bus.Client {
+			n, err := busnats.Connect([]string{url}, discardLogger())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = n.Close() })
+			return n
+		},
+		ready: ready,
+	}
+	return b, func() { nc.Close(); _ = ctr.Terminate(ctx) }, nil
 }
 
 func uniqueTopic(t *testing.T) string {
@@ -154,7 +187,7 @@ type sink struct {
 
 func newSink() *sink { return &sink{batches: make(chan []event, 4096)} }
 
-func (s *sink) handle(_ context.Context, payloads []event) error {
+func (s *sink) handle(_ context.Context, payloads []event) []error {
 	s.batches <- append([]event(nil), payloads...)
 	return nil
 }
@@ -404,43 +437,73 @@ func TestMemory_PublishAfterCloseReturnsErrClosed(t *testing.T) {
 	assert.ErrorIs(t, err, bus.ErrClosed)
 }
 
-// --- redis-specific behaviour ---
+// --- nats-specific behaviour ---
 
-func TestRedis_RedeliversUnackedAfterRestart(t *testing.T) {
-	if redisAddr == "" {
-		t.Skip("redis backend unavailable")
-	}
-	topic := bus.NewTopic[event](uniqueTopic(t))
-
-	// first client errors on every payload => nothing acked, entry stays pending.
-	r1, err := busredis.Connect([]string{redisAddr}, discardLogger())
+// probeNatsConsumer waits until a durable consumer exists (DeliverNew means it
+// must precede Publish, or the message is skipped).
+func probeNatsConsumer(t *testing.T, topic, group string) {
+	t.Helper()
+	nc, err := nats.Connect(natsURL)
 	require.NoError(t, err)
-	var firstCalls atomic.Int64
-	bus.Subscribe(r1, topic, "g1", func(context.Context, event) error {
-		firstCalls.Add(1)
+	defer nc.Close()
+	js, err := jetstream.New(nc)
+	require.NoError(t, err)
+	stream := strings.NewReplacer(".", "_", "*", "_", ">", "_", " ", "_").Replace(topic)
+	for range 200 {
+		if _, err := js.Consumer(context.Background(), stream, group); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("nats consumer %q on stream %q not ready", group, stream)
+}
+
+// A handler that always fails (simulates a consumer dying mid-process) must not
+// crash-loop forever: after maxDeliver attempts the message is parked in the DLQ
+// and stops being redelivered.
+func TestNats_PoisonMessageGoesToDLQ(t *testing.T) {
+	if natsURL == "" {
+		t.Skip("nats backend unavailable")
+	}
+	const maxDeliver = 2
+	c, err := busnats.Connect([]string{natsURL}, discardLogger(), busnats.WithMaxDeliver(maxDeliver))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	topic := bus.NewTopic[event](uniqueTopic(t))
+	dlqTopic := bus.NewTopic[event](topic.Name + ".DLQ")
+
+	// DLQ watcher collects whatever gets parked.
+	dlq := newSink()
+	bus.Subscribe(c, dlqTopic, "dlq-watch", dlq.handleOne)
+
+	// poison handler: always errors (never finishes), counting its attempts.
+	var calls atomic.Int64
+	bus.Subscribe(c, topic, "workers", func(context.Context, event) error {
+		calls.Add(1)
 		return fmt.Errorf("boom")
 	})
-	redisReady(t, topic.Name, "g1", 1)
-	require.NoError(t, bus.Publish(context.Background(), r1, topic, event{ID: 99, Msg: "keep"}))
 
-	require.Eventually(t, func() bool { return firstCalls.Load() >= 1 }, 5*time.Second, 20*time.Millisecond)
-	require.NoError(t, r1.Close())
+	// DeliverNew: both durables must exist before we publish.
+	probeNatsConsumer(t, topic.Name, "workers")
+	probeNatsConsumer(t, dlqTopic.Name, "dlq-watch")
 
-	// second client, same group: replays the pending entry via the "0" backlog pass.
-	r2, err := busredis.Connect([]string{redisAddr}, discardLogger())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = r2.Close() })
-	s := newSink()
-	bus.Subscribe(r2, topic, "g1", s.handleOne)
+	require.NoError(t, bus.Publish(context.Background(), c, topic, event{ID: 7, Msg: "poison"}))
 
-	got := s.collect(t, 1, 5*time.Second)
-	assert.Equal(t, event{ID: 99, Msg: "keep"}, got[0])
+	// The poison lands in the DLQ after maxDeliver failed attempts.
+	got := dlq.collect(t, 1, 15*time.Second)
+	assert.Equal(t, event{ID: 7, Msg: "poison"}, got[0])
+
+	// Handler was attempted exactly maxDeliver times — no redelivery after parking.
+	assert.Eventually(t, func() bool { return calls.Load() == maxDeliver }, 5*time.Second, 50*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	assert.Equal(t, int64(maxDeliver), calls.Load(), "no redelivery after DLQ park")
 }
 
 // --- concurrency / stress ---
 
 // many publishers fan into a multi-consumer group; every id must arrive at
-// least once (memory at-most-once delivers all via backpressure, redis
+// least once (memory at-most-once delivers all via backpressure,
 // at-least-once). Run with -race to validate the backends under contention.
 func TestStress_ConcurrentPublishers(t *testing.T) {
 	if testing.Short() {

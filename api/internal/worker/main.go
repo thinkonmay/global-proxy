@@ -14,7 +14,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/repo"
 
-	busredis "github.com/thinkonmay/global-proxy/api/pkg/bus/redis"
+	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 )
 
 func main() {
@@ -30,9 +30,9 @@ func main() {
 		ServiceKey: cfg.PostgREST.ServiceKey,
 	})
 
-	eventBus, err := busredis.Connect([]string{cfg.Redis.Addr}, slog.Default())
+	eventBus, err := busnats.Connect([]string{cfg.Nats.URL}, slog.Default())
 	if err != nil {
-		log.Fatalf("connect redis bus: %v", err)
+		log.Fatalf("connect nats bus: %v", err)
 	}
 	defer func() { _ = eventBus.Close() }()
 

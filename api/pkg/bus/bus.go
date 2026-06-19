@@ -17,8 +17,48 @@ type Client interface {
 	Close() error
 }
 
-// Handler consumes a batch of raw payloads (one payload unless batch options are set).
-type Handler func(ctx context.Context, payloads [][]byte) error
+// Handler consumes a batch of raw payloads (one payload unless batch options are
+// set) and returns a per-payload verdict: result[i] reports payloads[i]'s
+// outcome — nil acks it, non-nil naks it (redelivered, eventually DLQ'd). A nil
+// or short slice acks the unreported indices, so `return nil` means "all ok".
+type Handler func(ctx context.Context, payloads [][]byte) []error
+
+// Failed reports whether payload i was nak'd by a Handler verdict (errs[i] set).
+// Indices past the slice are treated as acked. Transports use this to decide
+// ack vs nak per message.
+func Failed(errs []error, i int) bool {
+	return i < len(errs) && errs[i] != nil
+}
+
+// Each builds a uniform per-message verdict for an all-or-nothing batch handler
+// (e.g. one batched INSERT): nil err -> nil (ack all), else err repeated n times
+// (nak all).
+func Each(n int, err error) []error {
+	if err == nil {
+		return nil
+	}
+	errs := make([]error, n)
+	for i := range errs {
+		errs[i] = err
+	}
+	return errs
+}
+
+type attemptKey struct{}
+
+// WithAttempt tags ctx with the redelivery attempt for the batch about to be
+// handled (1 = first delivery). Backends that track redelivery call this.
+func WithAttempt(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, attemptKey{}, n)
+}
+
+// Attempt reports the redelivery attempt of the batch currently being handled
+// (1 = first delivery). ok is false on backends that don't track redelivery
+// (e.g. memory).
+func Attempt(ctx context.Context) (n int, ok bool) {
+	n, ok = ctx.Value(attemptKey{}).(int)
+	return
+}
 
 // SubscribeOptions controls how a transport groups payloads before delivery.
 type SubscribeOptions struct {
@@ -74,17 +114,17 @@ func Subscribe[T any](
 	group string,
 	h func(ctx context.Context, payload T) error,
 ) {
-	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) error {
-		for _, raw := range raws {
+	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) []error {
+		errs := make([]error, len(raws))
+		for i, raw := range raws {
 			var payload T
 			if err := json.Unmarshal(raw, &payload); err != nil {
-				return fmt.Errorf("bus: unmarshal %s: %w", topic.Name, err)
+				errs[i] = fmt.Errorf("bus: unmarshal %s: %w", topic.Name, err)
+				continue
 			}
-			if err := h(ctx, payload); err != nil {
-				return err
-			}
+			errs[i] = h(ctx, payload)
 		}
-		return nil
+		return errs
 	}, SubscribeOptions{BatchSize: 1})
 }
 
@@ -93,20 +133,38 @@ func SubscribeBatch[T any](
 	c Client,
 	topic Topic[T],
 	group string,
-	h func(ctx context.Context, payloads []T) error,
+	h func(ctx context.Context, payloads []T) []error,
 	opts ...SubscribeOption,
 ) {
 	options := SubscribeOptions{BatchSize: 1, Linger: 0}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) error {
-		payloads := make([]T, len(raws))
+	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) []error {
+		errs := make([]error, len(raws))
+		// Decode the batch; a payload that won't unmarshal is a permanent poison —
+		// mark it failed and keep it out of the typed slice handed to h.
+		payloads := make([]T, 0, len(raws))
+		idx := make([]int, 0, len(raws)) // payloads[j] came from raws[idx[j]]
 		for i, raw := range raws {
-			if err := json.Unmarshal(raw, &payloads[i]); err != nil {
-				return fmt.Errorf("bus: unmarshal %s: %w", topic.Name, err)
+			var p T
+			if err := json.Unmarshal(raw, &p); err != nil {
+				errs[i] = fmt.Errorf("bus: unmarshal %s: %w", topic.Name, err)
+				continue
+			}
+			payloads = append(payloads, p)
+			idx = append(idx, i)
+		}
+		if len(payloads) == 0 {
+			return errs
+		}
+		// h's verdict aligns to payloads; map each result back to its raw index.
+		res := h(ctx, payloads)
+		for j, i := range idx {
+			if j < len(res) {
+				errs[i] = res[j]
 			}
 		}
-		return h(ctx, payloads)
+		return errs
 	}, options)
 }

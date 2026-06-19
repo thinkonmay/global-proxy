@@ -2,62 +2,48 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
+
+	"github.com/google/uuid"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
+	"github.com/thinkonmay/global-proxy/api/pkg/validator"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
-	"github.com/thinkonmay/global-proxy/api/shared/repo"
-
-	"github.com/labstack/echo/v4"
 )
 
 type createJobRequest struct {
 	Command   string          `json:"command" validate:"required"`
 	Arguments json.RawMessage `json:"arguments"`
-	Cluster   *int64          `json:"cluster"`
 }
 
-func (h *Handler) create(c echo.Context) error {
+// Create publishes a job to the bus and fast-returns its id — the idempotency
+// key the worker dedups on. No DB write.
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
 	}
-	if err := c.Validate(&req); err != nil {
-		return err
+	if err := validator.Validate(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 
 	args := req.Arguments
 	if len(args) == 0 {
-		args = json.RawMessage("{}") // arguments column is NOT NULL
+		args = json.RawMessage("{}")
 	}
+	id := uuid.NewString()
 
-	ctx := c.Request().Context()
-	id, err := h.repo.Enqueue(ctx, req.Command, args, req.Cluster)
-	if err != nil {
-		return err
+	// Publish ack from JetStream = persisted; that is the only outcome checked (P11).
+	if err := bus.Publish(
+		r.Context(),
+		h.bus,
+		model.TopicJob,
+		model.JobMsg{ID: id, Command: req.Command, Arguments: args},
+	); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]bool{"global_unavailable": true})
+		return
 	}
-
-	if err := bus.Publish(ctx, h.bus, model.TopicJob, model.JobMsg{ID: id, Command: req.Command, Arguments: args}); err != nil {
-		return err
-	}
-
-	return c.JSON(http.StatusAccepted, map[string]int64{"id": id})
-}
-
-func (h *Handler) get(c echo.Context) error {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid id")
-	}
-
-	j, err := h.repo.Get(c.Request().Context(), id)
-	if errors.Is(err, repo.ErrNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound, "job not found")
-	}
-	if err != nil {
-		return err
-	}
-	return c.JSON(http.StatusOK, j)
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
 }

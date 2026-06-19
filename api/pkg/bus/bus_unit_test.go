@@ -84,7 +84,8 @@ func TestSubscribe_DecodesPerPayload(t *testing.T) {
 	assert.Equal(t, 1, f.opts.BatchSize, "single Subscribe forces one payload per call")
 
 	raw := [][]byte{[]byte(`{"id":1,"msg":"a"}`), []byte(`{"id":2,"msg":"b"}`)}
-	require.NoError(t, f.handler(context.Background(), raw))
+	errs := f.handler(context.Background(), raw)
+	assert.Equal(t, []error{nil, nil}, errs, "both payloads ack")
 	assert.Equal(t, []event{{ID: 1, Msg: "a"}, {ID: 2, Msg: "b"}}, got)
 }
 
@@ -98,9 +99,10 @@ func TestSubscribe_UnmarshalErrorSkipsHandler(t *testing.T) {
 		return nil
 	})
 
-	err := f.handler(context.Background(), [][]byte{[]byte(`not json`)})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bus: unmarshal orders")
+	errs := f.handler(context.Background(), [][]byte{[]byte(`not json`)})
+	require.Len(t, errs, 1)
+	require.Error(t, errs[0], "the bad payload is nak'd")
+	assert.Contains(t, errs[0].Error(), "bus: unmarshal orders")
 	assert.False(t, called, "typed handler must not run when a payload fails to decode")
 }
 
@@ -109,20 +111,21 @@ func TestSubscribeBatch_DecodesBatch(t *testing.T) {
 	topic := bus.NewTopic[event]("orders")
 
 	var got []event
-	bus.SubscribeBatch(f, topic, "g", func(_ context.Context, payloads []event) error {
+	bus.SubscribeBatch(f, topic, "g", func(_ context.Context, payloads []event) []error {
 		got = payloads
 		return nil
 	})
 
 	raw := [][]byte{[]byte(`{"id":1,"msg":"a"}`), []byte(`{"id":2,"msg":"b"}`)}
-	require.NoError(t, f.handler(context.Background(), raw))
+	errs := f.handler(context.Background(), raw)
+	assert.Equal(t, []error{nil, nil}, errs, "both payloads ack")
 	assert.Equal(t, []event{{ID: 1, Msg: "a"}, {ID: 2, Msg: "b"}}, got)
 }
 
 func TestSubscribeBatch_OptionsPropagate(t *testing.T) {
 	t.Run("defaults to one-per-call", func(t *testing.T) {
 		f := &fakeClient{}
-		bus.SubscribeBatch(f, bus.NewTopic[event]("t"), "g", func(context.Context, []event) error { return nil })
+		bus.SubscribeBatch(f, bus.NewTopic[event]("t"), "g", func(context.Context, []event) []error { return nil })
 		assert.Equal(t, 1, f.opts.BatchSize)
 		assert.Equal(t, time.Duration(0), f.opts.Linger)
 	})
@@ -130,7 +133,7 @@ func TestSubscribeBatch_OptionsPropagate(t *testing.T) {
 	t.Run("batch size and linger flow through", func(t *testing.T) {
 		f := &fakeClient{}
 		bus.SubscribeBatch(f, bus.NewTopic[event]("t"), "g",
-			func(context.Context, []event) error { return nil },
+			func(context.Context, []event) []error { return nil },
 			bus.WithBatchSize(10), bus.WithLinger(250*time.Millisecond))
 		assert.Equal(t, 10, f.opts.BatchSize)
 		assert.Equal(t, 250*time.Millisecond, f.opts.Linger)

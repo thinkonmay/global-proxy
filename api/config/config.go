@@ -16,8 +16,17 @@ import (
 type Config struct {
 	Port      string    `mapstructure:"port" validate:"required,numeric"`
 	Log       Log       `mapstructure:"log"`
-	PostgREST PostgREST `mapstructure:"postgrest"` // global data over HTTP (no direct DB)
-	Redis     Redis     `mapstructure:"redis"`
+	PostgREST  PostgREST  `mapstructure:"postgrest"`  // global data over HTTP (no direct DB)
+	Nats       Nats       `mapstructure:"nats"`       // event bus (JetStream)
+	ClickHouse ClickHouse `mapstructure:"clickhouse"` // analytics sink (cmd/usagesink)
+}
+
+// ClickHouse is the analytics store — only the usage sink connects to it.
+type ClickHouse struct {
+	Addr     string `mapstructure:"addr"`     // host:port (native, e.g. clickhouse:9000)
+	Database string `mapstructure:"database"` // default: analytics
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
 }
 
 // PostgREST is how services reach global data — over HTTP, never a direct DB
@@ -28,8 +37,8 @@ type PostgREST struct {
 	ServiceKey string `mapstructure:"serviceKey"` // privileged writes
 }
 
-type Redis struct {
-	Addr string `mapstructure:"addr" validate:"required"` // host:port
+type Nats struct {
+	URL string `mapstructure:"url" validate:"required"` // nats://host:port
 }
 
 type Log struct {

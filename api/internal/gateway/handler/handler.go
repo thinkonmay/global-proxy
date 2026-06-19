@@ -1,26 +1,29 @@
 package handler
 
 import (
-	"github.com/labstack/echo/v4"
+	"encoding/json"
+	"net/http"
+
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
-	"github.com/thinkonmay/global-proxy/api/shared/repo"
 )
 
+// Handler serves the typed enqueue endpoints. The gateway holds no DB — it only
+// publishes to the bus.
 type Handler struct {
-	e    *echo.Echo
-	repo *repo.Repo
-	bus  bus.Client
+	bus bus.Client
 }
 
-func NewHandler(e *echo.Echo, repo *repo.Repo, bus bus.Client) *Handler {
-	return &Handler{
-		e:    e,
-		repo: repo,
-		bus:  bus,
-	}
+func NewHandler(bus bus.Client) *Handler {
+	return &Handler{bus: bus}
 }
 
-func (h *Handler) Init() {
-	h.e.POST("/jobs", h.create)
-	h.e.GET("/jobs/:id", h.get)
+// Route registers the handler's typed endpoints on mux.
+func (h *Handler) Route(mux *http.ServeMux) {
+	mux.HandleFunc("POST /jobs", h.Create)
+}
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
 }
