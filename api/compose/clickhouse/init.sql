@@ -3,7 +3,7 @@
 -- Ingest path: NATS JetStream (usage.snapshot) -> a Go sink consumer that
 -- batch-INSERTs into usage_events. ClickHouse has NO native NATS engine (unlike
 -- Kafka), so unlike the kafka design there is no auto-pump table + MV here — the
--- sink is application code (TODO: cmd/usagesink or a worker subscription).
+-- sink is application code: the worker's usage.snapshot subscription.
 
 CREATE TABLE IF NOT EXISTS usage_events
 (

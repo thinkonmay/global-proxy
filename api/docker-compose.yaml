@@ -183,6 +183,7 @@ services:
       nats:
         condition: service_started
 
+  # Consumes jobs and usage events: runs jobs, batch-inserts usage to ClickHouse.
   worker:
     <<: *app-dev
     container_name: thinkmay-worker
@@ -192,17 +193,6 @@ services:
     depends_on:
       postgrest:
         condition: service_started
-      nats:
-        condition: service_started
-
-  # Analytics sink: NATS usage.snapshot -> batch INSERT into ClickHouse
-  usagesink:
-    <<: *app-dev
-    container_name: thinkmay-usagesink
-    command: >
-      sh -c "command -v air >/dev/null 2>&1 || go install github.com/air-verse/air@latest;
-             exec air -c compose/air.usagesink.toml"
-    depends_on:
       nats:
         condition: service_started
       clickhouse:

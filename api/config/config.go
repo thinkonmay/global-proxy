@@ -18,10 +18,10 @@ type Config struct {
 	Log       Log       `mapstructure:"log"`
 	PostgREST  PostgREST  `mapstructure:"postgrest"`  // global data over HTTP (no direct DB)
 	Nats       Nats       `mapstructure:"nats"`       // event bus (JetStream)
-	ClickHouse ClickHouse `mapstructure:"clickhouse"` // analytics sink (cmd/usagesink)
+	ClickHouse ClickHouse `mapstructure:"clickhouse"` // analytics sink (the worker)
 }
 
-// ClickHouse is the analytics store — only the usage sink connects to it.
+// ClickHouse is the analytics store — only the worker's usage sink connects to it.
 type ClickHouse struct {
 	Addr     string `mapstructure:"addr"`     // host:port (native, e.g. clickhouse:9000)
 	Database string `mapstructure:"database"` // default: analytics

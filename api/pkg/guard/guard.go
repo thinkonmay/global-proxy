@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 )
 
 // Match tests whether a request belongs to a set (e.g. an IP allow/deny list).
@@ -29,28 +28,6 @@ func Chain(h http.Handler, mws ...Middleware) http.Handler {
 		h = mws[i](h)
 	}
 	return h
-}
-
-// registry lazily builds and caches one value per key (per host / per client).
-type registry[T any] struct {
-	mu    sync.Mutex
-	items map[string]T
-	build func(string) T
-}
-
-func newRegistry[T any](build func(string) T) *registry[T] {
-	return &registry[T]{items: map[string]T{}, build: build}
-}
-
-func (r *registry[T]) get(key string) T {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	v, ok := r.items[key]
-	if !ok {
-		v = r.build(key)
-		r.items[key] = v
-	}
-	return v
 }
 
 type trustKey struct{}

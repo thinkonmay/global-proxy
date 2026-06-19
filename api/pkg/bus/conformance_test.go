@@ -104,7 +104,7 @@ func setupMemory(context.Context) (backend, func(), error) {
 	return backend{
 		name: "memory",
 		newClient: func(t *testing.T) bus.Client {
-			m := busmemory.NewMemory(discardLogger())
+			m := busmemory.New(discardLogger())
 			t.Cleanup(func() { _ = m.Close() })
 			return m
 		},
@@ -164,7 +164,7 @@ func setupNats(ctx context.Context) (backend, func(), error) {
 	b := backend{
 		name: "nats",
 		newClient: func(t *testing.T) bus.Client {
-			n, err := busnats.Connect([]string{url}, discardLogger())
+			n, err := busnats.New([]string{url}, discardLogger())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = n.Close() })
 			return n
@@ -326,7 +326,8 @@ func TestConformance_PreservesOrderWithinGroup(t *testing.T) {
 		topic := bus.NewTopic[event](uniqueTopic(t))
 		s := newSink()
 
-		bus.Subscribe(c, topic, "g1", s.handleOne)
+		// FIFO holds only for serial delivery; the default pool is unlimited.
+		bus.Subscribe(c, topic, "g1", s.handleOne, bus.WithConcurrency(1))
 		b.ready(t, topic.Name, "g1", 1)
 
 		const n = 50
@@ -341,7 +342,7 @@ func TestConformance_PreservesOrderWithinGroup(t *testing.T) {
 		for i := range want {
 			want[i] = i + 1
 		}
-		assert.True(t, sort.IntsAreSorted(ids), "single-consumer delivery must stay FIFO")
+		assert.True(t, sort.IntsAreSorted(ids), "serial delivery must stay FIFO")
 		assert.Equal(t, want, ids)
 	})
 }
@@ -391,10 +392,90 @@ func TestConformance_PublishAfterCloseFails(t *testing.T) {
 	})
 }
 
+// WithConcurrency bounds in-flight handlers: a pool of W workers, never more,
+// processes the backlog. Peak concurrency must stay <= W yet exceed 1 (proving
+// it is a pool, not serial delivery).
+func TestConformance_ConcurrencyBoundsInflight(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, b backend) {
+		c := b.newClient(t)
+		topic := bus.NewTopic[event](uniqueTopic(t))
+
+		const workers, n = 5, 40
+		var inflight, peak atomic.Int64
+		done := make(chan struct{}, n)
+		bus.Subscribe(c, topic, "g1", func(context.Context, event) error {
+			cur := inflight.Add(1)
+			for { // track high-water mark
+				p := peak.Load()
+				if cur <= p || peak.CompareAndSwap(p, cur) {
+					break
+				}
+			}
+			time.Sleep(40 * time.Millisecond) // hold the slot so the pool fills
+			inflight.Add(-1)
+			done <- struct{}{}
+			return nil
+		}, bus.WithConcurrency(workers))
+		b.ready(t, topic.Name, "g1", 1)
+
+		publishRange(t, c, topic, 1, n)
+
+		deadline := time.After(15 * time.Second)
+		for range n {
+			select {
+			case <-done:
+			case <-deadline:
+				t.Fatalf("timed out: handled %d/%d", n-len(done), n)
+			}
+		}
+		assert.LessOrEqual(t, peak.Load(), int64(workers), "peak in-flight must not exceed pool size")
+		assert.Greater(t, peak.Load(), int64(1), "pool must process more than one at a time")
+	})
+}
+
+// The default (no WithConcurrency) is unlimited: a backlog runs handlers far
+// past any small fixed pool. Peak must exceed the 5 of the bounded test above.
+func TestConformance_DefaultConcurrencyUnlimited(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, b backend) {
+		c := b.newClient(t)
+		topic := bus.NewTopic[event](uniqueTopic(t))
+
+		const n = 30
+		var inflight, peak atomic.Int64
+		done := make(chan struct{}, n)
+		bus.Subscribe(c, topic, "g1", func(context.Context, event) error {
+			cur := inflight.Add(1)
+			for {
+				p := peak.Load()
+				if cur <= p || peak.CompareAndSwap(p, cur) {
+					break
+				}
+			}
+			time.Sleep(60 * time.Millisecond)
+			inflight.Add(-1)
+			done <- struct{}{}
+			return nil
+		})
+		b.ready(t, topic.Name, "g1", 1)
+
+		publishRange(t, c, topic, 1, n)
+
+		deadline := time.After(15 * time.Second)
+		for range n {
+			select {
+			case <-done:
+			case <-deadline:
+				t.Fatalf("timed out: handled %d/%d", n-len(done), n)
+			}
+		}
+		assert.Greater(t, peak.Load(), int64(5), "default must not cap concurrency at a small pool")
+	})
+}
+
 // --- memory-specific behaviour ---
 
 func TestMemory_WaitBlocksUntilHandled(t *testing.T) {
-	m := busmemory.NewMemory(discardLogger())
+	m := busmemory.New(discardLogger())
 	t.Cleanup(func() { _ = m.Close() })
 	topic := bus.NewTopic[event](uniqueTopic(t))
 
@@ -412,7 +493,7 @@ func TestMemory_WaitBlocksUntilHandled(t *testing.T) {
 }
 
 func TestMemory_HandlerErrorIsDroppedNotRedelivered(t *testing.T) {
-	m := busmemory.NewMemory(discardLogger())
+	m := busmemory.New(discardLogger())
 	t.Cleanup(func() { _ = m.Close() })
 	topic := bus.NewTopic[event](uniqueTopic(t))
 
@@ -431,7 +512,7 @@ func TestMemory_HandlerErrorIsDroppedNotRedelivered(t *testing.T) {
 }
 
 func TestMemory_PublishAfterCloseReturnsErrClosed(t *testing.T) {
-	m := busmemory.NewMemory(discardLogger())
+	m := busmemory.New(discardLogger())
 	require.NoError(t, m.Close())
 	err := bus.Publish(context.Background(), m, bus.NewTopic[event]("t"), event{ID: 1})
 	assert.ErrorIs(t, err, bus.ErrClosed)
@@ -458,54 +539,12 @@ func probeNatsConsumer(t *testing.T, topic, group string) {
 	t.Fatalf("nats consumer %q on stream %q not ready", group, stream)
 }
 
-// A handler that always fails (simulates a consumer dying mid-process) must not
-// crash-loop forever: after maxDeliver attempts the message is parked in the DLQ
-// and stops being redelivered.
-func TestNats_PoisonMessageGoesToDLQ(t *testing.T) {
-	if natsURL == "" {
-		t.Skip("nats backend unavailable")
-	}
-	const maxDeliver = 2
-	c, err := busnats.Connect([]string{natsURL}, discardLogger(), busnats.WithMaxDeliver(maxDeliver))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = c.Close() })
-
-	topic := bus.NewTopic[event](uniqueTopic(t))
-	dlqTopic := bus.NewTopic[event](topic.Name + ".DLQ")
-
-	// DLQ watcher collects whatever gets parked.
-	dlq := newSink()
-	bus.Subscribe(c, dlqTopic, "dlq-watch", dlq.handleOne)
-
-	// poison handler: always errors (never finishes), counting its attempts.
-	var calls atomic.Int64
-	bus.Subscribe(c, topic, "workers", func(context.Context, event) error {
-		calls.Add(1)
-		return fmt.Errorf("boom")
-	})
-
-	// DeliverNew: both durables must exist before we publish.
-	probeNatsConsumer(t, topic.Name, "workers")
-	probeNatsConsumer(t, dlqTopic.Name, "dlq-watch")
-
-	require.NoError(t, bus.Publish(context.Background(), c, topic, event{ID: 7, Msg: "poison"}))
-
-	// The poison lands in the DLQ after maxDeliver failed attempts.
-	got := dlq.collect(t, 1, 15*time.Second)
-	assert.Equal(t, event{ID: 7, Msg: "poison"}, got[0])
-
-	// Handler was attempted exactly maxDeliver times — no redelivery after parking.
-	assert.Eventually(t, func() bool { return calls.Load() == maxDeliver }, 5*time.Second, 50*time.Millisecond)
-	time.Sleep(300 * time.Millisecond)
-	assert.Equal(t, int64(maxDeliver), calls.Load(), "no redelivery after DLQ park")
-}
-
-// Handler error naks → redelivered; a later nil acks it. No DLQ, no extra delivery.
+// Handler error naks → redelivered; a later nil acks it (no extra delivery).
 func TestNats_HandlerErrorRedeliveredThenAcked(t *testing.T) {
 	if natsURL == "" {
 		t.Skip("nats backend unavailable")
 	}
-	c, err := busnats.Connect([]string{natsURL}, discardLogger(), busnats.WithMaxDeliver(5))
+	c, err := busnats.New([]string{natsURL}, discardLogger())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -585,7 +624,7 @@ func TestStress_ConcurrentPublishers(t *testing.T) {
 // Publish racing Close exercises memory's lock discipline (send under RLock,
 // Close under Lock). -race must report clean; no send-on-closed-channel panic.
 func TestRace_PublishDuringClose(t *testing.T) {
-	m := busmemory.NewMemory(discardLogger())
+	m := busmemory.New(discardLogger())
 	topic := bus.NewTopic[event](uniqueTopic(t))
 	bus.Subscribe(m, topic, "g1", func(context.Context, event) error { return nil })
 

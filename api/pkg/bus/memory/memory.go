@@ -10,42 +10,42 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 )
 
-// memorySubBuffer is the per-subscription channel capacity. A full buffer
-// blocks Publish (backpressure) until the consumer catches up.
-const memorySubBuffer = 1024
+// subBuffer is the per-subscription channel capacity. A full buffer blocks
+// Publish (backpressure) until consumers catch up.
+const subBuffer = 1024
 
-// memorySub is one subscription: a queue drained by its own consumer goroutine.
-type memorySub struct {
+// subscription is one subscription: a queue drained by its worker pool.
+type subscription struct {
 	ch chan []byte
 }
 
-// memoryGroup holds a group's subscriptions and a round-robin cursor for
+// consumerGroup holds a group's subscriptions and a round-robin cursor for
 // competing-consumer delivery within the group.
-type memoryGroup struct {
-	subs []*memorySub
+type consumerGroup struct {
+	subs []*subscription
 	next atomic.Uint64
 }
 
 var _ bus.Client = (*Memory)(nil)
 
-// Memory is an in-process Client. Each subscription runs a consumer
-// goroutine that batches payloads per SubscribeOptions; handler errors are
-// logged and dropped.
+// Memory is an in-process Client. Each subscription drains its queue through a
+// worker pool (WithConcurrency, default one) that batches per SubscribeOptions;
+// handler errors are logged and dropped.
 type Memory struct {
 	mu        sync.RWMutex
-	topics    map[string]map[string]*memoryGroup // topic -> group -> subscriptions
+	topics    map[string]map[string]*consumerGroup // topic -> group -> subscriptions
 	closed    bool
 	inflight  sync.WaitGroup // published payloads not yet handled
 	consumers sync.WaitGroup // consumer goroutines
 	logger    *slog.Logger
 }
 
-func NewMemory(logger *slog.Logger) *Memory {
+func New(logger *slog.Logger) *Memory {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	m := new(Memory)
-	m.topics = make(map[string]map[string]*memoryGroup)
+	m.topics = make(map[string]map[string]*consumerGroup)
 	m.logger = logger
 	return m
 }
@@ -54,17 +54,17 @@ func (m *Memory) Subscribe(topic, group string, h bus.Handler, opts bus.Subscrib
 	if opts.BatchSize < 1 {
 		opts.BatchSize = 1
 	}
-	sub := &memorySub{ch: make(chan []byte, memorySubBuffer)}
+	sub := &subscription{ch: make(chan []byte, subBuffer)}
 
 	m.mu.Lock()
 	groups, ok := m.topics[topic]
 	if !ok {
-		groups = make(map[string]*memoryGroup)
+		groups = make(map[string]*consumerGroup)
 		m.topics[topic] = groups
 	}
 	g, ok := groups[group]
 	if !ok {
-		g = new(memoryGroup)
+		g = new(consumerGroup)
 		groups[group] = g
 	}
 	g.subs = append(g.subs, sub)
@@ -92,37 +92,58 @@ func (m *Memory) Publish(_ context.Context, topic string, payload []byte) error 
 	return nil
 }
 
-// consume drains a subscription batch by batch and hands each batch to h.
-func (m *Memory) consume(topic, group string, sub *memorySub, h bus.Handler, opts bus.SubscribeOptions) {
+// consume drains a subscription and dispatches each batch to h. Concurrency
+// caps the handlers in flight (sem); 0 leaves it uncapped (a goroutine per
+// batch). Concurrency 1 keeps delivery serial and FIFO.
+func (m *Memory) consume(topic, group string, sub *subscription, h bus.Handler, opts bus.SubscribeOptions) {
 	// Batches span multiple publishes, so handlers get a fresh context rather
 	// than any single publisher's.
 	ctx := context.Background()
+	var sem chan struct{}
+	if opts.Concurrency >= 1 {
+		sem = make(chan struct{}, opts.Concurrency)
+	}
+	var wg sync.WaitGroup
 	for {
 		first, ok := <-sub.ch
 		if !ok {
-			return
+			break
 		}
 		batch := fillBatch(sub, first, opts)
-		// In-process bus: no redelivery, so a per-message failure is logged and
-		// dropped (the verdict slice only matters to durable transports).
-		errs := h(ctx, batch)
-		var failed int
-		for i := range batch {
-			if bus.Failed(errs, i) {
-				failed++
+		if sem != nil {
+			sem <- struct{}{} // block once the pool is full
+		}
+		wg.Go(func() {
+			if sem != nil {
+				defer func() { <-sem }()
 			}
-		}
-		if failed > 0 {
-			m.logger.ErrorContext(ctx, "bus: handler failed",
-				"topic", topic, "group", group, "batch", len(batch), "failed", failed)
-		}
-		m.inflight.Add(-len(batch))
+			m.handle(ctx, topic, group, h, batch)
+		})
 	}
+	wg.Wait() // let in-flight handlers finish before the consumer exits
+}
+
+// handle runs h for one batch. In-process bus has no redelivery, so a
+// per-message failure is logged and dropped (the verdict matters only to
+// durable transports).
+func (m *Memory) handle(ctx context.Context, topic, group string, h bus.Handler, batch [][]byte) {
+	errs := h(ctx, batch)
+	var failed int
+	for i := range batch {
+		if bus.Failed(errs, i) {
+			failed++
+		}
+	}
+	if failed > 0 {
+		m.logger.ErrorContext(ctx, "bus: handler failed",
+			"topic", topic, "group", group, "batch", len(batch), "failed", failed)
+	}
+	m.inflight.Add(-len(batch))
 }
 
 // fillBatch grows a batch from first until BatchSize is reached, Linger
 // expires, or the subscription closes — whichever comes first.
-func fillBatch(sub *memorySub, first []byte, opts bus.SubscribeOptions) [][]byte {
+func fillBatch(sub *subscription, first []byte, opts bus.SubscribeOptions) [][]byte {
 	batch := [][]byte{first}
 	if opts.BatchSize <= 1 {
 		return batch

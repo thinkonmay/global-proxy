@@ -5,7 +5,13 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/thinkonmay/global-proxy/api/pkg/memo"
 )
+
+// defaultMaxHosts caps distinct per-host breakers so an attacker-controlled Host
+// header can't grow the map without bound.
+const defaultMaxHosts = 1_024
 
 // Rejections meaning the guard blocked a call before/instead of the upstream.
 var (
@@ -24,12 +30,13 @@ type Config struct {
 	MaxFailures   uint32        // consecutive failures (conn error, timeout, 5xx) before the breaker opens
 	Cooldown      time.Duration // how long the breaker stays open before a probe
 	MaxConcurrent int           // max in-flight calls per host (bulkhead); <=0 disables
+	MaxHosts      int           // max distinct host breakers kept (LRU); <=0 => defaultMaxHosts
 }
 
 // Transport is an http.RoundTripper with one breaker + bulkhead per target host.
 type Transport struct {
 	base  http.RoundTripper
-	hosts *registry[*host]
+	hosts *memo.Cache[string, *host]
 }
 
 func New(base http.RoundTripper, cfg Config) *Transport {
@@ -42,9 +49,12 @@ func New(base http.RoundTripper, cfg Config) *Transport {
 	if cfg.Cooldown == 0 {
 		cfg.Cooldown = 30 * time.Second
 	}
+	if cfg.MaxHosts <= 0 {
+		cfg.MaxHosts = defaultMaxHosts
+	}
 	return &Transport{
 		base:  base,
-		hosts: newRegistry(func(string) *host { return newHost(cfg) }),
+		hosts: memo.New(cfg.MaxHosts, func(string) *host { return newHost(cfg) }),
 	}
 }
 
@@ -52,7 +62,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if trusted(req.Context()) { // whitelisted: skip the guard
 		return t.base.RoundTrip(req)
 	}
-	h := t.hosts.get(req.URL.Host)
+	h := t.hosts.Get(req.URL.Host)
 
 	if h.slots != nil { // bulkhead: full => shed, don't queue
 		select {

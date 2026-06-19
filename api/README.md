@@ -274,38 +274,36 @@ at-most-once orchestration: register → skip-or-run → `mark_done`/`mark_error
 always Ack (only a register error Naks).
 
 **Bus today:** `pkg/bus/nats` is **NATS JetStream** — durable pull consumers,
-explicit Ack, redelivery on restart, **DLQ + max-deliver** (§4b). The transport is
-at-least-once; the worker turns it into **at-most-once** via register-first
-(§3.1). (`memory` backend remains for tests.)
+explicit Ack, redelivery on restart (§4b). The transport is at-least-once; the
+worker turns it into **at-most-once** via register-first (§3.1). Handlers run in a
+bounded pool per group (`WithConcurrency(n)`; unset = unbounded, `n=1` = serial).
+(`memory` backend remains for tests.)
 
 **State:** the worker owns one table — `processed_message` (the at-most-once
 ledger) — reached over **PostgREST RPC**, no direct DB handle (P2/P3).
 
-**Transport:** **NATS JetStream** — durable streams + replay + DLQ in one light
-binary (fits the single-host, solo-dev lean goal); analytics goes NATS → a Go
-sink → ClickHouse (`cmd/usagesink`) since CH has no native NATS engine. This
-supersedes the earlier Kafka pick in `planning.md` D3.
+**Transport:** **NATS JetStream** — durable streams + replay in one light binary
+(fits the single-host, solo-dev lean goal); analytics goes NATS → a Go sink →
+ClickHouse (the worker's usage subscription) since CH has no native NATS engine. This supersedes
+the earlier Kafka pick in `planning.md` D3.
 
 ---
 
-## 4b. Delivery semantics — at-least-once bus, at-most-once worker, DLQ
+## 4b. Delivery semantics — at-least-once bus, at-most-once worker
 
 The bus **transport** is at-least-once: each message is **Ack'd only when its
-verdict is nil** — `Handler` returns `[]error`, one slot per payload, so one poison
+verdict is nil** — `Handler` returns `[]error`, one slot per payload, so one bad
 message in a batch naks **only itself**, not its neighbours. An error/panic/crash
-leaves it un-acked ⇒ redelivered. After `maxDeliver` attempts it is parked in
-`<topic>.DLQ` so a poison message can't crash-loop the consumer forever.
+leaves it un-acked ⇒ redelivered (no DLQ — it redelivers until its handler acks).
 
 ```mermaid
 flowchart TD
     P["Publish (gateway / producer)"] --> S["JetStream stream"]
     S --> F["consumer Fetch(batch)"]
-    F --> D{"NumDelivered > maxDeliver?"}
-    D -->|yes| DLQ["publish &lt;topic&gt;.DLQ + Ack<br/>(breaks crash-loop)"]
-    D -->|no| H["handler(batch)"]
-    H -->|"nil"| ACK["Ack batch"]
+    F --> H["handler(batch)"]
+    H -->|"nil"| ACK["Ack"]
     H -->|"error / panic / crash"| NAK["Nak — no Ack"]
-    NAK --> R["redeliver, NumDelivered++"]
+    NAK --> R["redeliver"]
     R --> F
 ```
 
@@ -324,13 +322,15 @@ multi-host, TDD F3).
 **Why at-most-once (not idempotent-destination exactly-once).** The destination
 **cannot dedup** by message id, so a double side-effect is unacceptable — worse
 than a drop. The register-first claim guarantees ≤1 run; the cost is that a worker
-crashing mid-side-effect drops the message (the redelivery skips). If the
+crashing mid-side-effect drops the message (the redelivery skips), and a `pending`
+row is left behind. No DLQ — a failed/lost message is simply gone. If the
 destination later gains a dedup key, switch to at-least-once (skip on `done`,
 retry on error) for no-loss exactly-once.
 
-**DLQ knobs** (`pkg/bus/nats`): `WithMaxDeliver(n)` (default 5; `n<=0` = unlimited).
-Poison → `<topic>.DLQ`. Covered by `TestNats_PoisonMessageGoesToDLQ` (real
-JetStream container).
+**Concurrency.** Within a group, fetched batches run in a handler pool
+(`WithConcurrency(n)`; unset = a goroutine per batch, `n=1` = serial). The
+semaphore also backpressures the fetch loop so the pool can't be outrun;
+per-message ack/nak is unchanged.
 
 ---
 

@@ -24,10 +24,13 @@ var (
 
 // newMux builds the gateway router on the stdlib ServeMux (Go 1.22 method+path
 // patterns). rt is the circuit-breaking transport for the /rest/v1 proxy.
-func newMux(h *handler.Handler, prCfg config.PostgREST, rt http.RoundTripper) http.Handler {
+func newMux(h *handler.Handler, hub *SSEHub, prCfg config.PostgREST, rt http.RoundTripper) http.Handler {
 	mux := http.NewServeMux()
 
 	h.Route(mux)
+
+	// Live event stream: clients subscribe here, the bus feeds hub.Dispatch.
+	mux.HandleFunc("GET /sse", hub.Serve)
 
 	// Supabase-compatible REST passthrough to PostgREST (P0-A).
 	registerRestProxy(mux, prCfg, rt)

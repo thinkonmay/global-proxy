@@ -159,3 +159,34 @@ func TestWithLinger_IgnoresNonPositive(t *testing.T) {
 	bus.WithLinger(time.Second)(&o)
 	assert.Equal(t, time.Second, o.Linger)
 }
+
+func TestWithConcurrency_IgnoresNonPositive(t *testing.T) {
+	o := bus.SubscribeOptions{}
+	bus.WithConcurrency(0)(&o)
+	bus.WithConcurrency(-1)(&o)
+	assert.Equal(t, 0, o.Concurrency, "n<=0 leaves the default (0 = unlimited)")
+
+	bus.WithConcurrency(1)(&o)
+	assert.Equal(t, 1, o.Concurrency, "n=1 is valid (serial)")
+
+	bus.WithConcurrency(8)(&o)
+	assert.Equal(t, 8, o.Concurrency)
+}
+
+func TestSubscribe_ConcurrencyOptionFlowsThrough(t *testing.T) {
+	f := &fakeClient{}
+	bus.Subscribe(f, bus.NewTopic[event]("t"), "g",
+		func(context.Context, event) error { return nil },
+		bus.WithConcurrency(10))
+	assert.Equal(t, 1, f.opts.BatchSize, "Subscribe always forces one payload per call")
+	assert.Equal(t, 10, f.opts.Concurrency)
+}
+
+func TestSubscribeBatch_ConcurrencyFlowsThrough(t *testing.T) {
+	f := &fakeClient{}
+	bus.SubscribeBatch(f, bus.NewTopic[event]("t"), "g",
+		func(context.Context, []event) []error { return nil },
+		bus.WithBatchSize(50), bus.WithConcurrency(10))
+	assert.Equal(t, 50, f.opts.BatchSize)
+	assert.Equal(t, 10, f.opts.Concurrency)
+}

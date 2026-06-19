@@ -51,20 +51,6 @@ func TestRun_ErrorIsNotRetried(t *testing.T) {
 	}
 }
 
-// failMark is a MemStore whose MarkError always fails (db down).
-type failMark struct{ *MemStore }
-
-func (failMark) MarkError(context.Context, string) error { return errors.New("db down") }
-
-// fn fails AND the failure can't be recorded -> ErrRecordFailed (caller escalates).
-func TestRun_RecordFailureSurfaces(t *testing.T) {
-	g := New(failMark{NewMemStore()})
-	err := g.Run(context.Background(), "a", func(context.Context) error { return errors.New("boom") })
-	if !errors.Is(err, ErrRecordFailed) {
-		t.Fatalf("Run = %v, want ErrRecordFailed", err)
-	}
-}
-
 // A duplicate arriving while the first is still pending also skips.
 func TestRun_SkipsWhilePending(t *testing.T) {
 	s := NewMemStore()

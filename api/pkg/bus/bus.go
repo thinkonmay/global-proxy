@@ -17,22 +17,19 @@ type Client interface {
 	Close() error
 }
 
-// Handler consumes a batch of raw payloads (one payload unless batch options are
-// set) and returns a per-payload verdict: result[i] reports payloads[i]'s
-// outcome — nil acks it, non-nil naks it (redelivered, eventually DLQ'd). A nil
-// or short slice acks the unreported indices, so `return nil` means "all ok".
+// Handler consumes a batch of raw payloads and returns a per-payload verdict:
+// result[i] reports payloads[i]'s outcome — nil acks it, non-nil naks it
+// (redelivered). A nil or short slice acks the unreported indices.
 type Handler func(ctx context.Context, payloads [][]byte) []error
 
-// Failed reports whether payload i was nak'd by a Handler verdict (errs[i] set).
-// Indices past the slice are treated as acked. Transports use this to decide
-// ack vs nak per message.
+// Failed reports whether payload i was nak'd (errs[i] set). Indices past the
+// slice are treated as acked.
 func Failed(errs []error, i int) bool {
 	return i < len(errs) && errs[i] != nil
 }
 
-// Each builds a uniform per-message verdict for an all-or-nothing batch handler
-// (e.g. one batched INSERT): nil err -> nil (ack all), else err repeated n times
-// (nak all).
+// Each builds a uniform verdict for an all-or-nothing batch handler: nil err
+// acks all, else naks all.
 func Each(n int, err error) []error {
 	if err == nil {
 		return nil
@@ -44,14 +41,11 @@ func Each(n int, err error) []error {
 	return errs
 }
 
-func DlqTopic(topic string) string {
-	return topic + ".DLQ"
-}
-
-// SubscribeOptions controls how a transport groups payloads before delivery.
+// SubscribeOptions controls how a transport groups and parallelizes delivery.
 type SubscribeOptions struct {
-	BatchSize int           // flush once the batch holds this many payloads (min 1)
-	Linger    time.Duration // max wait after the first payload before flushing a partial batch
+	BatchSize   int           // flush once the batch holds this many payloads (min 1)
+	Linger      time.Duration // max wait after the first payload before flushing a partial batch
+	Concurrency int           // max handler invocations in flight; 0 = unlimited, 1 = serial
 }
 
 type SubscribeOption func(*SubscribeOptions)
@@ -77,6 +71,16 @@ func WithLinger(d time.Duration) SubscribeOption {
 	}
 }
 
+// WithConcurrency caps in-flight handlers at n, so a large backlog drains
+// through a fixed pool. Default (unset) is unlimited; n=1 makes delivery serial.
+func WithConcurrency(n int) SubscribeOption {
+	return func(o *SubscribeOptions) {
+		if n >= 1 {
+			o.Concurrency = n
+		}
+	}
+}
+
 // Topic binds a name to payload type T at compile time.
 type Topic[T any] struct {
 	Name string
@@ -96,12 +100,16 @@ func Publish[T any](ctx context.Context, c Client, topic Topic[T], payload T) er
 }
 
 // Subscribe registers h under group for topic, invoked once per payload.
+// WithConcurrency caps the worker pool (default unlimited); WithBatchSize/WithLinger are ignored.
 func Subscribe[T any](
 	c Client,
 	topic Topic[T],
 	group string,
 	h func(ctx context.Context, payload T) error,
+	opts ...SubscribeOption,
 ) {
+	options := buildOptions(opts)
+	options.BatchSize = 1 // per-message semantics
 	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) []error {
 		errs := make([]error, len(raws))
 		for i, raw := range raws {
@@ -113,10 +121,11 @@ func Subscribe[T any](
 			errs[i] = h(ctx, payload)
 		}
 		return errs
-	}, SubscribeOptions{BatchSize: 1})
+	}, options)
 }
 
-// SubscribeBatch registers h under group for topic; batches are shaped by WithBatchSize/WithLinger (default one payload per call).
+// SubscribeBatch registers h under group for topic; batches are shaped by
+// WithBatchSize/WithLinger (default one payload per call).
 func SubscribeBatch[T any](
 	c Client,
 	topic Topic[T],
@@ -124,14 +133,11 @@ func SubscribeBatch[T any](
 	h func(ctx context.Context, payloads []T) []error,
 	opts ...SubscribeOption,
 ) {
-	options := SubscribeOptions{BatchSize: 1, Linger: 0}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := buildOptions(opts)
 	c.Subscribe(topic.Name, group, func(ctx context.Context, raws [][]byte) []error {
 		errs := make([]error, len(raws))
-		// Decode the batch; a payload that won't unmarshal is a permanent poison —
-		// mark it failed and keep it out of the typed slice handed to h.
+		// A payload that won't unmarshal is a permanent poison: mark it failed and
+		// keep it out of the typed slice handed to h.
 		payloads := make([]T, 0, len(raws))
 		idx := make([]int, 0, len(raws)) // payloads[j] came from raws[idx[j]]
 		for i, raw := range raws {
@@ -155,4 +161,13 @@ func SubscribeBatch[T any](
 		}
 		return errs
 	}, options)
+}
+
+// buildOptions applies opts over the defaults (one payload per call, serial).
+func buildOptions(opts []SubscribeOption) SubscribeOptions {
+	options := SubscribeOptions{BatchSize: 1}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return options
 }

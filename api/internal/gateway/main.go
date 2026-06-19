@@ -13,8 +13,10 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
+	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
 func main() {
@@ -36,14 +38,20 @@ func Run() error {
 	// never hang (TDD §2.1.1 / P11).
 	bt := guard.New(nil, guard.Config{MaxFailures: 5, Cooldown: 30 * time.Second, MaxConcurrent: 64})
 
-	eventBus, err := busnats.Connect([]string{cfg.Nats.URL}, slog.Default())
+	eventBus, err := busnats.New([]string{cfg.Nats.URL}, slog.Default())
 	if err != nil {
 		return fmt.Errorf("connect nats bus: %w", err)
 	}
 	defer func() { _ = eventBus.Close() }()
 
+	// Fan SSE events off the bus out to connected clients. One fixed group =
+	// correct for a single gateway instance; multi-replica needs a unique group
+	// per process so every replica gets a copy.
+	hub := NewSSEHub()
+	bus.Subscribe(eventBus, model.TopicSSE, "gateway-sse", hub.Dispatch)
+
 	h := handler.NewHandler(eventBus)
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: newMux(h, cfg.PostgREST, bt)}
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: newMux(h, hub, cfg.PostgREST, bt)}
 
 	errCh := make(chan error, 1)
 	go func() {

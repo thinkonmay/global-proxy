@@ -1,7 +1,9 @@
 package handler
 
 import (
-	"context"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
@@ -11,15 +13,32 @@ import (
 type Handler struct {
 	idem     *idempotency.Guard
 	eventBus bus.Client
-	run      func(ctx context.Context, m model.JobMsg) error // side-effect (overridable in tests)
+	ch       driver.Conn // ClickHouse, for the usage sink
 }
 
-func New(idem *idempotency.Guard, eventBus bus.Client) *Handler {
-	h := &Handler{idem: idem, eventBus: eventBus}
-	h.run = h.runJob
-	return h
+func New(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn) *Handler {
+	return &Handler{idem: idem, eventBus: eventBus, ch: ch}
 }
 
+// Init wires every subscription this worker serves.
 func (h *Handler) Init() {
-	bus.Subscribe(h.eventBus, model.TopicJob, "worker", h.handleJob)
+	// Jobs
+	bus.Subscribe(
+		h.eventBus,
+		model.TopicJob,
+		"worker",
+		h.handleJob,
+		bus.WithConcurrency(100),
+	)
+
+	// Usage events
+	bus.SubscribeBatch(
+		h.eventBus,
+		model.TopicUsage,
+		"ch-usage-sink",
+		h.handleUsage,
+		bus.WithBatchSize(5000),
+		bus.WithLinger(2*time.Second),
+		bus.WithConcurrency(1),
+	)
 }
