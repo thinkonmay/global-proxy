@@ -27,12 +27,15 @@ ci_gateway_test_packages() {
 ./pkg/bus/nats
 ./pkg/cache
 ./pkg/cache/memory
+./pkg/certmanager
 ./pkg/guard
 ./pkg/idempotency
 ./pkg/memo
 ./pkg/postgrest
 ./pkg/rpc
+./pkg/supabase/auth
 ./pkg/validator
+./pkg/waf/coraza
 ./shared/model
 EOF
 }

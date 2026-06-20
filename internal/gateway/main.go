@@ -62,7 +62,12 @@ func Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	mux := newMux(h, hub, globalRPC, grants, devJobs, cfg.PostgREST, cfg.Upstreams, bt)
+	coraza, err := initCoraza(cfg.WAF.Coraza)
+	if err != nil {
+		return err
+	}
+
+	mux := newMux(h, hub, globalRPC, grants, devJobs, cfg, bt, coraza)
 
 	servers, errCh, err := startServers(cfg, mux)
 	if err != nil {

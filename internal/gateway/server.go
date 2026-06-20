@@ -2,17 +2,14 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
 
-	"golang.org/x/crypto/acme"
-	"golang.org/x/crypto/acme/autocert"
-
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/pkg/certmanager"
 )
 
 type httpServers struct {
@@ -59,10 +56,12 @@ func startTLSServers(cfg *config.Config, handler http.Handler) (*httpServers, <-
 		return nil, nil, fmt.Errorf("tls enabled but no hosts configured")
 	}
 
-	certManager := &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache(cacheDir),
-		HostPolicy: autocert.HostWhitelist(hosts...),
+	certs, err := certmanager.New(certmanager.Config{
+		CacheDir: cacheDir,
+		Hosts:    hosts,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("cert manager: %w", err)
 	}
 
 	httpsPort := cfg.TLS.HTTPSPort
@@ -75,18 +74,14 @@ func startTLSServers(cfg *config.Config, handler http.Handler) (*httpServers, <-
 	}
 
 	httpsSrv := &http.Server{
-		Addr:    ":" + httpsPort,
-		Handler: handler,
-		TLSConfig: &tls.Config{
-			MinVersion:     tls.VersionTLS12,
-			GetCertificate: certManager.GetCertificate,
-			NextProtos:     []string{acme.ALPNProto, "h2", "http/1.1"},
-		},
+		Addr:      ":" + httpsPort,
+		Handler:   handler,
+		TLSConfig: certs.TLSConfig(),
 	}
 
 	httpSrv := &http.Server{
 		Addr:    ":" + httpPort,
-		Handler: certManager.HTTPHandler(handler),
+		Handler: certs.HTTPChallengeHandler(handler),
 	}
 
 	errCh := make(chan error, 2)

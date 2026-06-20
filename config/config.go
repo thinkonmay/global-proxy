@@ -17,7 +17,9 @@ type Config struct {
 	Port       string     `mapstructure:"port"`
 	Log        Log        `mapstructure:"log"`
 	PostgREST  PostgREST  `mapstructure:"postgrest"`
+	Supabase   Supabase   `mapstructure:"supabase"`
 	Upstreams  Upstreams  `mapstructure:"upstreams"`
+	WAF        WAF        `mapstructure:"waf"`
 	Nats       Nats       `mapstructure:"nats"`
 	ClickHouse ClickHouse `mapstructure:"clickhouse"`
 	RPC        RPC        `mapstructure:"rpc"`
@@ -49,8 +51,34 @@ type Relay struct {
 
 // Upstreams are the non-PostgREST targets the gateway reverse-proxies.
 type Upstreams struct {
-	Meta   string `mapstructure:"meta"`
-	Studio string `mapstructure:"studio"`
+	Meta    string `mapstructure:"meta"`
+	Studio  string `mapstructure:"studio"`
+	Storage string `mapstructure:"storage"`
+}
+
+// Supabase holds Kong consumer keys and Studio basic-auth credentials.
+type Supabase struct {
+	AnonKey           string `mapstructure:"anonKey"`
+	PublishableKey    string `mapstructure:"publishableKey"`
+	ServiceKey        string `mapstructure:"serviceKey"`
+	SecretKey         string `mapstructure:"secretKey"`
+	DashboardUser     string `mapstructure:"dashboardUser"`
+	DashboardPassword string `mapstructure:"dashboardPassword"`
+}
+
+// WAF restricts public catalog read paths to allowed IPs (globalproxy parity).
+type WAF struct {
+	Coraza          Coraza   `mapstructure:"coraza"`
+	AllowedIPs      []string `mapstructure:"allowedIPs"`
+	PublicReadPaths []string `mapstructure:"publicReadPaths"`
+}
+
+// Coraza configures OWASP Coraza WAF (ModSecurity-compatible) at the edge.
+type Coraza struct {
+	Enabled          bool     `mapstructure:"enabled"`
+	OWASPCRS         bool     `mapstructure:"owaspCRS"`
+	RequestBodyLimit int      `mapstructure:"requestBodyLimit"`
+	SkipPaths        []string `mapstructure:"skipPaths"`
 }
 
 type ClickHouse struct {
@@ -96,6 +124,9 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("tls.httpPort", "80")
 	v.SetDefault("tls.httpsPort", "443")
 	v.SetDefault("tls.autocertCache", ".autocert_cache")
+	v.SetDefault("waf.coraza.enabled", true)
+	v.SetDefault("waf.coraza.owaspCRS", true)
+	v.SetDefault("waf.coraza.requestBodyLimit", 10485760)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -115,10 +146,10 @@ func NewConfig() (*Config, error) {
 		cfg.Relay.BatchSize = 50
 	}
 	if hosts := os.Getenv("APP_TLS_HOSTS"); hosts != "" {
-		cfg.TLS.Hosts = strings.Split(hosts, ",")
-		for i := range cfg.TLS.Hosts {
-			cfg.TLS.Hosts[i] = strings.TrimSpace(cfg.TLS.Hosts[i])
-		}
+		cfg.TLS.Hosts = splitCommaTrim(hosts)
+	}
+	if ips := os.Getenv("APP_WAF_ALLOWEDIPS"); ips != "" {
+		cfg.WAF.AllowedIPs = splitCommaTrim(ips)
 	}
 	if cfg.TLS.Enabled {
 		if cfg.TLS.HTTPPort == "" {
@@ -133,10 +164,44 @@ func NewConfig() (*Config, error) {
 	} else if cfg.Port == "" {
 		cfg.Port = "4000"
 	}
+	mergeSupabaseKeys(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func mergeSupabaseKeys(cfg *Config) {
+	if cfg.Supabase.AnonKey == "" {
+		cfg.Supabase.AnonKey = cfg.PostgREST.AnonKey
+	}
+	if cfg.Supabase.ServiceKey == "" {
+		cfg.Supabase.ServiceKey = cfg.PostgREST.ServiceKey
+	}
+	if len(cfg.WAF.PublicReadPaths) == 0 {
+		cfg.WAF.PublicReadPaths = defaultPublicReadPaths()
+	}
+	mergeCorazaDefaults(&cfg.WAF.Coraza)
+}
+
+func mergeCorazaDefaults(c *Coraza) {
+	if c.RequestBodyLimit <= 0 {
+		c.RequestBodyLimit = 10 << 20
+	}
+	if len(c.SkipPaths) == 0 {
+		c.SkipPaths = []string{"/storage/v1/"}
+	}
+}
+
+func splitCommaTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (c *Config) SetupLogger() {

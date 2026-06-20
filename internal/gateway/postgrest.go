@@ -6,19 +6,10 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strings"
 	"time"
 
-	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 )
-
-// restPrefix is the Supabase-compatible REST path the gateway proxies to PostgREST.
-const restPrefix = "/rest/v1"
-
-// graphqlPath is Supabase's GraphQL endpoint; PostgREST serves it via pg_graphql
-// at /rpc/graphql.
-const graphqlPath = "/graphql/v1"
 
 // proxyTimeout bounds each proxied API request (TDD §2.1.1).
 const proxyTimeout = 5 * time.Second
@@ -70,34 +61,4 @@ func timed(h http.Handler, d time.Duration) http.HandlerFunc {
 		defer cancel()
 		h.ServeHTTP(w, r.WithContext(ctx))
 	}
-}
-
-// injectAnon adds anon credentials when the client supplied none — the lean
-// replacement for Kong's anon role mapping (P0-A). No key-auth/ACL validation.
-func injectAnon(cfg config.PostgREST, req *http.Request) {
-	if cfg.AnonKey != "" && req.Header.Get("apikey") == "" {
-		req.Header.Set("apikey", cfg.AnonKey)
-		req.Header.Set("Authorization", "Bearer "+cfg.AnonKey)
-	}
-}
-
-// registerRestProxy wires /rest/v1/* and /graphql/v1 to PostgREST, replacing
-// Kong's rest-v1 and graphql-v1 services.
-func registerRestProxy(mux *http.ServeMux, cfg config.PostgREST, rt http.RoundTripper) {
-	rest := newProxy(cfg.URL, rt, func(req *http.Request) {
-		req.URL.Path = strings.TrimPrefix(req.URL.Path, restPrefix)
-		injectAnon(cfg, req)
-	})
-	if rest == nil {
-		slog.Error("postgrest url invalid, /rest/v1 and /graphql/v1 disabled")
-		return
-	}
-	mux.Handle(restPrefix+"/", timed(rest, proxyTimeout))
-
-	// GraphQL: rewrite to PostgREST's pg_graphql RPC.
-	graphql := newProxy(cfg.URL, rt, func(req *http.Request) {
-		req.URL.Path = "/rpc/graphql"
-		injectAnon(cfg, req)
-	})
-	mux.Handle(graphqlPath, timed(graphql, proxyTimeout))
 }

@@ -8,9 +8,28 @@ postgrest:
   anonKey: ""
   serviceKey: ""
 
+supabase:
+  anonKey: ""
+  publishableKey: ""
+  serviceKey: ""
+  secretKey: ""
+  dashboardUser: ""
+  dashboardPassword: ""
+
 upstreams:
   meta: "http://meta:8080"
   studio: "http://studio:3000"
+  storage: "http://storage:5000"
+
+waf:
+  coraza:
+    enabled: true
+    owaspCRS: true
+    requestBodyLimit: 10485760
+    skipPaths:
+      - /storage/v1/
+  allowedIPs: []
+  publicReadPaths: []
 
 nats:
   url: "nats://nats:4222"

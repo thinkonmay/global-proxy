@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
+	corazawaf "github.com/thinkonmay/global-proxy/api/pkg/waf/coraza"
 )
 
 const (
@@ -24,9 +26,9 @@ func newMux(
 	globalRPC *handler.GlobalRPCHandler,
 	grants *handler.GrantHandler,
 	devJobs bool,
-	prCfg config.PostgREST,
-	up config.Upstreams,
+	cfg *config.Config,
 	rt http.RoundTripper,
+	coraza *corazawaf.Middleware,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -36,13 +38,29 @@ func newMux(
 
 	mux.HandleFunc("GET /sse", hub.Serve)
 
-	registerRestProxy(mux, prCfg, rt)
-	registerUpstreams(mux, up, rt)
+	registerKongRoutes(mux, cfg, rt)
 
-	return guard.Chain(mux,
+	chain := []guard.Middleware{
 		guard.Denylist(guard.IPSet(ipBlacklist...)),
 		withCORS,
 		guard.Allowlist(guard.IPSet(ipWhitelist...)),
 		guard.RateLimit(guard.RateLimitConfig{RPS: rateRPS, Burst: rateBurst}),
-	)
+	}
+	if coraza != nil {
+		chain = append([]guard.Middleware{coraza.AsGuard()}, chain...)
+	}
+	return guard.Chain(mux, chain...)
+}
+
+func initCoraza(cfg config.Coraza) (*corazawaf.Middleware, error) {
+	m, err := corazawaf.New(corazawaf.Config{
+		Enabled:          cfg.Enabled,
+		OWASPCRS:         cfg.OWASPCRS,
+		RequestBodyLimit: cfg.RequestBodyLimit,
+		SkipPaths:        cfg.SkipPaths,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("coraza waf: %w", err)
+	}
+	return m, nil
 }

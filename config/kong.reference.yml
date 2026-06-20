@@ -1,0 +1,85 @@
+# Kong declarative config reference for the slim Thinkmay stack.
+# Implemented in gateway/internal/gateway/kong_routes.go (Go middleware, not Kong runtime).
+
+_format_version: "3.0"
+
+services:
+  - name: rest-v1
+    url: http://rest:3000
+    routes:
+      - name: rest-v1-all
+        paths: ["/rest/v1"]
+        strip_path: true
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          allow: [anon, admin]
+
+  - name: graphql-v1
+    url: http://rest:3000/rpc/graphql
+    routes:
+      - name: graphql-v1
+        paths: ["/graphql/v1"]
+        strip_path: true
+    plugins:
+      - name: cors
+      - name: key-auth
+      - name: acl
+        config:
+          allow: [anon, admin]
+
+  - name: storage-v1
+    url: http://storage:5000
+    routes:
+      - name: storage-v1-all
+        paths: ["/storage/v1"]
+        strip_path: true
+    plugins:
+      - name: cors
+      - name: request-transformer
+        # Maps apikey → Authorization Bearer; clears empty Authorization (presigned URLs).
+
+  - name: meta
+    url: http://meta:8080
+    routes:
+      - name: meta-all
+        paths: ["/pg"]
+        strip_path: true
+    plugins:
+      - name: key-auth
+      - name: acl
+        config:
+          allow: [admin]
+
+  - name: dashboard-v1
+    url: http://studio:3000
+    routes:
+      - name: dashboard-v1-all
+        paths: ["/"]
+    plugins:
+      - name: cors
+      - name: basic-auth
+
+# Not deployed in slim stack (gateway returns 404):
+#   auth-v1 (/auth/v1), realtime-v1 (/realtime/v1), functions-v1 (/functions/v1), analytics-v1 (/analytics/v1)
+# Blocked: POST/GET /api/mcp → 403
+# Auth plane: use PocketBase — do not proxy /auth/v1 to GoTrue.
+
+# WAF (globalproxy parity): catalog read paths restricted to waf.allowedIPs in config.yaml.
+# Default paths: config/waf_defaults.go (mirrors globalproxy -waf-paths in planning.md).
+
+consumers:
+  - username: anon
+    keyauth_credentials:
+      - key: ${SUPABASE_ANON_KEY}
+    acls:
+      - group: anon
+  - username: admin
+    keyauth_credentials:
+      - key: ${SUPABASE_SERVICE_ROLE_KEY}
+    acls:
+      - group: admin
