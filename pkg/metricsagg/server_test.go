@@ -67,3 +67,28 @@ func TestPushUnauthorized(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
+
+func TestInternalNodes(t *testing.T) {
+	srv, _ := testServer(t)
+	h := srv.Handler()
+	push := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"Hostname":"worker-a"}`))
+	push.Header.Set("Authorization", "test-secret")
+	push.Header.Set("node", "worker-a")
+	push.Header.Set("type", "info")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, push)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("push status = %d", rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/nodes", nil)
+	req.Header.Set("Authorization", "test-secret")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nodes status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "worker-a") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}

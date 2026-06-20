@@ -64,6 +64,9 @@ func main() {
 
 	h := handler.New(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, pb)
 	h.Init()
+	if err := h.StartUsageCollector(ctx, cfg, slog.Default()); err != nil {
+		log.Fatalf("usage collector: %v", err)
+	}
 
 	slog.Info("worker started")
 	<-ctx.Done()

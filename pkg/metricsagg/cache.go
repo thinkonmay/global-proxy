@@ -145,6 +145,72 @@ type NodeSnapshot struct {
 	Stale  bool
 }
 
+// NodeInfoSnapshot is the latest WorkerInfor JSON push for one node.
+type NodeInfoSnapshot struct {
+	Node  string
+	Info  []byte
+	Stale bool
+}
+
+// ListNodeInfo returns cached WorkerInfor payloads for all known nodes.
+func (c *Cache) ListNodeInfo(ctx context.Context) ([]NodeInfoSnapshot, error) {
+	nodes, err := c.client.SMembers(ctx, nodesIndexKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	c.mu.RLock()
+	for node := range c.l1 {
+		if !slices.Contains(nodes, node) {
+			nodes = append(nodes, node)
+		}
+	}
+	c.mu.RUnlock()
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+
+	out := make([]NodeInfoSnapshot, 0, len(nodes))
+	missing := make([]string, 0)
+
+	c.mu.RLock()
+	for _, node := range nodes {
+		if entry, ok := c.l1[node]; ok && time.Now().Before(entry.expires) && len(entry.info) > 0 {
+			out = append(out, NodeInfoSnapshot{Node: node, Info: append([]byte(nil), entry.info...)})
+			continue
+		}
+		missing = append(missing, node)
+	}
+	c.mu.RUnlock()
+
+	if len(missing) == 0 {
+		return out, nil
+	}
+	pipe := c.client.Pipeline()
+	cmds := make([]*redis.StringCmd, len(missing))
+	for i, node := range missing {
+		cmds[i] = pipe.Get(ctx, nodeKey(node, "info"))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, node := range missing {
+		body, err := cmds[i].Bytes()
+		if err == redis.Nil {
+			out = append(out, NodeInfoSnapshot{Node: node, Stale: true})
+			delete(c.l1, node)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		c.touchL1Locked(node, "info", body)
+		out = append(out, NodeInfoSnapshot{Node: node, Info: append([]byte(nil), body...)})
+	}
+	return out, nil
+}
+
 // MergedExposition is the full Prometheus text served on GET /metrics.
 func (c *Cache) MergedExposition(ctx context.Context) ([]byte, error) {
 	c.mu.RLock()

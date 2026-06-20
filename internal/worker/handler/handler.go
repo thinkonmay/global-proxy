@@ -17,6 +17,7 @@ type Handler struct {
 	idem     *idempotency.Guard
 	eventBus bus.Client
 	ch       driver.Conn
+	pr       *postgrest.Client
 	volumes  *volumeHandler
 }
 
@@ -25,6 +26,7 @@ func New(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postg
 		idem:     idem,
 		eventBus: eventBus,
 		ch:       ch,
+		pr:       pr,
 		volumes:  newVolumeHandler(idem, pr, pb),
 	}
 }

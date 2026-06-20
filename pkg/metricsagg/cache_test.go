@@ -65,6 +65,22 @@ func TestMergedExpositionStaleNode(t *testing.T) {
 	}
 }
 
+func TestListNodeInfo(t *testing.T) {
+	cache, _ := testCache(t)
+	ctx := context.Background()
+	payload := []byte(`{"Hostname":"worker-a","Sessions":[]}`)
+	if err := cache.SavePush(ctx, "worker-a", "info", payload); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := cache.ListNodeInfo(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || string(nodes[0].Info) != string(payload) {
+		t.Fatalf("nodes: %+v", nodes)
+	}
+}
+
 func TestL1SurvivesRedisFlushAfterPush(t *testing.T) {
 	cache, mr := testCache(t)
 	ctx := context.Background()

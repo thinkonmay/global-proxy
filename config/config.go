@@ -14,22 +14,24 @@ import (
 )
 
 type Config struct {
-	Port       string     `mapstructure:"port"`
-	Log        Log        `mapstructure:"log"`
-	PostgREST  PostgREST  `mapstructure:"postgrest"`
-	PocketBase PocketBase `mapstructure:"pocketbase"`
-	Supabase   Supabase   `mapstructure:"supabase"`
-	Upstreams  Upstreams  `mapstructure:"upstreams"`
-	Admin      Admin      `mapstructure:"admin"`
-	WAF        WAF        `mapstructure:"waf"`
-	Nats       Nats       `mapstructure:"nats"`
-	ClickHouse ClickHouse `mapstructure:"clickhouse"`
-	RPC        RPC        `mapstructure:"rpc"`
-	Relay      Relay      `mapstructure:"relay"`
-	Scheduler  Scheduler  `mapstructure:"scheduler"`
-	Metrics    Metrics    `mapstructure:"metrics"`
-	Gateway    Gateway    `mapstructure:"gateway"`
-	TLS        TLS        `mapstructure:"tls"`
+	Port           string         `mapstructure:"port"`
+	Log            Log            `mapstructure:"log"`
+	PostgREST      PostgREST      `mapstructure:"postgrest"`
+	PocketBase     PocketBase     `mapstructure:"pocketbase"`
+	Supabase       Supabase       `mapstructure:"supabase"`
+	Upstreams      Upstreams      `mapstructure:"upstreams"`
+	Admin          Admin          `mapstructure:"admin"`
+	WAF            WAF            `mapstructure:"waf"`
+	Nats           Nats           `mapstructure:"nats"`
+	ClickHouse     ClickHouse     `mapstructure:"clickhouse"`
+	RPC            RPC            `mapstructure:"rpc"`
+	Relay          Relay          `mapstructure:"relay"`
+	Scheduler      Scheduler      `mapstructure:"scheduler"`
+	Metrics        Metrics        `mapstructure:"metrics"`
+	UsageCollector UsageCollector `mapstructure:"usageCollector"`
+	Payment        Payment        `mapstructure:"payment"`
+	Gateway        Gateway        `mapstructure:"gateway"`
+	TLS            TLS            `mapstructure:"tls"`
 }
 
 // Scheduler replaces global pg_cron (D15/P14): periodic PostgREST RPC ticks.
@@ -49,6 +51,22 @@ type SchedulerJob struct {
 	RPC       string         `mapstructure:"rpc"`
 	Args      map[string]any `mapstructure:"args"`
 	TimeoutMs int            `mapstructure:"timeoutMs"`
+}
+
+// UsageCollector replaces legacy snapshoot_v6 / globalproxy pulls (F06 / P1-B).
+type UsageCollector struct {
+	Enabled        bool   `mapstructure:"enabled"`
+	Every          string `mapstructure:"every"`
+	AddonEvery     string `mapstructure:"addonEvery"`
+	ShadowMode     bool   `mapstructure:"shadowMode"`
+	SessionMinutes int    `mapstructure:"sessionMinutes"`
+}
+
+// Payment configures the provider status poller (replaces verify_all_transactions_v2 cron).
+type Payment struct {
+	PollerEnabled bool   `mapstructure:"pollerEnabled"`
+	PollEvery     string `mapstructure:"pollEvery"`
+	RSASignerURL  string `mapstructure:"rsaSignerURL"`
 }
 
 type TLS struct {
@@ -161,6 +179,14 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("admin.enabled", false)
 	v.SetDefault("scheduler.enabled", false)
 	v.SetDefault("metrics.cacheTTLSeconds", 90)
+	v.SetDefault("usageCollector.enabled", false)
+	v.SetDefault("usageCollector.every", "5m")
+	v.SetDefault("usageCollector.addonEvery", "1h")
+	v.SetDefault("usageCollector.shadowMode", false)
+	v.SetDefault("usageCollector.sessionMinutes", 5)
+	v.SetDefault("payment.pollerEnabled", true)
+	v.SetDefault("payment.pollEvery", "10s")
+	v.SetDefault("payment.rsaSignerURL", "http://rsa:8080")
 	v.SetDefault("metrics.scrapeCacheSeconds", 10)
 	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
 	v.SetDefault("metrics.listenAddr", ":9090")

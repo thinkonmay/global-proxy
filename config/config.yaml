@@ -57,24 +57,41 @@ relay:
 # Global pg_cron replacement (D15/P14). Disabled by default; the scheduler
 # binary (CMD=scheduler) sets APP_SCHEDULER_ENABLED=1. Each job ticks on `every`
 # and calls a PostgREST RPC — billing math stays in Postgres (P5).
+# Legacy pg_cron parity: jobs 7,20,42,74 from job_rows.sql export.
 scheduler:
   enabled: false
   jobs:
-    # F07: mark cancelled/ended subscriptions cleaned.
-    - name: clean_expired_subscription
-      every: 1m
-      rpc: clean_expired_subscription
-      timeoutMs: 5000
-    # F17: settle verified payments (credit pockets + enqueue subscription jobs).
-    - name: verify_all_payment
-      every: 30s
-      rpc: verify_all_payment_v2
-      timeoutMs: 5000
-    # F17: settle PAID deposits.
     - name: verify_all_deposits
-      every: 30s
+      every: 10s
       rpc: verify_all_deposits
       timeoutMs: 5000
+    - name: verify_all_payment
+      every: 10s
+      rpc: verify_all_payment_v2
+      timeoutMs: 5000
+    - name: clean_expired_subscription
+      every: 24h
+      rpc: clean_expired_subscription
+      timeoutMs: 5000
+    - name: validate_subscription_usage
+      every: 1h
+      rpc: validate_subscription_usage_v1
+      timeoutMs: 5000
+
+# Provider status poll (replaces pg_cron job 6 verify_all_transactions_v2).
+payment:
+  pollerEnabled: true
+  pollEvery: 10s
+  rsaSignerURL: "http://rsa:8080"
+
+# Usage collector (F06 / P1-B): runs inside worker when enabled.
+# Replaces snapshoot_v6 (5m), snapshoot_volume_v1 (hourly), and addon snapshoot_* (hourly).
+usageCollector:
+  enabled: false
+  every: 5m
+  addonEvery: 1h
+  shadowMode: false
+  sessionMinutes: 5
 
 gateway:
   publicURL: "https://thinkmay.net"

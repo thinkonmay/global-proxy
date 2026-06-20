@@ -29,6 +29,9 @@ ci_gateway_test_packages() {
 ./pkg/cache/memory
 ./pkg/admingate
 ./pkg/metricsagg
+./pkg/usage
+./pkg/payment
+./pkg/cluster
 ./pkg/certmanager
 ./pkg/guard
 ./pkg/idempotency

@@ -1,6 +1,7 @@
 // Package pocketbase is a thin HTTP client for cluster PocketBase admin APIs.
 // It logs in once via _superusers auth-with-password and reuses the bearer token
-// on subsequent calls. Tokens are proactively renewed every hour and again on 401.
+// on subsequent calls. Tokens are proactively renewed every hour and again on
+// 401/403 (PocketBase often returns 403 for invalid superuser tokens).
 //
 // API shapes follow https://pocketbase.io/docs/api-records/ (auth-with-password,
 // auth-refresh, collection records).
@@ -289,7 +290,7 @@ func (c *Client) doWithAuth(ctx context.Context, req *http.Request, dest any, al
 	if err != nil {
 		return fmt.Errorf("read body: %w", err)
 	}
-	if resp.StatusCode == http.StatusUnauthorized && allowRetry {
+	if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && allowRetry {
 		if err := c.recoverAuth(ctx); err != nil {
 			return err
 		}
