@@ -15,6 +15,15 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 ALTER ROLE authenticator WITH LOGIN PASSWORD 'peakthinkmaypassword';
 GRANT anon, authenticated, service_role TO authenticator;
 
+-- Studio's "default" project connects pg-meta as `supabase_admin`@`db` (Supabase
+-- defaults). POSTGRES_USER=thinkmay overrides the bootstrap superuser, so the
+-- image never creates supabase_admin → Studio's /query 28P01. Recreate it (the
+-- `db` host alias is set on the postgres service in compose).
+DO $$ BEGIN
+  CREATE ROLE supabase_admin SUPERUSER CREATEDB CREATEROLE LOGIN REPLICATION BYPASSRLS PASSWORD 'peakthinkmaypassword';
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER ROLE supabase_admin WITH SUPERUSER LOGIN PASSWORD 'peakthinkmaypassword';
+
 -- 2. Worker state: the at-most-once ledger. Gateway never touches it — it only
 -- publishes; the worker registers + records every message here.
 CREATE TABLE IF NOT EXISTS processed_message (
