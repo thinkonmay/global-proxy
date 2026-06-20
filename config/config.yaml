@@ -8,6 +8,12 @@ postgrest:
   anonKey: ""
   serviceKey: ""
 
+# Cluster PocketBase superuser credentials (gateway admin API client).
+pocketbase:
+  url: ""
+  username: ""
+  password: ""
+
 supabase:
   anonKey: ""
   publishableKey: ""

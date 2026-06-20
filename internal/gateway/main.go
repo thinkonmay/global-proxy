@@ -56,7 +56,7 @@ func Run() error {
 
 	h := handler.NewHandler(eventBus)
 	devJobs := os.Getenv("APP_DEV_JOBS") == "1"
-	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr)
+	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt)
 	grants := handler.NewGrantHandler(*cfg, pr, bt)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

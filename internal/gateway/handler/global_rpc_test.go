@@ -24,7 +24,7 @@ func TestGlobalRPCPostgRESTRoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
-	h := NewGlobalRPCHandler(config.Config{RPC: config.RPC{Password1: rpc.DefaultPassword1()}}, pr)
+	h := NewGlobalRPCHandler(config.Config{RPC: config.RPC{Password1: rpc.DefaultPassword1()}}, pr, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -58,7 +58,7 @@ func TestGlobalRPCPostgRESTRoundTrip(t *testing.T) {
 
 func TestGlobalRPCRequiresAuthWhenEmailInArgs(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"})
-	h := NewGlobalRPCHandler(config.Config{RPC: config.RPC{Password1: rpc.DefaultPassword1()}}, pr)
+	h := NewGlobalRPCHandler(config.Config{RPC: config.RPC{Password1: rpc.DefaultPassword1()}}, pr, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

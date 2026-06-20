@@ -1,13 +1,12 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -15,23 +14,22 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
-const pbDispatchTimeout = 30 * time.Second
-
 type volumeHandler struct {
 	idem *idempotency.Guard
 	pr   *postgrest.Client
-	http *http.Client
+	pb   *pocketbase.Client
 }
 
-func newVolumeHandler(idem *idempotency.Guard, pr *postgrest.Client) *volumeHandler {
+func newVolumeHandler(idem *idempotency.Guard, pr *postgrest.Client, pb *pocketbase.Client) *volumeHandler {
 	return &volumeHandler{
 		idem: idem,
 		pr:   pr,
-		http: &http.Client{Timeout: pbDispatchTimeout},
+		pb:   pb,
 	}
 }
 
@@ -54,11 +52,12 @@ func (h *volumeHandler) handle(ctx context.Context, env model.VolumeJobEnvelope)
 }
 
 func (h *volumeHandler) createVolume(ctx context.Context, p model.VolumeJobPayload) error {
-	token, baseURL, err := h.clusterSecrets(ctx, p.ClusterID)
+	baseURL, err := h.clusterURL(ctx, p.ClusterID)
 	if err != nil {
 		return err
 	}
-	userID, err := h.ensurePBUser(ctx, baseURL, token, p.Email)
+	pb := h.pb.WithBaseURL(baseURL)
+	userID, err := h.ensurePBUser(ctx, pb, p.Email)
 	if err != nil {
 		return err
 	}
@@ -75,59 +74,48 @@ func (h *volumeHandler) createVolume(ctx context.Context, p model.VolumeJobPaylo
 			}
 		}
 	}
-	bodyBytes, _ := json.Marshal(body)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/collections/volumes/records", bytes.NewReader(bodyBytes))
+	headers := http.Header{}
+	headers.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
+	var created map[string]any
+	err = pb.CreateRecord(ctx, "volumes", body, &created, pocketbase.WithHeaders(headers))
+	success := err == nil
+	var respBody []byte
 	if err != nil {
-		return err
+		var pe *pocketbase.Error
+		if errors.As(err, &pe) {
+			respBody = pe.Body
+		} else {
+			respBody = jobErrorResult(err.Error())
+		}
+	} else {
+		respBody, _ = json.Marshal(created)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
-
-	resp, err := h.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(resp.Body)
-
-	success := resp.StatusCode >= 200 && resp.StatusCode < 300
 	return h.patchJob(ctx, p.JobID, success, respBody)
 }
 
 func (h *volumeHandler) updateVolume(ctx context.Context, p model.VolumeJobPayload) error {
-	token, baseURL, err := h.clusterSecrets(ctx, p.ClusterID)
+	baseURL, err := h.clusterURL(ctx, p.ClusterID)
 	if err != nil {
 		return err
 	}
-	userID, err := h.ensurePBUser(ctx, baseURL, token, p.Email)
+	pb := h.pb.WithBaseURL(baseURL)
+	userID, err := h.ensurePBUser(ctx, pb, p.Email)
 	if err != nil {
 		return err
 	}
 
-	listURL := strings.TrimRight(baseURL, "/") + "/api/collections/volumes/records?" + url.Values{
-		"filter": {`(user~"` + userID + `")`},
-	}.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := h.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, _ := io.ReadAll(resp.Body)
-
+	q := url.Values{}
+	q.Set("filter", `(user~"`+userID+`")`)
 	var list struct {
 		Items []struct {
 			ID            string          `json:"id"`
 			Configuration json.RawMessage `json:"configuration"`
 		} `json:"items"`
 	}
-	_ = json.Unmarshal(data, &list)
+	if err := pb.ListRecords(ctx, "volumes", q, &list); err != nil {
+		return err
+	}
 	if len(list.Items) == 0 {
 		return h.patchJob(ctx, p.JobID, false, jobErrorResult("Volume not found"))
 	}
@@ -149,23 +137,22 @@ func (h *volumeHandler) updateVolume(ctx context.Context, p model.VolumeJobPaylo
 		}
 	}
 
-	patchBody, _ := json.Marshal(map[string]any{"configuration": argCfg})
-	patchURL := strings.TrimRight(baseURL, "/") + "/api/collections/volumes/records/" + item.ID
-	patchReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, patchURL, bytes.NewReader(patchBody))
+	headers := http.Header{}
+	headers.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
+	var updated map[string]any
+	err = pb.UpdateRecord(ctx, "volumes", item.ID, map[string]any{"configuration": argCfg}, &updated, pocketbase.WithHeaders(headers))
+	success := err == nil
+	var respBody []byte
 	if err != nil {
-		return err
+		var pe *pocketbase.Error
+		if errors.As(err, &pe) {
+			respBody = pe.Body
+		} else {
+			respBody = jobErrorResult(err.Error())
+		}
+	} else {
+		respBody, _ = json.Marshal(updated)
 	}
-	patchReq.Header.Set("Authorization", "Bearer "+token)
-	patchReq.Header.Set("Content-Type", "application/json")
-	patchReq.Header.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
-
-	patchResp, err := h.http.Do(patchReq)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = patchResp.Body.Close() }()
-	respBody, _ := io.ReadAll(patchResp.Body)
-	success := patchResp.StatusCode >= 200 && patchResp.StatusCode < 300
 	return h.patchJob(ctx, p.JobID, success, respBody)
 }
 
@@ -188,39 +175,30 @@ func (h *volumeHandler) patchJob(ctx context.Context, jobID int64, success bool,
 	return h.pr.Update(ctx, "job", q, patch, nil)
 }
 
-func (h *volumeHandler) clusterSecrets(ctx context.Context, clusterID int64) (token, baseURL string, err error) {
+func (h *volumeHandler) clusterURL(ctx context.Context, clusterID int64) (string, error) {
 	var rows []struct {
-		Token string `json:"token"`
-		URL   string `json:"url"`
+		URL string `json:"url"`
 	}
 	if err := h.pr.RPC(ctx, "get_cluster_secrets", map[string]any{"cluster_id": clusterID}, &rows); err != nil {
-		return "", "", err
+		return "", err
 	}
-	if len(rows) == 0 {
-		return "", "", fmt.Errorf("cluster secrets not found")
+	if len(rows) == 0 || rows[0].URL == "" {
+		return "", fmt.Errorf("cluster url not found")
 	}
-	return rows[0].Token, rows[0].URL, nil
+	return rows[0].URL, nil
 }
 
-func (h *volumeHandler) ensurePBUser(ctx context.Context, baseURL, adminToken, email string) (string, error) {
-	filterURL := strings.TrimRight(baseURL, "/") + "/api/collections/users/records?filter=(email%3D%22" + urlQueryEscape(email) + "%22)"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, filterURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp, err := h.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, _ := io.ReadAll(resp.Body)
+func (h *volumeHandler) ensurePBUser(ctx context.Context, pb *pocketbase.Client, email string) (string, error) {
+	q := url.Values{}
+	q.Set("filter", fmt.Sprintf(`(email="%s")`, email))
 	var list struct {
 		Items []struct {
 			ID string `json:"id"`
 		} `json:"items"`
 	}
-	_ = json.Unmarshal(data, &list)
+	if err := pb.ListRecords(ctx, "users", q, &list); err != nil {
+		return "", err
+	}
 	if len(list.Items) > 0 {
 		return list.Items[0].ID, nil
 	}
@@ -229,36 +207,21 @@ func (h *volumeHandler) ensurePBUser(ctx context.Context, baseURL, adminToken, e
 	if err != nil {
 		return "", err
 	}
-	createBody, _ := json.Marshal(map[string]any{
+	var created struct {
+		ID string `json:"id"`
+	}
+	err = pb.CreateRecord(ctx, "users", map[string]any{
 		"username":        strings.ReplaceAll(email, "@", ""),
 		"email":           email,
 		"emailVisibility": true,
 		"password":        password,
 		"passwordConfirm": password,
 		"name":            email,
-	})
-	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/collections/users/records", bytes.NewReader(createBody))
-	if err != nil {
-		return "", err
-	}
-	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := h.http.Do(req2)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp2.Body.Close() }()
-	data2, _ := io.ReadAll(resp2.Body)
-	var created struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data2, &created); err != nil || created.ID == "" {
-		return "", fmt.Errorf("create pb user failed")
+	}, &created)
+	if err != nil || created.ID == "" {
+		return "", fmt.Errorf("create pb user failed: %w", err)
 	}
 	return created.ID, nil
-}
-
-func urlQueryEscape(s string) string {
-	return strings.ReplaceAll(s, `"`, `%22`)
 }
 
 func randomPBPassword() (string, error) {

@@ -6,10 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/rpc"
 )
@@ -22,12 +22,16 @@ type GlobalRPCHandler struct {
 	httpClient *http.Client
 }
 
-func NewGlobalRPCHandler(cfg config.Config, pr *postgrest.Client) *GlobalRPCHandler {
+func NewGlobalRPCHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper) *GlobalRPCHandler {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
 	return &GlobalRPCHandler{
 		pr:       pr,
 		rpcPass1: cfg.RPC.Password1,
 		httpClient: &http.Client{
-			Timeout: pbAuthTimeout,
+			Timeout:   pbAuthTimeout,
+			Transport: rt,
 		},
 	}
 }
@@ -55,9 +59,11 @@ func (h *GlobalRPCHandler) Serve(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized: No auth header"})
 			return
 		}
-		recordEmail, err := h.pocketBaseAuthRefresh(r.Context(), req.Issuer, authHeader)
+		ctx, cancel := context.WithTimeout(r.Context(), pbAuthTimeout)
+		defer cancel()
+		recordEmail, err := pocketbase.UserEmailFromRefresh(ctx, req.Issuer, authHeader, h.httpClient.Transport)
 		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "pocketbase auth refresh failed"})
 			return
 		}
 		if recordEmail != email {
@@ -84,40 +90,6 @@ func (h *GlobalRPCHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.sendEncrypted(w, req.ResponseKey, rpc.ResponseEnvelope{Data: result})
-}
-
-func (h *GlobalRPCHandler) pocketBaseAuthRefresh(ctx context.Context, issuer, token string) (string, error) {
-	base := strings.TrimRight(issuer, "/")
-	url := base + "/api/collections/users/auth-refresh"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", token)
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", errors.New("pocketbase auth refresh failed")
-	}
-	var out struct {
-		Record struct {
-			Email string `json:"email"`
-		} `json:"record"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return "", err
-	}
-	if out.Record.Email == "" {
-		return "", errors.New("empty pocketbase user email")
-	}
-	return out.Record.Email, nil
 }
 
 func (h *GlobalRPCHandler) sendEncrypted(w http.ResponseWriter, responseKey string, env rpc.ResponseEnvelope) {

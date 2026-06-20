@@ -8,6 +8,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
@@ -19,12 +20,12 @@ type Handler struct {
 	volumes  *volumeHandler
 }
 
-func New(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client) *Handler {
+func New(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client, pb *pocketbase.Client) *Handler {
 	return &Handler{
 		idem:     idem,
 		eventBus: eventBus,
 		ch:       ch,
-		volumes:  newVolumeHandler(idem, pr),
+		volumes:  newVolumeHandler(idem, pr, pb),
 	}
 }
 

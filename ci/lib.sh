@@ -34,6 +34,7 @@ ci_gateway_test_packages() {
 ./pkg/idempotency
 ./pkg/memo
 ./pkg/postgrest
+./pkg/pocketbase
 ./pkg/rpc
 ./pkg/scheduler
 ./pkg/supabase/auth

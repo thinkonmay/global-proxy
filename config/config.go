@@ -17,6 +17,7 @@ type Config struct {
 	Port       string     `mapstructure:"port"`
 	Log        Log        `mapstructure:"log"`
 	PostgREST  PostgREST  `mapstructure:"postgrest"`
+	PocketBase PocketBase `mapstructure:"pocketbase"`
 	Supabase   Supabase   `mapstructure:"supabase"`
 	Upstreams  Upstreams  `mapstructure:"upstreams"`
 	Admin      Admin      `mapstructure:"admin"`
@@ -114,6 +115,14 @@ type PostgREST struct {
 	URL        string `mapstructure:"url" validate:"required,url"`
 	AnonKey    string `mapstructure:"anonKey"`
 	ServiceKey string `mapstructure:"serviceKey"`
+}
+
+// PocketBase holds cluster PocketBase superuser credentials for gateway-side
+// admin API calls (auth-with-password once, bearer token reuse).
+type PocketBase struct {
+	URL      string `mapstructure:"url" validate:"omitempty,url"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
 }
 
 type Nats struct {

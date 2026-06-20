@@ -10,16 +10,32 @@ import (
 	"testing"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
+func pbAuthHandler(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/collections/_superusers/auth-with-password" {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"token":"admin-token"}`))
+		return true
+	}
+	return false
+}
+
 func TestVolumeHandlerCreateVolume(t *testing.T) {
 	var mu sync.Mutex
 	var jobPatch map[string]any
-	pb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pbAuthHandler(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
+			if r.Header.Get("Authorization") != "Bearer admin-token" {
+				t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]string{{"id": "user-1"}},
 			})
@@ -30,14 +46,13 @@ func TestVolumeHandlerCreateVolume(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer pb.Close()
+	defer pbSrv.Close()
 
 	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/rpc/get_cluster_secrets":
 			_ = json.NewEncoder(w).Encode([]map[string]string{{
-				"token": "admin-token",
-				"url":   pb.URL,
+				"url": pbSrv.URL,
 			}})
 		default:
 			if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
@@ -53,8 +68,9 @@ func TestVolumeHandlerCreateVolume(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
+	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
 	idem := idempotency.New(idempotency.NewMemStore())
-	vh := newVolumeHandler(idem, pr)
+	vh := newVolumeHandler(idem, pr, pb)
 
 	err := vh.handle(context.Background(), model.VolumeJobEnvelope{
 		OutboxID: 1,
@@ -81,7 +97,10 @@ func TestVolumeHandlerUpdateVolume(t *testing.T) {
 	var mu sync.Mutex
 	var jobPatch map[string]any
 	var patchedCfg map[string]any
-	pb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pbAuthHandler(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -107,14 +126,13 @@ func TestVolumeHandlerUpdateVolume(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer pb.Close()
+	defer pbSrv.Close()
 
 	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/rpc/get_cluster_secrets":
 			_ = json.NewEncoder(w).Encode([]map[string]string{{
-				"token": "admin-token",
-				"url":   pb.URL,
+				"url": pbSrv.URL,
 			}})
 		default:
 			if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
@@ -130,7 +148,8 @@ func TestVolumeHandlerUpdateVolume(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	vh := newVolumeHandler(idempotency.New(idempotency.NewMemStore()), pr)
+	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
+	vh := newVolumeHandler(idempotency.New(idempotency.NewMemStore()), pr, pb)
 
 	cfg, _ := json.Marshal(map[string]any{"tier": "premium"})
 	err := vh.handle(context.Background(), model.VolumeJobEnvelope{
@@ -163,18 +182,13 @@ func TestVolumeHandlerUpdateVolume(t *testing.T) {
 
 func TestVolumeHandlerSkipsUnknownCommand(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"})
-	vh := newVolumeHandler(idempotency.New(idempotency.NewMemStore()), pr)
+	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})
+	vh := newVolumeHandler(idempotency.New(idempotency.NewMemStore()), pr, pb)
 	err := vh.handle(context.Background(), model.VolumeJobEnvelope{
 		OutboxID: 2,
 		Payload:  model.VolumeJobPayload{Command: "unknown"},
 	})
 	if err != nil {
 		t.Fatalf("expected nil for unknown command, got %v", err)
-	}
-}
-
-func TestURLQueryEscape(t *testing.T) {
-	if urlQueryEscape(`a"b`) != `a%22b` {
-		t.Fatal("escape failed")
 	}
 }

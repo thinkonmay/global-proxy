@@ -11,6 +11,7 @@ import (
 
 	busmemory "github.com/thinkonmay/global-proxy/api/pkg/bus/memory"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
@@ -86,7 +87,8 @@ func TestHandleUsagePrepareBatchError(t *testing.T) {
 func TestInitSubscribesVolumeTopic(t *testing.T) {
 	bus := busmemory.New(nil)
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"})
-	h := New(idempotency.New(idempotency.NewMemStore()), bus, &fakeCH{}, pr)
+	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})
+	h := New(idempotency.New(idempotency.NewMemStore()), bus, &fakeCH{}, pr, pb)
 	h.Init()
 
 	err := bus.Publish(context.Background(), model.TopicVolumeJob.Name, []byte(`{"outbox_id":1,"payload":{"command":"unknown"}}`))

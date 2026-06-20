@@ -15,6 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/handler"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
@@ -31,6 +32,12 @@ func main() {
 		URL:        cfg.PostgREST.URL,
 		AnonKey:    cfg.PostgREST.AnonKey,
 		ServiceKey: cfg.PostgREST.ServiceKey,
+	})
+
+	pb := pocketbase.New(pocketbase.Config{
+		URL:       cfg.PocketBase.URL,
+		Username:  cfg.PocketBase.Username,
+		Password:  cfg.PocketBase.Password,
 	})
 
 	ch, err := clickhouse.Open(&clickhouse.Options{
@@ -55,7 +62,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := handler.New(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr)
+	h := handler.New(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, pb)
 	h.Init()
 
 	slog.Info("worker started")
