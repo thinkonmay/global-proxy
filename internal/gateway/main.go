@@ -15,6 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
+	"github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
@@ -68,12 +69,16 @@ func Run() error {
 		usageQ = usage.NewQuerier(chConn)
 	}
 
-	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt, usageQ)
+	paySvc := payment.NewService(pr, payment.Config{
+		RSASignerURL: cfg.Payment.RSASignerURL,
+	}, slog.Default())
+
+	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt, usageQ, paySvc)
 	grants := handler.NewGrantHandler(*cfg, pr, bt)
 	filesHTTP := handler.NewFilesHandler(*cfg, pr, bt)
 	nodeProxy := handler.NewNodeProxyHandler(bt)
 	personaHTTP := handler.NewPersonaHandler(pr, bt)
-	pwa := handler.NewPWAHandler(*cfg, pr, bt, usageQ, personaHTTP)
+	pwa := handler.NewPWAHandler(*cfg, pr, bt, usageQ, personaHTTP, paySvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

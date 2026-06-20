@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/handler"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 
@@ -69,6 +71,18 @@ func main() {
 	}
 	if err := h.StartPersonaWorker(ctx, cfg, slog.Default()); err != nil {
 		log.Fatalf("persona worker: %v", err)
+	}
+
+	if cfg.Payment.Enabled {
+		every, err := time.ParseDuration(cfg.Payment.PollEvery)
+		if err != nil {
+			log.Fatalf("payment.pollEvery: %v", err)
+		}
+		pay := payment.NewService(pr, payment.Config{
+			RSASignerURL: cfg.Payment.RSASignerURL,
+			PollEvery:    every,
+		}, slog.Default())
+		pay.Run(ctx, cfg.Payment.CheckoutEnabled, cfg.Payment.PollerEnabled)
 	}
 
 	slog.Info("worker started")

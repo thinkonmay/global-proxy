@@ -77,11 +77,14 @@ type Persona struct {
 	RybbitSiteDomain string `mapstructure:"rybbitSiteDomain"`
 }
 
-// Payment configures the provider status poller (replaces verify_all_transactions_v2 cron).
+// Payment configures provider checkout + status polling in the worker (G8).
+// Replaces Postgres get_*_data, on_transaction_driver_v2, and verify_all_transactions_v2 HTTP.
 type Payment struct {
-	PollerEnabled bool   `mapstructure:"pollerEnabled"`
-	PollEvery     string `mapstructure:"pollEvery"`
-	RSASignerURL  string `mapstructure:"rsaSignerURL"`
+	Enabled         bool   `mapstructure:"enabled"`
+	CheckoutEnabled bool   `mapstructure:"checkoutEnabled"`
+	PollerEnabled   bool   `mapstructure:"pollerEnabled"`
+	PollEvery       string `mapstructure:"pollEvery"`
+	RSASignerURL    string `mapstructure:"rsaSignerURL"`
 }
 
 type TLS struct {
@@ -210,6 +213,8 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("persona.maxBatch", 20)
 	v.SetDefault("persona.concurrent", 10)
 	v.SetDefault("persona.rybbitMinSpacing", "250ms")
+	v.SetDefault("payment.enabled", false)
+	v.SetDefault("payment.checkoutEnabled", true)
 	v.SetDefault("payment.pollerEnabled", true)
 	v.SetDefault("payment.pollEvery", "10s")
 	v.SetDefault("payment.rsaSignerURL", "http://rsa:8080")

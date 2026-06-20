@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/rpc"
@@ -23,9 +24,10 @@ type GlobalRPCHandler struct {
 	rpcPass1   string
 	httpClient *http.Client
 	usage      *usage.Querier
+	payment    *payment.Service
 }
 
-func NewGlobalRPCHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier) *GlobalRPCHandler {
+func NewGlobalRPCHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier, pay *payment.Service) *GlobalRPCHandler {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
@@ -33,6 +35,7 @@ func NewGlobalRPCHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundT
 		pr:       pr,
 		rpcPass1: cfg.RPC.Password1,
 		usage:    usageQ,
+		payment:  pay,
 		httpClient: &http.Client{
 			Timeout:   pbAuthTimeout,
 			Transport: rt,
@@ -82,7 +85,11 @@ func (h *GlobalRPCHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result json.RawMessage
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	timeout := 5 * time.Second
+	if req.RPC == "create_pocket_deposit_v4" {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	if h.usage != nil {
@@ -104,6 +111,16 @@ func (h *GlobalRPCHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		h.sendEncrypted(w, req.ResponseKey, rpc.ResponseEnvelope{Error: mustJSON(err.Error())})
 		return
 	}
+
+	if h.payment != nil && req.RPC == "create_pocket_deposit_v4" {
+		enriched, err := h.payment.EnrichDepositResult(ctx, result)
+		if err != nil {
+			h.sendEncrypted(w, req.ResponseKey, rpc.ResponseEnvelope{Error: mustJSON(err.Error())})
+			return
+		}
+		result = enriched
+	}
+
 	h.sendEncrypted(w, req.ResponseKey, rpc.ResponseEnvelope{Data: result})
 }
 

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
-	"github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/scheduler"
 )
@@ -26,8 +25,8 @@ func main() {
 	}
 	cfg.SetupLogger()
 
-	if !cfg.Scheduler.Enabled && !cfg.Payment.PollerEnabled {
-		slog.Info("scheduler disabled (set APP_SCHEDULER_ENABLED=1 and/or APP_PAYMENT_POLLERENABLED=1); exiting")
+	if !cfg.Scheduler.Enabled {
+		slog.Info("scheduler disabled (set APP_SCHEDULER_ENABLED=1); exiting")
 		return
 	}
 
@@ -48,18 +47,6 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	if cfg.Payment.PollerEnabled {
-		every, err := time.ParseDuration(cfg.Payment.PollEvery)
-		if err != nil {
-			log.Fatalf("payment.pollEvery: %v", err)
-		}
-		poller := payment.NewPoller(pr, payment.Config{
-			RSASignerURL: cfg.Payment.RSASignerURL,
-			PollEvery:    every,
-		}, slog.Default())
-		go poller.Run(ctx)
-	}
 
 	if cfg.Scheduler.Enabled && len(jobs) > 0 {
 		sch, err := scheduler.New(pr.RPC, jobs, slog.Default())

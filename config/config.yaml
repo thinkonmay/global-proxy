@@ -80,8 +80,10 @@ scheduler:
       rpc: validate_subscription_usage_v1
       timeoutMs: 5000
 
-# Provider status poll (replaces pg_cron job 6 verify_all_transactions_v2).
+# Provider checkout + status poll in worker (replaces Postgres vendor HTTP + verify_all_transactions_v2).
 payment:
+  enabled: false
+  checkoutEnabled: true
   pollerEnabled: true
   pollEvery: 10s
   rsaSignerURL: "http://rsa:8080"

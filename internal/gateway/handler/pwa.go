@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
@@ -31,7 +32,7 @@ type PWAHandler struct {
 	transport  http.RoundTripper
 }
 
-func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier, persona *PersonaHandler) *PWAHandler {
+func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier, persona *PersonaHandler, pay *payment.Service) *PWAHandler {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
@@ -39,7 +40,7 @@ func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper
 		pr:      pr,
 		pbURL:   strings.TrimRight(cfg.PocketBase.URL, "/"),
 		pbAdmin: pocketbase.New(pocketbase.Config{URL: cfg.PocketBase.URL, Username: cfg.PocketBase.Username, Password: cfg.PocketBase.Password, Transport: rt}),
-		rpc:     NewGlobalRPCHandler(cfg, pr, rt, usageQ),
+		rpc:     NewGlobalRPCHandler(cfg, pr, rt, usageQ, pay),
 		persona: persona,
 		llm:     cfg.LLM,
 		httpClient: &http.Client{

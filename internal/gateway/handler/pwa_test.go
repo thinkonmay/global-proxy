@@ -26,7 +26,7 @@ func TestPWAAppInfo(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	h := NewPWAHandler(testPWAConfig(), postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil, nil, NewPersonaHandler(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil))
+	h := NewPWAHandler(testPWAConfig(), postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil, nil, NewPersonaHandler(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -54,7 +54,7 @@ func TestPWACurrencyRates(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	h := NewPWAHandler(testPWAConfig(), postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil, nil, NewPersonaHandler(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil))
+	h := NewPWAHandler(testPWAConfig(), postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil, nil, NewPersonaHandler(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

@@ -68,7 +68,7 @@ func TestPollerTickUpdatesStripeTransaction(t *testing.T) {
 		Timeout: 5 * time.Second,
 	}
 
-	p.tick(context.Background())
+	p.tickPoll(context.Background())
 
 	patchMu.Lock()
 	defer patchMu.Unlock()
