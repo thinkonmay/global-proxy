@@ -58,6 +58,7 @@ func Run() error {
 	devJobs := os.Getenv("APP_DEV_JOBS") == "1"
 	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt)
 	grants := handler.NewGrantHandler(*cfg, pr, bt)
+	pwa := handler.NewPWAHandler(*cfg, pr, bt)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -75,7 +76,7 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
-	mux := newMux(h, hub, globalRPC, grants, devJobs, cfg, bt, coraza, gate)
+	mux := newMux(h, hub, globalRPC, grants, pwa, devJobs, cfg, bt, coraza, gate)
 
 	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
 	if err != nil {

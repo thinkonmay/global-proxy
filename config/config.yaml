@@ -96,6 +96,12 @@ usageCollector:
 gateway:
   publicURL: "https://thinkmay.net"
 
+# OpenAI-compatible LLM for PWA game search (/api/pwa/search).
+llm:
+  baseURL: ""
+  apiKey: ""
+  model: "gpt-4o"
+
 admin:
   enabled: false
   allowedIPs: []

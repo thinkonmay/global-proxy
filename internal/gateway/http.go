@@ -26,6 +26,7 @@ func newMux(
 	hub *SSEHub,
 	globalRPC *handler.GlobalRPCHandler,
 	grants *handler.GrantHandler,
+	pwa *handler.PWAHandler,
 	devJobs bool,
 	cfg *config.Config,
 	rt http.RoundTripper,
@@ -36,6 +37,7 @@ func newMux(
 
 	h.Register(mux, handler.RouteOptions{DevJobs: devJobs})
 	globalRPC.Register(mux)
+	pwa.Register(mux)
 	grants.Register(mux)
 
 	mux.HandleFunc("GET /sse", hub.Serve)

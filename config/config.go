@@ -31,6 +31,7 @@ type Config struct {
 	UsageCollector UsageCollector `mapstructure:"usageCollector"`
 	Payment        Payment        `mapstructure:"payment"`
 	Gateway        Gateway        `mapstructure:"gateway"`
+	LLM            LLM            `mapstructure:"llm"`
 	TLS            TLS            `mapstructure:"tls"`
 }
 
@@ -236,6 +237,7 @@ func NewConfig() (*Config, error) {
 	mergeSupabaseKeys(&cfg)
 	mergeAdminDefaults(&cfg)
 	mergeMetricsDefaults(&cfg)
+	mergeLLMDefaults(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
 	}
