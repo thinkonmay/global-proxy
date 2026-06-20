@@ -162,3 +162,21 @@ func TestTimeout(t *testing.T) {
 		t.Fatal("expected timeout error, got nil")
 	}
 }
+
+func TestSelectServiceUsesServiceKey(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	var out []map[string]any
+	if err := c.SelectService(context.Background(), "persona", nil, &out); err != nil {
+		t.Fatalf("SelectService: %v", err)
+	}
+	if gotAuth != "Bearer service-key" {
+		t.Fatalf("auth = %q, want Bearer service-key", gotAuth)
+	}
+}

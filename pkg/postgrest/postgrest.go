@@ -113,6 +113,15 @@ func (c *Client) Select(ctx context.Context, table string, q url.Values, dest an
 	return c.do(req, dest)
 }
 
+// SelectService GETs with the service_role key (gateway-trusted reads after auth).
+func (c *Client) SelectService(ctx context.Context, table string, q url.Values, dest any) error {
+	req, err := c.newRequest(ctx, http.MethodGet, table, q, nil, c.writeKey())
+	if err != nil {
+		return err
+	}
+	return c.do(req, dest)
+}
+
 // Delete removes rows matching q.
 func (c *Client) Delete(ctx context.Context, table string, q url.Values) error {
 	req, err := c.newRequest(ctx, http.MethodDelete, table, q, nil, c.writeKey())

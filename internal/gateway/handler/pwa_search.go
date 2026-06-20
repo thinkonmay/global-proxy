@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/thinkonmay/global-proxy/api/pkg/persona"
 )
 
 type pwaSearchRequest struct {
@@ -83,6 +85,20 @@ func (h *PWAHandler) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PWAHandler) fetchPersonaProfile(ctx context.Context, issuer, authHeader, uid string) (*pwaUserProfile, error) {
+	if h.pr != nil && issuer != "" && authHeader != "" {
+		auth, _, _ := pwaAuthFromRequest(ctx, h.transport, &http.Request{
+			Header: http.Header{"Authorization": []string{authHeader}},
+		}, issuer)
+		if auth.Email != "" {
+			profile, err := persona.FetchProfile(ctx, h.pr, strings.ToLower(auth.Email))
+			if err == nil && profile != nil {
+				var out pwaUserProfile
+				if json.Unmarshal(profile, &out) == nil {
+					return &out, nil
+				}
+			}
+		}
+	}
 	if issuer == "" || uid == "" {
 		return nil, nil
 	}

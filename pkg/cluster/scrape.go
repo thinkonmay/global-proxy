@@ -15,17 +15,19 @@ type pbListPage struct {
 	TotalPages int               `json:"totalPages"`
 }
 
-// AppAccessUsage row from node PocketBase app_access collection.
+// AppAccessUsage row from global Postgres or legacy node PocketBase app_access collection.
 type AppAccessUsage struct {
-	Usage int64
-	Email string
+	Usage  int64
+	Email  string
+	Domain string
 }
 
-// BucketUsage row from node PocketBase buckets collection.
+// BucketUsage row from global Postgres or legacy node PocketBase buckets collection.
 type BucketUsage struct {
 	SizeMB     int64
 	BucketName string
 	Email      string
+	Domain     string
 }
 
 // LLMUsage row from node PocketBase llmModels collection.
@@ -48,6 +50,28 @@ func ListAppAccessUsage(ctx context.Context, pb *pocketbase.Client) ([]AppAccess
 	})
 }
 
+func ListAppAccessUsageGlobal(ctx context.Context, pr interface {
+	RPC(ctx context.Context, name string, args any, dest any) error
+}) ([]AppAccessUsage, error) {
+	var rows []struct {
+		Email  string `json:"email"`
+		Usage  int64  `json:"usage"`
+		Domain string `json:"domain"`
+	}
+	if err := pr.RPC(ctx, "list_addon_app_access_usage_v1", nil, &rows); err != nil {
+		return nil, err
+	}
+	out := make([]AppAccessUsage, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, AppAccessUsage{
+			Usage:  row.Usage,
+			Email:  row.Email,
+			Domain: row.Domain,
+		})
+	}
+	return out, nil
+}
+
 func ListBucketUsage(ctx context.Context, pb *pocketbase.Client) ([]BucketUsage, error) {
 	return listUsage(ctx, pb, "buckets", "size,bucket_name,expand.user.email", "(size>0)", func(item map[string]any) (BucketUsage, bool) {
 		size, _ := item["size"].(float64)
@@ -65,6 +89,33 @@ func ListBucketUsage(ctx context.Context, pb *pocketbase.Client) ([]BucketUsage,
 			Email:      email,
 		}, true
 	})
+}
+
+func ListBucketUsageGlobal(ctx context.Context, pr interface {
+	RPC(ctx context.Context, name string, args any, dest any) error
+}) ([]BucketUsage, error) {
+	var rows []struct {
+		Email      string `json:"email"`
+		BucketName string `json:"bucket_name"`
+		SizeBytes  int64  `json:"size_bytes"`
+		Domain     string `json:"domain"`
+	}
+	if err := pr.RPC(ctx, "list_addon_bucket_usage_v1", nil, &rows); err != nil {
+		return nil, err
+	}
+	out := make([]BucketUsage, 0, len(rows))
+	for _, row := range rows {
+		if row.SizeBytes <= 0 {
+			continue
+		}
+		out = append(out, BucketUsage{
+			SizeMB:     row.SizeBytes / 1024 / 1024,
+			BucketName: row.BucketName,
+			Email:      row.Email,
+			Domain:     row.Domain,
+		})
+	}
+	return out, nil
 }
 
 func ListLLMUsage(ctx context.Context, pb *pocketbase.Client) ([]LLMUsage, error) {

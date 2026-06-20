@@ -93,8 +93,22 @@ usageCollector:
   shadowMode: false
   sessionMinutes: 5
 
+# Persona refresh worker (P1-C): replaces node PocketBase persona cron.
+persona:
+  enabled: false
+  every: 1m
+  maxBatch: 20
+  concurrent: 10
+  rybbitMinSpacing: 250ms
+  rybbitURL: ""
+  rybbitAPIKey: ""
+  rybbitSiteDomain: ""
+
 gateway:
   publicURL: "https://thinkmay.net"
+
+storj:
+  accessGrant: ""
 
 # OpenAI-compatible LLM for PWA game search (/api/pwa/search).
 llm:

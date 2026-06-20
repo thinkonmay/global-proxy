@@ -29,8 +29,10 @@ type Config struct {
 	Scheduler      Scheduler      `mapstructure:"scheduler"`
 	Metrics        Metrics        `mapstructure:"metrics"`
 	UsageCollector UsageCollector `mapstructure:"usageCollector"`
+	Persona        Persona        `mapstructure:"persona"`
 	Payment        Payment        `mapstructure:"payment"`
 	Gateway        Gateway        `mapstructure:"gateway"`
+	Storj          Storj          `mapstructure:"storj"`
 	LLM            LLM            `mapstructure:"llm"`
 	TLS            TLS            `mapstructure:"tls"`
 }
@@ -63,6 +65,18 @@ type UsageCollector struct {
 	SessionMinutes int    `mapstructure:"sessionMinutes"`
 }
 
+// Persona configures the global CDP interim worker (P1-C).
+type Persona struct {
+	Enabled          bool   `mapstructure:"enabled"`
+	Every            string `mapstructure:"every"`
+	MaxBatch         int    `mapstructure:"maxBatch"`
+	Concurrent       int    `mapstructure:"concurrent"`
+	RybbitMinSpacing string `mapstructure:"rybbitMinSpacing"`
+	RybbitURL        string `mapstructure:"rybbitURL"`
+	RybbitAPIKey     string `mapstructure:"rybbitAPIKey"`
+	RybbitSiteDomain string `mapstructure:"rybbitSiteDomain"`
+}
+
 // Payment configures the provider status poller (replaces verify_all_transactions_v2 cron).
 type Payment struct {
 	PollerEnabled bool   `mapstructure:"pollerEnabled"`
@@ -80,6 +94,11 @@ type TLS struct {
 
 type Gateway struct {
 	PublicURL string `mapstructure:"publicURL"`
+}
+
+// Storj configures the global uplink access grant for user bucket file APIs.
+type Storj struct {
+	AccessGrant string `mapstructure:"accessGrant"`
 }
 
 type RPC struct {
@@ -185,6 +204,11 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("usageCollector.addonEvery", "1h")
 	v.SetDefault("usageCollector.shadowMode", false)
 	v.SetDefault("usageCollector.sessionMinutes", 5)
+	v.SetDefault("persona.enabled", false)
+	v.SetDefault("persona.every", "1m")
+	v.SetDefault("persona.maxBatch", 20)
+	v.SetDefault("persona.concurrent", 10)
+	v.SetDefault("persona.rybbitMinSpacing", "250ms")
 	v.SetDefault("payment.pollerEnabled", true)
 	v.SetDefault("payment.pollEvery", "10s")
 	v.SetDefault("payment.rsaSignerURL", "http://rsa:8080")

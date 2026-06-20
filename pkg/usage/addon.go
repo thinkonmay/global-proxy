@@ -51,6 +51,23 @@ func LoadActiveClusters(ctx context.Context, pr *postgrest.Client) ([]ActiveClus
 func (c *Collector) tickAddons(ctx context.Context, now time.Time, bucket int64) addonStats {
 	stats := addonStats{}
 	dedupTTL := c.addonInterval*2 + time.Minute
+
+	if rows, err := cluster.ListAppAccessUsageGlobal(ctx, c.pr); err != nil {
+		c.log.Warn("addon tick: global app_access", "err", err)
+		stats.errors++
+	} else if err := c.processAppAccessRows(ctx, rows, now, bucket, dedupTTL, &stats); err != nil {
+		c.log.Warn("addon tick: app_access billing", "err", err)
+		stats.errors++
+	}
+
+	if rows, err := cluster.ListBucketUsageGlobal(ctx, c.pr); err != nil {
+		c.log.Warn("addon tick: global buckets", "err", err)
+		stats.errors++
+	} else if err := c.processBucketRows(ctx, rows, now, bucket, dedupTTL, &stats); err != nil {
+		c.log.Warn("addon tick: buckets billing", "err", err)
+		stats.errors++
+	}
+
 	clusters, err := LoadActiveClusters(ctx, c.pr)
 	if err != nil {
 		c.log.Warn("addon tick: load clusters", "err", err)
@@ -63,14 +80,6 @@ func (c *Collector) tickAddons(ctx context.Context, now time.Time, bucket int64)
 			Username: cl.Secret.Username,
 			Password: cl.Secret.Password,
 		})
-		if err := c.scrapeAppAccess(ctx, pb, cl, now, bucket, dedupTTL, &stats); err != nil {
-			c.log.Warn("addon tick: app_access", "cluster", cl.Domain, "err", err)
-			stats.errors++
-		}
-		if err := c.scrapeBuckets(ctx, pb, cl, now, bucket, dedupTTL, &stats); err != nil {
-			c.log.Warn("addon tick: buckets", "cluster", cl.Domain, "err", err)
-			stats.errors++
-		}
 		if err := c.scrapeLLM(ctx, pb, cl, now, bucket, dedupTTL, &stats); err != nil {
 			c.log.Warn("addon tick: llm", "cluster", cl.Domain, "err", err)
 			stats.errors++
@@ -79,22 +88,11 @@ func (c *Collector) tickAddons(ctx context.Context, now time.Time, bucket int64)
 	return stats
 }
 
-type addonStats struct {
-	appRows, bucketRows, llmRows int
-	billed                       int
-	events                       int
-	skippedDedup                 int
-	errors                       int
-}
-
-func (c *Collector) scrapeAppAccess(ctx context.Context, pb *pocketbase.Client, cl ActiveCluster, at time.Time, bucket int64, dedupTTL time.Duration, stats *addonStats) error {
-	rows, err := cluster.ListAppAccessUsage(ctx, pb)
-	if err != nil {
-		return err
-	}
+func (c *Collector) processAppAccessRows(ctx context.Context, rows []cluster.AppAccessUsage, at time.Time, bucket int64, dedupTTL time.Duration, stats *addonStats) error {
 	for _, row := range rows {
 		stats.appRows++
-		key := fmt.Sprintf("app:%s:%d", row.Email, bucket)
+		clusterDomain := row.Domain
+		key := fmt.Sprintf("app:%s:%s:%d", row.Email, clusterDomain, bucket)
 		ok, err := c.dedup.Claim(ctx, key, dedupTTL)
 		if err != nil || !ok {
 			stats.skippedDedup++
@@ -111,24 +109,21 @@ func (c *Collector) scrapeAppAccess(ctx context.Context, pb *pocketbase.Client, 
 		stats.events++
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, Metric: "app_access.units",
-			Value: float64(row.Usage), Cluster: cl.Domain,
+			Value: float64(row.Usage), Cluster: clusterDomain,
 			TickBucket: uint64(bucket), Source: "collector",
 		})
 	}
 	return nil
 }
 
-func (c *Collector) scrapeBuckets(ctx context.Context, pb *pocketbase.Client, cl ActiveCluster, at time.Time, bucket int64, dedupTTL time.Duration, stats *addonStats) error {
-	rows, err := cluster.ListBucketUsage(ctx, pb)
-	if err != nil {
-		return err
-	}
+func (c *Collector) processBucketRows(ctx context.Context, rows []cluster.BucketUsage, at time.Time, bucket int64, dedupTTL time.Duration, stats *addonStats) error {
 	for _, row := range rows {
 		if row.SizeMB <= 0 {
 			continue
 		}
 		stats.bucketRows++
-		key := fmt.Sprintf("bucket:%s:%s:%d", row.Email, row.BucketName, bucket)
+		clusterDomain := row.Domain
+		key := fmt.Sprintf("bucket:%s:%s:%s:%d", row.Email, row.BucketName, clusterDomain, bucket)
 		ok, err := c.dedup.Claim(ctx, key, dedupTTL)
 		if err != nil || !ok {
 			stats.skippedDedup++
@@ -145,11 +140,19 @@ func (c *Collector) scrapeBuckets(ctx context.Context, pb *pocketbase.Client, cl
 		stats.events++
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, SessionID: row.BucketName,
-			Metric: "bucket.mb", Value: float64(row.SizeMB), Cluster: cl.Domain,
+			Metric: "bucket.mb", Value: float64(row.SizeMB), Cluster: clusterDomain,
 			TickBucket: uint64(bucket), Source: "collector",
 		})
 	}
 	return nil
+}
+
+type addonStats struct {
+	appRows, bucketRows, llmRows int
+	billed                       int
+	events                       int
+	skippedDedup                 int
+	errors                       int
 }
 
 func (c *Collector) scrapeLLM(ctx context.Context, pb *pocketbase.Client, cl ActiveCluster, at time.Time, bucket int64, dedupTTL time.Duration, stats *addonStats) error {

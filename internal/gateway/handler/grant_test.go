@@ -16,7 +16,7 @@ func TestStorageGrantSuccess(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"accessKey": "ak", "secretKey": "sk"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"bucket_name": "test-bucket"})
 	}))
 	defer srv.Close()
 
@@ -35,7 +35,7 @@ func TestStorageGrantSuccess(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&cred); err != nil {
 		t.Fatal(err)
 	}
-	if cred["accessKey"] != "ak" {
+	if cred["bucket_name"] != "test-bucket" {
 		t.Fatalf("cred: %v", cred)
 	}
 }

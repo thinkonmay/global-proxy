@@ -67,6 +67,9 @@ func main() {
 	if err := h.StartUsageCollector(ctx, cfg, slog.Default()); err != nil {
 		log.Fatalf("usage collector: %v", err)
 	}
+	if err := h.StartPersonaWorker(ctx, cfg, slog.Default()); err != nil {
+		log.Fatalf("persona worker: %v", err)
+	}
 
 	slog.Info("worker started")
 	<-ctx.Done()

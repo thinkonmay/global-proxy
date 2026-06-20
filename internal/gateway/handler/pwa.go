@@ -25,12 +25,13 @@ type PWAHandler struct {
 	pbAdmin    *pocketbase.Client
 	pbURL      string
 	rpc        *GlobalRPCHandler
+	persona    *PersonaHandler
 	llm        config.LLM
 	httpClient *http.Client
 	transport  http.RoundTripper
 }
 
-func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier) *PWAHandler {
+func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier, persona *PersonaHandler) *PWAHandler {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
@@ -39,6 +40,7 @@ func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper
 		pbURL:   strings.TrimRight(cfg.PocketBase.URL, "/"),
 		pbAdmin: pocketbase.New(pocketbase.Config{URL: cfg.PocketBase.URL, Username: cfg.PocketBase.Username, Password: cfg.PocketBase.Password, Transport: rt}),
 		rpc:     NewGlobalRPCHandler(cfg, pr, rt, usageQ),
+		persona: persona,
 		llm:     cfg.LLM,
 		httpClient: &http.Client{
 			Timeout:   60 * time.Second,
@@ -63,6 +65,7 @@ func (h *PWAHandler) Register(mux *http.ServeMux) {
 		{http.MethodPost, "/is_superuser", h.IsSuperuser},
 		{http.MethodPost, "/update_code_name", h.UpdateCodeName},
 		{http.MethodPost, "/search", h.Search},
+		{http.MethodGet, "/persona/recommendations", h.persona.GetRecommendations},
 		{http.MethodPost, "/global_rpc", h.rpc.Serve},
 	}
 	for _, route := range routes {

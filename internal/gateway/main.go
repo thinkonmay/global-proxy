@@ -70,7 +70,10 @@ func Run() error {
 
 	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt, usageQ)
 	grants := handler.NewGrantHandler(*cfg, pr, bt)
-	pwa := handler.NewPWAHandler(*cfg, pr, bt, usageQ)
+	filesHTTP := handler.NewFilesHandler(*cfg, pr, bt)
+	nodeProxy := handler.NewNodeProxyHandler(bt)
+	personaHTTP := handler.NewPersonaHandler(pr, bt)
+	pwa := handler.NewPWAHandler(*cfg, pr, bt, usageQ, personaHTTP)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -88,7 +91,7 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
-	mux := newMux(h, hub, globalRPC, grants, pwa, devJobs, cfg, bt, coraza, gate)
+	mux := newMux(h, hub, globalRPC, grants, filesHTTP, nodeProxy, personaHTTP, pwa, devJobs, cfg, bt, coraza, gate)
 
 	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
 	if err != nil {

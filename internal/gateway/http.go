@@ -26,6 +26,9 @@ func newMux(
 	hub *SSEHub,
 	globalRPC *handler.GlobalRPCHandler,
 	grants *handler.GrantHandler,
+	files *handler.FilesHandler,
+	nodeProxy *handler.NodeProxyHandler,
+	personaHTTP *handler.PersonaHandler,
 	pwa *handler.PWAHandler,
 	devJobs bool,
 	cfg *config.Config,
@@ -39,6 +42,9 @@ func newMux(
 	globalRPC.Register(mux)
 	pwa.Register(mux)
 	grants.Register(mux)
+	files.Register(mux)
+	nodeProxy.Register(mux)
+	personaHTTP.Register(mux)
 
 	mux.HandleFunc("GET /sse", hub.Serve)
 
