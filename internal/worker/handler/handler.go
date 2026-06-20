@@ -1,37 +1,44 @@
 package handler
 
 import (
+	"context"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
 type Handler struct {
 	idem     *idempotency.Guard
 	eventBus bus.Client
-	ch       driver.Conn // ClickHouse, for the usage sink
+	ch       driver.Conn
+	volumes  *volumeHandler
 }
 
-func New(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn) *Handler {
-	return &Handler{idem: idem, eventBus: eventBus, ch: ch}
+func New(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client) *Handler {
+	return &Handler{
+		idem:     idem,
+		eventBus: eventBus,
+		ch:       ch,
+		volumes:  newVolumeHandler(idem, pr),
+	}
 }
 
-// Init wires every subscription this worker serves.
 func (h *Handler) Init() {
-	// Jobs
 	bus.Subscribe(
 		h.eventBus,
-		model.TopicJob,
-		"worker",
-		h.handleJob,
+		model.TopicVolumeJob,
+		"worker-volume",
+		func(ctx context.Context, env model.VolumeJobEnvelope) error {
+			return h.volumes.handle(ctx, env)
+		},
 		bus.WithConcurrency(100),
 	)
 
-	// Usage events
 	bus.SubscribeBatch(
 		h.eventBus,
 		model.TopicUsage,

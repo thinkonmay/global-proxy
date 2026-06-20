@@ -11,6 +11,8 @@ import (
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
+var topicDevJob = bus.NewTopic[model.JobMsg]("jobs.dev")
+
 type createJobRequest struct {
 	Command   string          `json:"command" validate:"required"`
 	Arguments json.RawMessage `json:"arguments"`
@@ -39,7 +41,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	if err := bus.Publish(
 		r.Context(),
 		h.bus,
-		model.TopicJob,
+		topicDevJob,
 		model.JobMsg{ID: id, Command: req.Command, Arguments: args},
 	); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]bool{"global_unavailable": true})

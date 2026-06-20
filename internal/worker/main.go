@@ -55,7 +55,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := handler.New(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch)
+	h := handler.New(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr)
 	h.Init()
 
 	slog.Info("worker started")

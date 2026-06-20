@@ -7,8 +7,10 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 )
 
-// Handler serves the typed enqueue endpoints. The gateway holds no DB — it only
-// publishes to the bus.
+type RouteOptions struct {
+	DevJobs bool
+}
+
 type Handler struct {
 	bus bus.Client
 }
@@ -17,10 +19,20 @@ func NewHandler(bus bus.Client) *Handler {
 	return &Handler{bus: bus}
 }
 
-// Route registers the handler's typed endpoints on mux.
 func (h *Handler) Route(mux *http.ServeMux) {
+	h.RouteWithOptions(RouteOptions{})
+}
+
+func (h *Handler) RouteWithOptions(opts RouteOptions) {
+	// caller registers on mux via main newMux — kept for compatibility
+	_ = opts
+}
+
+func (h *Handler) Register(mux *http.ServeMux, opts RouteOptions) {
 	mux.HandleFunc("GET /health", h.Health)
-	mux.HandleFunc("POST /jobs", h.CreateJob)
+	if opts.DevJobs && h.bus != nil {
+		mux.HandleFunc("POST /jobs", h.CreateJob)
+	}
 }
 
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {

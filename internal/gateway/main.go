@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"log/slog"
-	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
+	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
@@ -25,8 +25,6 @@ func main() {
 	}
 }
 
-// Run loads config, wires the app, serves HTTP, and blocks until a signal
-// triggers graceful shutdown.
 func Run() error {
 	cfg, err := config.NewConfig()
 	if err != nil {
@@ -34,35 +32,42 @@ func Run() error {
 	}
 	cfg.SetupLogger()
 
-	// Guard (breaker + bulkhead) for the /rest/v1 proxy, per host — fail fast,
-	// never hang (TDD §2.1.1 / P11).
 	bt := guard.New(nil, guard.Config{MaxFailures: 5, Cooldown: 30 * time.Second, MaxConcurrent: 64})
 
-	eventBus, err := busnats.New([]string{cfg.Nats.URL}, slog.Default())
-	if err != nil {
-		return fmt.Errorf("connect nats bus: %w", err)
-	}
-	defer func() { _ = eventBus.Close() }()
+	pr := postgrest.New(postgrest.Config{
+		URL:        cfg.PostgREST.URL,
+		AnonKey:    cfg.PostgREST.AnonKey,
+		ServiceKey: cfg.PostgREST.ServiceKey,
+		Transport:  bt,
+	})
 
-	// Fan SSE events off the bus out to connected clients. One fixed group =
-	// correct for a single gateway instance; multi-replica needs a unique group
-	// per process so every replica gets a copy.
+	eventBus, err := connectBus(cfg)
+	if err != nil {
+		return err
+	}
+	if eventBus != nil {
+		defer func() { _ = eventBus.Close() }()
+	}
+
 	hub := NewSSEHub()
-	bus.Subscribe(eventBus, model.TopicSSE, "gateway-sse", hub.Dispatch)
+	if eventBus != nil {
+		bus.Subscribe(eventBus, model.TopicSSE, "gateway-sse", hub.Dispatch)
+	}
 
 	h := handler.NewHandler(eventBus)
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: newMux(h, hub, cfg.PostgREST, cfg.Upstreams, bt)}
-
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("starting HTTP server", "port", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
+	devJobs := os.Getenv("APP_DEV_JOBS") == "1"
+	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr)
+	grants := handler.NewGrantHandler(*cfg, pr, bt)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	mux := newMux(h, hub, globalRPC, grants, devJobs, cfg.PostgREST, cfg.Upstreams, bt)
+
+	servers, errCh, err := startServers(cfg, mux)
+	if err != nil {
+		return err
+	}
 
 	select {
 	case err := <-errCh:
@@ -71,6 +76,18 @@ func Run() error {
 		slog.Info("shutting down HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		return servers.shutdown(shutdownCtx)
 	}
+}
+
+func connectBus(cfg *config.Config) (bus.Client, error) {
+	eventBus, err := busnats.New([]string{cfg.Nats.URL}, slog.Default())
+	if err != nil {
+		if cfg.Nats.Optional || os.Getenv("APP_NATS_OPTIONAL") == "1" {
+			slog.Warn("nats unavailable, continuing without bus", "err", err)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("connect nats bus: %w", err)
+	}
+	return eventBus, nil
 }

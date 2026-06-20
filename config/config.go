@@ -14,39 +14,61 @@ import (
 )
 
 type Config struct {
-	Port      string    `mapstructure:"port" validate:"required,numeric"`
-	Log       Log       `mapstructure:"log"`
-	PostgREST  PostgREST  `mapstructure:"postgrest"`  // global data over HTTP (no direct DB)
-	Upstreams  Upstreams  `mapstructure:"upstreams"`  // extra reverse-proxy targets (gateway = Kong)
-	Nats       Nats       `mapstructure:"nats"`       // event bus (JetStream)
-	ClickHouse ClickHouse `mapstructure:"clickhouse"` // analytics sink (the worker)
+	Port       string     `mapstructure:"port"`
+	Log        Log        `mapstructure:"log"`
+	PostgREST  PostgREST  `mapstructure:"postgrest"`
+	Upstreams  Upstreams  `mapstructure:"upstreams"`
+	Nats       Nats       `mapstructure:"nats"`
+	ClickHouse ClickHouse `mapstructure:"clickhouse"`
+	RPC        RPC        `mapstructure:"rpc"`
+	Relay      Relay      `mapstructure:"relay"`
+	Gateway    Gateway    `mapstructure:"gateway"`
+	TLS        TLS        `mapstructure:"tls"`
 }
 
-// Upstreams are the non-PostgREST targets the gateway reverse-proxies, replacing
-// Kong's service routes for what this stack actually runs. Empty => route off.
+type TLS struct {
+	Enabled       bool     `mapstructure:"enabled"`
+	HTTPPort      string   `mapstructure:"httpPort" validate:"omitempty,numeric"`
+	HTTPSPort     string   `mapstructure:"httpsPort" validate:"omitempty,numeric"`
+	AutocertCache string   `mapstructure:"autocertCache"`
+	Hosts         []string `mapstructure:"hosts"`
+}
+
+type Gateway struct {
+	PublicURL string `mapstructure:"publicURL"`
+}
+
+type RPC struct {
+	Password1 string `mapstructure:"password1"`
+}
+
+type Relay struct {
+	PollIntervalMs int `mapstructure:"pollIntervalMs"`
+	BatchSize      int `mapstructure:"batchSize"`
+}
+
+// Upstreams are the non-PostgREST targets the gateway reverse-proxies.
 type Upstreams struct {
-	Meta   string `mapstructure:"meta"`   // postgres-meta — /pg/* (Studio schema browse)
-	Studio string `mapstructure:"studio"` // dashboard UI — "/" catch-all
+	Meta   string `mapstructure:"meta"`
+	Studio string `mapstructure:"studio"`
 }
 
-// ClickHouse is the analytics store — only the worker's usage sink connects to it.
 type ClickHouse struct {
-	Addr     string `mapstructure:"addr"`     // host:port (native, e.g. clickhouse:9000)
-	Database string `mapstructure:"database"` // default: analytics
+	Addr     string `mapstructure:"addr"`
+	Database string `mapstructure:"database"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 }
 
-// PostgREST is how services reach global data — over HTTP, never a direct DB
-// connection. No Postgres credentials live in this config.
 type PostgREST struct {
 	URL        string `mapstructure:"url" validate:"required,url"`
-	AnonKey    string `mapstructure:"anonKey"`    // public catalog reads / proxy default
-	ServiceKey string `mapstructure:"serviceKey"` // privileged writes
+	AnonKey    string `mapstructure:"anonKey"`
+	ServiceKey string `mapstructure:"serviceKey"`
 }
 
 type Nats struct {
-	URL string `mapstructure:"url" validate:"required"` // nats://host:port
+	URL      string `mapstructure:"url" validate:"required"`
+	Optional bool   `mapstructure:"optional"`
 }
 
 type Log struct {
@@ -55,18 +77,25 @@ type Log struct {
 	AddSource bool   `mapstructure:"addSource"`
 }
 
-// NewConfig reads config.yaml (searched in . and ./config), overlays APP_* env
-// vars, then validates. Invalid or missing required fields return an error.
 func NewConfig() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 	v.AddConfigPath(".")
 	v.AddConfigPath("./config")
+	v.AddConfigPath("/config")
 
 	v.SetEnvPrefix("APP")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+	v.SetDefault("rpc.password1", "thinkmay protect your data")
+	v.SetDefault("relay.pollIntervalMs", 500)
+	v.SetDefault("relay.batchSize", 50)
+	v.SetDefault("clickhouse.database", "platform")
+	v.SetDefault("tls.enabled", true)
+	v.SetDefault("tls.httpPort", "80")
+	v.SetDefault("tls.httpsPort", "443")
+	v.SetDefault("tls.autocertCache", ".autocert_cache")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -76,14 +105,40 @@ func NewConfig() (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}
+	if cfg.RPC.Password1 == "" {
+		cfg.RPC.Password1 = "thinkmay protect your data"
+	}
+	if cfg.Relay.PollIntervalMs < 1 {
+		cfg.Relay.PollIntervalMs = 500
+	}
+	if cfg.Relay.BatchSize < 1 {
+		cfg.Relay.BatchSize = 50
+	}
+	if hosts := os.Getenv("APP_TLS_HOSTS"); hosts != "" {
+		cfg.TLS.Hosts = strings.Split(hosts, ",")
+		for i := range cfg.TLS.Hosts {
+			cfg.TLS.Hosts[i] = strings.TrimSpace(cfg.TLS.Hosts[i])
+		}
+	}
+	if cfg.TLS.Enabled {
+		if cfg.TLS.HTTPPort == "" {
+			cfg.TLS.HTTPPort = "80"
+		}
+		if cfg.TLS.HTTPSPort == "" {
+			cfg.TLS.HTTPSPort = "443"
+		}
+		if cfg.TLS.AutocertCache == "" {
+			cfg.TLS.AutocertCache = ".autocert_cache"
+		}
+	} else if cfg.Port == "" {
+		cfg.Port = "4000"
+	}
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
-// SetupLogger sets the process-wide slog.Default from the config. Shared by the
-// gateway and worker binaries.
 func (c *Config) SetupLogger() {
 	var level slog.Level
 	switch c.Log.Level {

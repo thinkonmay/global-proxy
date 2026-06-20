@@ -1,0 +1,45 @@
+log:
+  level: info
+  format: text
+  addSource: false
+
+postgrest:
+  url: "http://rest:3000"
+  anonKey: ""
+  serviceKey: ""
+
+upstreams:
+  meta: "http://meta:8080"
+  studio: "http://studio:3000"
+
+nats:
+  url: "nats://nats:4222"
+  optional: false
+
+clickhouse:
+  addr: "platform-clickhouse:9000"
+  database: "platform"
+  username: "default"
+  password: ""
+
+rpc:
+  password1: "thinkmay protect your data"
+
+relay:
+  pollIntervalMs: 500
+  batchSize: 50
+
+gateway:
+  publicURL: "https://thinkmay.net"
+
+# Public edge (TDD D14): sole host-published ports :80 / :443.
+tls:
+  enabled: true
+  httpPort: "80"
+  httpsPort: "443"
+  autocertCache: "/.autocert_cache"
+  hosts:
+    - thinkmay.net
+
+# Dev-only plain HTTP when APP_TLS_ENABLED=0 (not used in compose).
+port: "4000"

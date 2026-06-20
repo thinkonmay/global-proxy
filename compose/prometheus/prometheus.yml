@@ -11,4 +11,4 @@ scrape_configs:
   - job_name: thinkmay-gateway
     metrics_path: /metrics
     static_configs:
-      - targets: ["gateway:4000"]
+      - targets: ["gateway:443"]
