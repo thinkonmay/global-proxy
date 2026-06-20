@@ -60,7 +60,11 @@ func newMux(
 	if coraza != nil {
 		chain = append([]guard.Middleware{coraza.AsGuard()}, chain...)
 	}
-	public := guard.Chain(mux, chain...)
+	routes := http.Handler(mux)
+	if website := newProxy(cfg.Upstreams.Website, rt, setForwardedHeaders); website != nil {
+		routes = wrapWebsiteFallback(routes, website)
+	}
+	public := guard.Chain(routes, chain...)
 	return wrapHostRouter(public, cfg, gate, rt)
 }
 

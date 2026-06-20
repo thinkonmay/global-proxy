@@ -26,6 +26,8 @@ upstreams:
   meta: "http://meta:8080"
   studio: "http://studio:3000"
   storage: "http://storage:5000"
+  # Next.js PWA (D17): internal only; gateway reverse-proxies non-API paths.
+  website: "http://website:3000"
 
 waf:
   coraza:

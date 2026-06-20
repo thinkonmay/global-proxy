@@ -115,6 +115,7 @@ type Upstreams struct {
 	Meta    string `mapstructure:"meta"`
 	Studio  string `mapstructure:"studio"`
 	Storage string `mapstructure:"storage"`
+	Website string `mapstructure:"website"`
 }
 
 // Supabase holds Kong consumer keys and Studio basic-auth credentials.
