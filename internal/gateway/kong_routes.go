@@ -71,16 +71,7 @@ func registerKongRoutes(mux *http.ServeMux, cfg *config.Config, rt http.RoundTri
 
 	registerBlockedRoutes(mux)
 
-	if cfg.Upstreams.Studio != "" {
-		if studio := newProxy(cfg.Upstreams.Studio, rt, func(req *http.Request) {
-			setForwardedHeaders(req)
-		}); studio != nil {
-			h := auth.BasicAuth(cfg.Supabase.DashboardUser, cfg.Supabase.DashboardPassword)(studio)
-			mux.Handle("/", h)
-		} else {
-			slog.Error("studio upstream invalid, / disabled")
-		}
-	}
+	// Studio is served on studio.<domain> via admin host router (B12).
 }
 
 func registerRemovedRoutes(mux *http.ServeMux) {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -256,30 +255,6 @@ func TestKongMCPBlocked(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/mcp", nil))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-}
-
-func TestKongStudioRequiresBasicAuth(t *testing.T) {
-	studio := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "studio")
-	}))
-	defer studio.Close()
-
-	mux := http.NewServeMux()
-	registerKongRoutes(mux, kongTestCfg("", "", "", studio.URL), http.DefaultTransport)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected studio basic-auth 401, got %d", rec.Code)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.SetBasicAuth("admin", "pass")
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "studio") {
-		t.Fatalf("expected studio proxy, code=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
 

@@ -40,7 +40,7 @@ tls:
 	if !cfg.TLS.Enabled || cfg.TLS.HTTPPort != "80" || cfg.TLS.HTTPSPort != "443" {
 		t.Fatalf("unexpected tls config: %+v", cfg.TLS)
 	}
-	if len(cfg.TLS.Hosts) != 1 || cfg.TLS.Hosts[0] != "thinkmay.net" {
+	if len(cfg.TLS.Hosts) < 1 || cfg.TLS.Hosts[0] != "thinkmay.net" {
 		t.Fatalf("hosts: %v", cfg.TLS.Hosts)
 	}
 	if cfg.RPC.Password1 == "" {

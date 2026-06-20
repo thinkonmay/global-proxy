@@ -51,6 +51,34 @@ relay:
 gateway:
   publicURL: "https://thinkmay.net"
 
+admin:
+  enabled: false
+  allowedIPs: []
+  allowedEmails: []
+  cookieDomain: ".thinkmay.net"
+  sessionTTLHours: 8
+  otpTTLMinutes: 10
+  signingSecret: ""
+  basicAuthUser: ""
+  basicAuthPassword: ""
+  redis:
+    url: "redis://redis:6379/0"
+  resend:
+    apiKey: ""
+    from: "Thinkmay Ops <ops@thinkmay.net>"
+  hosts:
+    public: thinkmay.net
+    studio: studio.thinkmay.net
+    analytics: analytics.thinkmay.net
+    grafana: grafana.thinkmay.net
+  ingest:
+    analyticsPrefix: /api/
+  upstreams:
+    studio: "http://studio:3000"
+    rybbitClient: "http://rybbit-client:3000"
+    rybbitBackend: "http://rybbit-backend:3001"
+    grafana: "http://grafana:3000"
+
 # Public edge (TDD D14): sole host-published ports :80 / :443.
 tls:
   enabled: true

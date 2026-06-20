@@ -19,6 +19,7 @@ type Config struct {
 	PostgREST  PostgREST  `mapstructure:"postgrest"`
 	Supabase   Supabase   `mapstructure:"supabase"`
 	Upstreams  Upstreams  `mapstructure:"upstreams"`
+	Admin      Admin      `mapstructure:"admin"`
 	WAF        WAF        `mapstructure:"waf"`
 	Nats       Nats       `mapstructure:"nats"`
 	ClickHouse ClickHouse `mapstructure:"clickhouse"`
@@ -127,6 +128,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("waf.coraza.enabled", true)
 	v.SetDefault("waf.coraza.owaspCRS", true)
 	v.SetDefault("waf.coraza.requestBodyLimit", 10485760)
+	v.SetDefault("admin.enabled", false)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -151,6 +153,12 @@ func NewConfig() (*Config, error) {
 	if ips := os.Getenv("APP_WAF_ALLOWEDIPS"); ips != "" {
 		cfg.WAF.AllowedIPs = splitCommaTrim(ips)
 	}
+	if ips := os.Getenv("APP_ADMIN_ALLOWEDIPS"); ips != "" {
+		cfg.Admin.AllowedIPs = splitCommaTrim(ips)
+	}
+	if emails := os.Getenv("APP_ADMIN_ALLOWEDEMAILS"); emails != "" {
+		cfg.Admin.AllowedEmails = splitCommaTrim(emails)
+	}
 	if cfg.TLS.Enabled {
 		if cfg.TLS.HTTPPort == "" {
 			cfg.TLS.HTTPPort = "80"
@@ -165,6 +173,7 @@ func NewConfig() (*Config, error) {
 		cfg.Port = "4000"
 	}
 	mergeSupabaseKeys(&cfg)
+	mergeAdminDefaults(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
 	}

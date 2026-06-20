@@ -67,7 +67,15 @@ func Run() error {
 		return err
 	}
 
-	mux := newMux(h, hub, globalRPC, grants, devJobs, cfg, bt, coraza)
+	gate, err := initAdminGate(cfg)
+	if err != nil {
+		return fmt.Errorf("admin gate: %w", err)
+	}
+	if gate != nil {
+		defer func() { _ = gate.Close() }()
+	}
+
+	mux := newMux(h, hub, globalRPC, grants, devJobs, cfg, bt, coraza, gate)
 
 	servers, errCh, err := startServers(cfg, mux)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
+	"github.com/thinkonmay/global-proxy/api/pkg/admingate"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	corazawaf "github.com/thinkonmay/global-proxy/api/pkg/waf/coraza"
 )
@@ -29,6 +30,7 @@ func newMux(
 	cfg *config.Config,
 	rt http.RoundTripper,
 	coraza *corazawaf.Middleware,
+	gate *admingate.Gate,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -38,6 +40,7 @@ func newMux(
 
 	mux.HandleFunc("GET /sse", hub.Serve)
 
+	registerInternalAdminRoutes(mux, gate)
 	registerKongRoutes(mux, cfg, rt)
 
 	chain := []guard.Middleware{
@@ -49,7 +52,8 @@ func newMux(
 	if coraza != nil {
 		chain = append([]guard.Middleware{coraza.AsGuard()}, chain...)
 	}
-	return guard.Chain(mux, chain...)
+	public := guard.Chain(mux, chain...)
+	return wrapHostRouter(public, cfg, gate, rt)
 }
 
 func initCoraza(cfg config.Coraza) (*corazawaf.Middleware, error) {
