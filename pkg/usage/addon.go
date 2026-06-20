@@ -9,7 +9,6 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
@@ -68,23 +67,14 @@ func (c *Collector) tickAddons(ctx context.Context, now time.Time, bucket int64)
 		stats.errors++
 	}
 
-	clusters, err := LoadActiveClusters(ctx, c.pr)
-	if err != nil {
-		c.log.Warn("addon tick: load clusters", "err", err)
+	if rows, err := cluster.ListLLMUsageGlobal(ctx, c.pr); err != nil {
+		c.log.Warn("addon tick: global llm", "err", err)
 		stats.errors++
-		return stats
+	} else if err := c.processLLMRows(ctx, rows, now, bucket, dedupTTL, &stats); err != nil {
+		c.log.Warn("addon tick: llm billing", "err", err)
+		stats.errors++
 	}
-	for _, cl := range clusters {
-		pb := pocketbase.New(pocketbase.Config{
-			URL:      cl.Secret.URL,
-			Username: cl.Secret.Username,
-			Password: cl.Secret.Password,
-		})
-		if err := c.scrapeLLM(ctx, pb, cl, now, bucket, dedupTTL, &stats); err != nil {
-			c.log.Warn("addon tick: llm", "cluster", cl.Domain, "err", err)
-			stats.errors++
-		}
-	}
+
 	return stats
 }
 
@@ -147,22 +137,11 @@ func (c *Collector) processBucketRows(ctx context.Context, rows []cluster.Bucket
 	return nil
 }
 
-type addonStats struct {
-	appRows, bucketRows, llmRows int
-	billed                       int
-	events                       int
-	skippedDedup                 int
-	errors                       int
-}
-
-func (c *Collector) scrapeLLM(ctx context.Context, pb *pocketbase.Client, cl ActiveCluster, at time.Time, bucket int64, dedupTTL time.Duration, stats *addonStats) error {
-	rows, err := cluster.ListLLMUsage(ctx, pb)
-	if err != nil {
-		return err
-	}
+func (c *Collector) processLLMRows(ctx context.Context, rows []cluster.LLMUsage, at time.Time, bucket int64, dedupTTL time.Duration, stats *addonStats) error {
 	for _, row := range rows {
 		stats.llmRows++
-		key := fmt.Sprintf("llm:%s:%d", row.Email, bucket)
+		clusterDomain := row.Domain
+		key := fmt.Sprintf("llm:%s:%s:%d", row.Email, clusterDomain, bucket)
 		ok, err := c.dedup.Claim(ctx, key, dedupTTL)
 		if err != nil || !ok {
 			stats.skippedDedup++
@@ -179,11 +158,19 @@ func (c *Collector) scrapeLLM(ctx context.Context, pb *pocketbase.Client, cl Act
 		stats.events++
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, Metric: "llm.units",
-			Value: float64(row.Usage), Cluster: cl.Domain,
+			Value: float64(row.Usage), Cluster: clusterDomain,
 			TickBucket: uint64(bucket), Source: "collector",
 		})
 	}
 	return nil
+}
+
+type addonStats struct {
+	appRows, bucketRows, llmRows int
+	billed                       int
+	events                       int
+	skippedDedup                 int
+	errors                       int
 }
 
 func busPublish(ctx context.Context, c *Collector, msg model.UsageMsg) error {

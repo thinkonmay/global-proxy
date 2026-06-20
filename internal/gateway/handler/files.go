@@ -43,6 +43,7 @@ func (h *FilesHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/pb-proxy/file/v1/{path...}", h.downloadFileLegacy)
 	mux.HandleFunc("GET /v1/internal/sync-bucket-size", h.SyncBucketSize)
 	mux.HandleFunc("POST /v1/internal/increment-app-access-usage", h.IncrementAppAccessUsage)
+	mux.HandleFunc("POST /v1/internal/increment-llm-usage", h.IncrementLLMUsage)
 	mux.HandleFunc("GET /v1/internal/lookup-app-access", h.LookupAppAccess)
 }
 
@@ -220,6 +221,26 @@ func (h *FilesHandler) IncrementAppAccessUsage(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), grantTimeout)
 	defer cancel()
 	if err := h.pr.RPC(ctx, "increment_user_app_access_usage_v1", map[string]any{
+		"email":  email,
+		"domain": cluster,
+	}, nil); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "increment failed"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// IncrementLLMUsage bumps global LLM addon usage (node calls via gateway, not Postgres HTTP).
+func (h *FilesHandler) IncrementLLMUsage(w http.ResponseWriter, r *http.Request) {
+	email := r.URL.Query().Get("email")
+	cluster := clusterHost(r.URL.Query().Get("cluster"))
+	if email == "" || cluster == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and cluster required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), grantTimeout)
+	defer cancel()
+	if err := h.pr.RPC(ctx, "increment_user_llm_usage_v1", map[string]any{
 		"email":  email,
 		"domain": cluster,
 	}, nil); err != nil {

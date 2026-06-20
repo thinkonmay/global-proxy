@@ -30,10 +30,11 @@ type BucketUsage struct {
 	Domain     string
 }
 
-// LLMUsage row from node PocketBase llmModels collection.
+// LLMUsage row from global Postgres infra.user_llm_access.
 type LLMUsage struct {
-	Usage int64
-	Email string
+	Usage  int64
+	Email  string
+	Domain string
 }
 
 func ListAppAccessUsage(ctx context.Context, pb *pocketbase.Client) ([]AppAccessUsage, error) {
@@ -113,6 +114,28 @@ func ListBucketUsageGlobal(ctx context.Context, pr interface {
 			BucketName: row.BucketName,
 			Email:      row.Email,
 			Domain:     row.Domain,
+		})
+	}
+	return out, nil
+}
+
+func ListLLMUsageGlobal(ctx context.Context, pr interface {
+	RPC(ctx context.Context, name string, args any, dest any) error
+}) ([]LLMUsage, error) {
+	var rows []struct {
+		Email  string `json:"email"`
+		Usage  int64  `json:"usage"`
+		Domain string `json:"domain"`
+	}
+	if err := pr.RPC(ctx, "list_addon_llm_usage_v1", nil, &rows); err != nil {
+		return nil, err
+	}
+	out := make([]LLMUsage, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, LLMUsage{
+			Usage:  row.Usage,
+			Email:  row.Email,
+			Domain: row.Domain,
 		})
 	}
 	return out, nil
