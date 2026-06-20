@@ -13,8 +13,9 @@ import (
 )
 
 type httpServers struct {
-	http  *http.Server
-	https *http.Server
+	http    *http.Server
+	https   *http.Server
+	metrics *http.Server
 }
 
 func (s *httpServers) shutdown(ctx context.Context) error {
@@ -24,6 +25,9 @@ func (s *httpServers) shutdown(ctx context.Context) error {
 	}
 	if s.https != nil {
 		errs = append(errs, s.https.Shutdown(ctx))
+	}
+	if s.metrics != nil {
+		errs = append(errs, s.metrics.Shutdown(ctx))
 	}
 	return errors.Join(errs...)
 }

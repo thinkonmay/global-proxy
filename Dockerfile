@@ -1,5 +1,5 @@
 # Multi-stage build for both Go binaries in this module.
-# Pick which one with: --build-arg CMD=gateway   (or CMD=worker, relay, scheduler, metrics-aggregator)
+# Pick which one with: --build-arg CMD=gateway   (or CMD=worker, relay, scheduler)
 FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./

@@ -77,20 +77,36 @@ func Run() error {
 
 	mux := newMux(h, hub, globalRPC, grants, devJobs, cfg, bt, coraza, gate)
 
+	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
+	if err != nil {
+		return err
+	}
+	if metricsCache != nil {
+		defer func() { _ = metricsCache.Close() }()
+	}
+
 	servers, errCh, err := startServers(cfg, mux)
 	if err != nil {
 		return err
 	}
+	servers.metrics = metricsSrv
 
 	select {
 	case err := <-errCh:
-		return fmt.Errorf("http server: %w", err)
+		if err != nil {
+			return fmt.Errorf("http server: %w", err)
+		}
+	case err := <-metricsErrCh:
+		if err != nil {
+			return fmt.Errorf("metrics server: %w", err)
+		}
 	case <-ctx.Done():
 		slog.Info("shutting down HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return servers.shutdown(shutdownCtx)
 	}
+	return nil
 }
 
 func connectBus(cfg *config.Config) (bus.Client, error) {

@@ -124,7 +124,7 @@ admin:
     rybbitBackend: "http://rybbit-backend:3001"
     grafana: "http://grafana:3000"
 
-# Infra metrics push cache (D16). Used by CMD=metrics-aggregator only.
+# Infra metrics push cache (D16). Runs inside the gateway on metrics.listenAddr.
 metrics:
   redisUrl: "redis://redis:6379/1"
   cacheTTLSeconds: 90
