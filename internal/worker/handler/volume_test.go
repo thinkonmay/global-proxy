@@ -180,6 +180,149 @@ func TestVolumeHandlerUpdateVolume(t *testing.T) {
 	}
 }
 
+func TestVolumeHandlerDeleteVolume(t *testing.T) {
+	var mu sync.Mutex
+	var jobPatch map[string]any
+	var deleted bool
+	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pbAuthHandler(w, r) {
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]string{{"id": "user-1"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/volumes/records":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]string{{"id": "vol-rec-1"}},
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/collections/volumes/records/vol-rec-1":
+			mu.Lock()
+			deleted = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer pbSrv.Close()
+
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc/get_cluster_secrets":
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"url": pbSrv.URL}})
+		default:
+			if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
+				mu.Lock()
+				_ = json.NewDecoder(r.Body).Decode(&jobPatch)
+				mu.Unlock()
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			http.NotFound(w, r)
+		}
+	}))
+	defer prSrv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
+	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
+	vh := newVolumeHandler(idempotency.New(idempotency.NewMemStore()), pr, pb)
+
+	err := vh.handle(context.Background(), model.VolumeJobEnvelope{
+		OutboxID: 4,
+		Payload: model.VolumeJobPayload{
+			Command:   "delete volume v5",
+			JobID:     101,
+			ClusterID: 3,
+			Email:     "u@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !deleted {
+		t.Fatal("volume record was not deleted")
+	}
+	if jobPatch == nil || jobPatch["success"] != true {
+		t.Fatalf("job patch: %v", jobPatch)
+	}
+}
+
+func TestVolumeHandlerGrantJob(t *testing.T) {
+	var mu sync.Mutex
+	var jobPatch map[string]any
+	var grantCalled bool
+	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pbAuthHandler(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]string{{"id": "user-1"}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer pbSrv.Close()
+
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/clusters":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"id":     3,
+				"domain": "saigon2.thinkmay.net",
+				"secret": map[string]string{"url": pbSrv.URL, "username": "admin@test.com", "password": "secret"},
+			}})
+		case r.URL.Path == "/rpc/grant_app_access_v1":
+			mu.Lock()
+			grantCalled = true
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"granted": true})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job"):
+			mu.Lock()
+			_ = json.NewDecoder(r.Body).Decode(&jobPatch)
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer prSrv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
+	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
+	vh := newVolumeHandler(idempotency.New(idempotency.NewMemStore()), pr, pb)
+
+	cfg, _ := json.Marshal(map[string]any{"app_id": "steam-123"})
+	err := vh.handle(context.Background(), model.VolumeJobEnvelope{
+		OutboxID: 5,
+		Payload: model.VolumeJobPayload{
+			Command:       "grant app_access",
+			JobID:         102,
+			ClusterID:     3,
+			Email:         "u@example.com",
+			Configuration: cfg,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !grantCalled {
+		t.Fatal("grant RPC was not called")
+	}
+	if jobPatch == nil || jobPatch["success"] != true {
+		t.Fatalf("job patch: %v", jobPatch)
+	}
+}
+
 func TestVolumeHandlerSkipsUnknownCommand(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"})
 	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})

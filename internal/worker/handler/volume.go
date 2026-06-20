@@ -44,6 +44,10 @@ func (h *volumeHandler) handle(ctx context.Context, env model.VolumeJobEnvelope)
 			return h.updateVolume(ctx, p)
 		case "delete volume v5":
 			return h.deleteVolume(ctx, p)
+		case "grant app_access", "grant buckets", "grant llm",
+			"unmap app_access", "unmap buckets", "unmap llm",
+			"reset app_access", "reset llm":
+			return h.handleGrantJob(ctx, p)
 		default:
 			slog.Info("skip unsupported command", "command", p.Command)
 			return nil
@@ -156,8 +160,43 @@ func (h *volumeHandler) updateVolume(ctx context.Context, p model.VolumeJobPaylo
 	return h.patchJob(ctx, p.JobID, success, respBody)
 }
 
+// deleteVolume replaces the v2-stubbed unmap_user_email_v2: it resolves the node
+// PocketBase user and deletes their volume record directly (G8, no DB HTTP).
 func (h *volumeHandler) deleteVolume(ctx context.Context, p model.VolumeJobPayload) error {
-	return h.pr.RPC(ctx, "unmap_user_email_v2", map[string]any{"job_id": p.JobID}, nil)
+	baseURL, err := h.clusterURL(ctx, p.ClusterID)
+	if err != nil {
+		return err
+	}
+	pb := h.pb.WithBaseURL(baseURL)
+	userID, err := h.ensurePBUser(ctx, pb, p.Email)
+	if err != nil {
+		return err
+	}
+
+	q := url.Values{}
+	q.Set("filter", `(user~"`+userID+`")`)
+	var list struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := pb.ListRecords(ctx, "volumes", q, &list); err != nil {
+		return err
+	}
+	if len(list.Items) == 0 {
+		return h.patchJob(ctx, p.JobID, false, jobErrorResult("Volume not found"))
+	}
+
+	headers := http.Header{}
+	headers.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
+	if err := pb.DeleteRecord(ctx, "volumes", list.Items[0].ID, pocketbase.WithHeaders(headers)); err != nil {
+		var pe *pocketbase.Error
+		if errors.As(err, &pe) {
+			return h.patchJob(ctx, p.JobID, false, pe.Body)
+		}
+		return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+	}
+	return h.patchJob(ctx, p.JobID, true, []byte(`{"deleted":true}`))
 }
 
 func (h *volumeHandler) patchJob(ctx context.Context, jobID int64, success bool, content []byte) error {
