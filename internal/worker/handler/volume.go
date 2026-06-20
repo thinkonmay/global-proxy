@@ -3,6 +3,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,6 +42,8 @@ func (h *volumeHandler) handle(ctx context.Context, env model.VolumeJobEnvelope)
 		switch p.Command {
 		case "create volume v7", "create volume v6":
 			return h.createVolume(ctx, p)
+		case "update volume v7":
+			return h.updateVolume(ctx, p)
 		case "delete volume v5":
 			return h.deleteVolume(ctx, p)
 		default:
@@ -89,6 +93,79 @@ func (h *volumeHandler) createVolume(ctx context.Context, p model.VolumeJobPaylo
 	respBody, _ := io.ReadAll(resp.Body)
 
 	success := resp.StatusCode >= 200 && resp.StatusCode < 300
+	return h.patchJob(ctx, p.JobID, success, respBody)
+}
+
+func (h *volumeHandler) updateVolume(ctx context.Context, p model.VolumeJobPayload) error {
+	token, baseURL, err := h.clusterSecrets(ctx, p.ClusterID)
+	if err != nil {
+		return err
+	}
+	userID, err := h.ensurePBUser(ctx, baseURL, token, p.Email)
+	if err != nil {
+		return err
+	}
+
+	listURL := strings.TrimRight(baseURL, "/") + "/api/collections/volumes/records?" + url.Values{
+		"filter": {`(user~"` + userID + `")`},
+	}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := h.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ := io.ReadAll(resp.Body)
+
+	var list struct {
+		Items []struct {
+			ID            string          `json:"id"`
+			Configuration json.RawMessage `json:"configuration"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(data, &list)
+	if len(list.Items) == 0 {
+		return h.patchJob(ctx, p.JobID, false, jobErrorResult("Volume not found"))
+	}
+
+	item := list.Items[0]
+	argCfg := map[string]any{}
+	if len(p.Configuration) > 0 {
+		_ = json.Unmarshal(p.Configuration, &argCfg)
+	}
+	var oldCfg map[string]any
+	if len(item.Configuration) > 0 {
+		_ = json.Unmarshal(item.Configuration, &oldCfg)
+	}
+	for _, key := range []string{"email", "template", "disk"} {
+		if oldCfg != nil {
+			if v, ok := oldCfg[key]; ok {
+				argCfg[key] = v
+			}
+		}
+	}
+
+	patchBody, _ := json.Marshal(map[string]any{"configuration": argCfg})
+	patchURL := strings.TrimRight(baseURL, "/") + "/api/collections/volumes/records/" + item.ID
+	patchReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, patchURL, bytes.NewReader(patchBody))
+	if err != nil {
+		return err
+	}
+	patchReq.Header.Set("Authorization", "Bearer "+token)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
+
+	patchResp, err := h.http.Do(patchReq)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = patchResp.Body.Close() }()
+	respBody, _ := io.ReadAll(patchResp.Body)
+	success := patchResp.StatusCode >= 200 && patchResp.StatusCode < 300
 	return h.patchJob(ctx, p.JobID, success, respBody)
 }
 
@@ -148,12 +225,16 @@ func (h *volumeHandler) ensurePBUser(ctx context.Context, baseURL, adminToken, e
 		return list.Items[0].ID, nil
 	}
 
+	password, err := randomPBPassword()
+	if err != nil {
+		return "", err
+	}
 	createBody, _ := json.Marshal(map[string]any{
 		"username":        strings.ReplaceAll(email, "@", ""),
 		"email":           email,
 		"emailVisibility": true,
-		"password":        "12131415",
-		"passwordConfirm": "12131415",
+		"password":        password,
+		"passwordConfirm": password,
 		"name":            email,
 	})
 	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/collections/users/records", bytes.NewReader(createBody))
@@ -178,4 +259,17 @@ func (h *volumeHandler) ensurePBUser(ctx context.Context, baseURL, adminToken, e
 
 func urlQueryEscape(s string) string {
 	return strings.ReplaceAll(s, `"`, `%22`)
+}
+
+func randomPBPassword() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func jobErrorResult(msg string) []byte {
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	return b
 }
