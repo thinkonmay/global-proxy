@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	usageInsert = "INSERT INTO usage_events (event_time, user_email, session_id, metric, value, cluster)"
+	usageInsert = "INSERT INTO usage_events (event_time, user_email, session_id, metric, value, cluster, node, volume_id, tick_bucket, source)"
 )
 
 // handleUsage batch-inserts usage events into ClickHouse. The bus buffers by
@@ -20,7 +20,14 @@ func (h *Handler) handleUsage(ctx context.Context, events []model.UsageMsg) []er
 		return bus.Each(len(events), err)
 	}
 	for _, e := range events {
-		if err := batch.Append(e.EventTime, e.UserEmail, e.SessionID, e.Metric, e.Value, e.Cluster); err != nil {
+		source := e.Source
+		if source == "" {
+			source = "collector"
+		}
+		if err := batch.Append(
+			e.EventTime, e.UserEmail, e.SessionID, e.Metric, e.Value, e.Cluster,
+			e.Node, e.VolumeID, e.TickBucket, source,
+		); err != nil {
 			return bus.Each(len(events), err)
 		}
 	}

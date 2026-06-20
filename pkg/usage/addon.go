@@ -112,6 +112,7 @@ func (c *Collector) scrapeAppAccess(ctx context.Context, pb *pocketbase.Client, 
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, Metric: "app_access.units",
 			Value: float64(row.Usage), Cluster: cl.Domain,
+			TickBucket: uint64(bucket), Source: "collector",
 		})
 	}
 	return nil
@@ -145,6 +146,7 @@ func (c *Collector) scrapeBuckets(ctx context.Context, pb *pocketbase.Client, cl
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, SessionID: row.BucketName,
 			Metric: "bucket.mb", Value: float64(row.SizeMB), Cluster: cl.Domain,
+			TickBucket: uint64(bucket), Source: "collector",
 		})
 	}
 	return nil
@@ -175,6 +177,7 @@ func (c *Collector) scrapeLLM(ctx context.Context, pb *pocketbase.Client, cl Act
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, Metric: "llm.units",
 			Value: float64(row.Usage), Cluster: cl.Domain,
+			TickBucket: uint64(bucket), Source: "collector",
 		})
 	}
 	return nil

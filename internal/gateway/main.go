@@ -16,6 +16,7 @@ import (
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
@@ -56,9 +57,20 @@ func Run() error {
 
 	h := handler.NewHandler(eventBus)
 	devJobs := os.Getenv("APP_DEV_JOBS") == "1"
-	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt)
+
+	var usageQ *usage.Querier
+	if chConn, err := usage.OpenCH(cfg.ClickHouse); err != nil {
+		if cfg.ClickHouse.Addr != "" {
+			slog.Warn("clickhouse unavailable for usage reads", "err", err)
+		}
+	} else {
+		defer func() { _ = chConn.Close() }()
+		usageQ = usage.NewQuerier(chConn)
+	}
+
+	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt, usageQ)
 	grants := handler.NewGrantHandler(*cfg, pr, bt)
-	pwa := handler.NewPWAHandler(*cfg, pr, bt)
+	pwa := handler.NewPWAHandler(*cfg, pr, bt, usageQ)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

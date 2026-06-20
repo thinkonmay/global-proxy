@@ -185,7 +185,7 @@ func (c *Collector) tick(ctx context.Context) {
 			if cluster == "" && owner.ClusterID > 0 {
 				cluster = fmt.Sprintf("cluster-%d", owner.ClusterID)
 			}
-			if err := c.applySessionUsage(ctx, owner.Email, cluster, tick, now, &stats); err != nil {
+			if err := c.applySessionUsage(ctx, owner.Email, cluster, tick, now, bucket, &stats); err != nil {
 				c.log.Warn("usage tick: session", "email", owner.Email, "session", tick.SessionID, "err", err)
 				stats.errors++
 			}
@@ -214,7 +214,7 @@ func (c *Collector) tick(ctx context.Context) {
 			continue
 		}
 		cluster := c.catalog.ClusterDomain(ctx, vol.Node)
-		if err := c.applyVolumeUsage(ctx, owner.Email, cluster, vol, now, &stats); err != nil {
+		if err := c.applyVolumeUsage(ctx, owner.Email, cluster, vol, now, bucket, &stats); err != nil {
 			c.log.Warn("usage tick: volume", "email", owner.Email, "volume", vol.VolumeID, "err", err)
 			stats.errors++
 		}
@@ -236,7 +236,7 @@ func (c *Collector) tick(ctx context.Context) {
 	)
 }
 
-func (c *Collector) applySessionUsage(ctx context.Context, email, cluster string, tick SessionTick, at time.Time, stats *tickStats) error {
+func (c *Collector) applySessionUsage(ctx context.Context, email, cluster string, tick SessionTick, at time.Time, bucket int64, stats *tickStats) error {
 	if !c.shadowMode {
 		if err := c.pr.RPC(ctx, "increment_subscription_usage", map[string]any{
 			"p_email":   email,
@@ -248,16 +248,20 @@ func (c *Collector) applySessionUsage(ctx context.Context, email, cluster string
 	}
 	stats.events++
 	return bus.Publish(ctx, c.bus, model.TopicUsage, model.UsageMsg{
-		EventTime: at,
-		UserEmail: email,
-		SessionID: tick.SessionID,
-		Metric:    "session.minutes",
-		Value:     float64(c.sessionMins),
-		Cluster:   cluster,
+		EventTime:  at,
+		UserEmail:  email,
+		SessionID:  tick.SessionID,
+		Metric:     "session.minutes",
+		Value:      float64(c.sessionMins),
+		Cluster:    cluster,
+		Node:       tick.Node,
+		VolumeID:   tick.VolumeID,
+		TickBucket: uint64(bucket),
+		Source:     "collector",
 	})
 }
 
-func (c *Collector) applyVolumeUsage(ctx context.Context, email, cluster string, tick VolumeTick, at time.Time, stats *tickStats) error {
+func (c *Collector) applyVolumeUsage(ctx context.Context, email, cluster string, tick VolumeTick, at time.Time, bucket int64, stats *tickStats) error {
 	if !c.shadowMode {
 		if err := c.pr.RPC(ctx, "increment_subscription_data_usage", map[string]any{
 			"p_email":    email,
@@ -269,11 +273,15 @@ func (c *Collector) applyVolumeUsage(ctx context.Context, email, cluster string,
 	}
 	stats.events++
 	return bus.Publish(ctx, c.bus, model.TopicUsage, model.UsageMsg{
-		EventTime: at,
-		UserEmail: email,
-		SessionID: tick.VolumeID,
-		Metric:    "volume.gb",
-		Value:     float64(tick.SizeGB),
-		Cluster:   cluster,
+		EventTime:  at,
+		UserEmail:  email,
+		SessionID:  tick.VolumeID,
+		Metric:     "volume.gb",
+		Value:      float64(tick.SizeGB),
+		Cluster:    cluster,
+		Node:       tick.Node,
+		VolumeID:   tick.VolumeID,
+		TickBucket: uint64(bucket),
+		Source:     "collector",
 	})
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 )
 
 const pwaQueryTimeout = 5 * time.Second
@@ -29,7 +30,7 @@ type PWAHandler struct {
 	transport  http.RoundTripper
 }
 
-func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper) *PWAHandler {
+func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier) *PWAHandler {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
@@ -37,7 +38,7 @@ func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper
 		pr:      pr,
 		pbURL:   strings.TrimRight(cfg.PocketBase.URL, "/"),
 		pbAdmin: pocketbase.New(pocketbase.Config{URL: cfg.PocketBase.URL, Username: cfg.PocketBase.Username, Password: cfg.PocketBase.Password, Transport: rt}),
-		rpc:     NewGlobalRPCHandler(cfg, pr, rt),
+		rpc:     NewGlobalRPCHandler(cfg, pr, rt, usageQ),
 		llm:     cfg.LLM,
 		httpClient: &http.Client{
 			Timeout:   60 * time.Second,

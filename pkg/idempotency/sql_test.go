@@ -20,7 +20,7 @@ import (
 func startPostgres(t *testing.T) testcontainers.Container {
 	t.Helper()
 	ctx := context.Background()
-	initPath, err := filepath.Abs("../../compose/postgres/init.sql")
+	initPath, err := filepath.Abs("testdata/postgres_init.sql")
 	if err != nil {
 		t.Fatalf("resolve init.sql: %v", err)
 	}
