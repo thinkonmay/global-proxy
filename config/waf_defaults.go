@@ -11,6 +11,7 @@ func defaultPublicReadPaths() []string {
 		"/rest/v1/discounts",
 		"/rest/v1/feedbacks",
 		"/rest/v1/banner",
+		"/rest/v1/binary_release",
 		"/rest/v1/rpc/get_depotkey",
 		"/rest/v1/rpc/search_stores",
 		"/rest/v1/rpc/local_version_control_v1",

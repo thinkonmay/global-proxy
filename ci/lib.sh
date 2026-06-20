@@ -28,12 +28,14 @@ ci_gateway_test_packages() {
 ./pkg/cache
 ./pkg/cache/memory
 ./pkg/admingate
+./pkg/metricsagg
 ./pkg/certmanager
 ./pkg/guard
 ./pkg/idempotency
 ./pkg/memo
 ./pkg/postgrest
 ./pkg/rpc
+./pkg/scheduler
 ./pkg/supabase/auth
 ./pkg/validator
 ./pkg/waf/coraza

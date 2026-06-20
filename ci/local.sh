@@ -65,6 +65,10 @@ step_build() {
   go build -trimpath -o "${ROOT}/artifacts/local/worker" ./internal/worker
   ci_log "build relay"
   go build -trimpath -o "${ROOT}/artifacts/local/relay" ./internal/relay
+  ci_log "build scheduler"
+  go build -trimpath -o "${ROOT}/artifacts/local/scheduler" ./internal/scheduler
+  ci_log "build metrics-aggregator"
+  go build -trimpath -o "${ROOT}/artifacts/local/metrics-aggregator" ./internal/metrics-aggregator
 }
 
 run_default() {

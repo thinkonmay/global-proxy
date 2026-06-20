@@ -48,6 +48,28 @@ relay:
   pollIntervalMs: 500
   batchSize: 50
 
+# Global pg_cron replacement (D15/P14). Disabled by default; the scheduler
+# binary (CMD=scheduler) sets APP_SCHEDULER_ENABLED=1. Each job ticks on `every`
+# and calls a PostgREST RPC — billing math stays in Postgres (P5).
+scheduler:
+  enabled: false
+  jobs:
+    # F07: mark cancelled/ended subscriptions cleaned.
+    - name: clean_expired_subscription
+      every: 1m
+      rpc: clean_expired_subscription
+      timeoutMs: 5000
+    # F17: settle verified payments (credit pockets + enqueue subscription jobs).
+    - name: verify_all_payment
+      every: 30s
+      rpc: verify_all_payment_v2
+      timeoutMs: 5000
+    # F17: settle PAID deposits.
+    - name: verify_all_deposits
+      every: 30s
+      rpc: verify_all_deposits
+      timeoutMs: 5000
+
 gateway:
   publicURL: "https://thinkmay.net"
 
@@ -78,6 +100,14 @@ admin:
     rybbitClient: "http://rybbit-client:3000"
     rybbitBackend: "http://rybbit-backend:3001"
     grafana: "http://grafana:3000"
+
+# Infra metrics push cache (D16). Used by CMD=metrics-aggregator only.
+metrics:
+  redisUrl: "redis://redis:6379/1"
+  cacheTTLSeconds: 90
+  scrapeCacheSeconds: 10
+  ingestSecret: ""
+  listenAddr: ":9090"
 
 # Public edge (TDD D14): sole host-published ports :80 / :443.
 tls:

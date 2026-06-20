@@ -25,8 +25,29 @@ type Config struct {
 	ClickHouse ClickHouse `mapstructure:"clickhouse"`
 	RPC        RPC        `mapstructure:"rpc"`
 	Relay      Relay      `mapstructure:"relay"`
+	Scheduler  Scheduler  `mapstructure:"scheduler"`
+	Metrics    Metrics    `mapstructure:"metrics"`
 	Gateway    Gateway    `mapstructure:"gateway"`
 	TLS        TLS        `mapstructure:"tls"`
+}
+
+// Scheduler replaces global pg_cron (D15/P14): periodic PostgREST RPC ticks.
+// Postgres keeps the billing SQL (P5); the worker only triggers it on a timer.
+type Scheduler struct {
+	Enabled bool           `mapstructure:"enabled"`
+	Jobs    []SchedulerJob `mapstructure:"jobs"`
+}
+
+// SchedulerJob is one timer-driven PostgREST RPC. Every is a Go duration string
+// (e.g. "30s", "1m"); RPC is the Postgres function name (POST /rpc/<rpc>); Args
+// is the optional JSON arg object (nil/empty = no-arg RPC); TimeoutMs bounds the
+// per-tick call (0 = scheduler default).
+type SchedulerJob struct {
+	Name      string         `mapstructure:"name"`
+	Every     string         `mapstructure:"every"`
+	RPC       string         `mapstructure:"rpc"`
+	Args      map[string]any `mapstructure:"args"`
+	TimeoutMs int            `mapstructure:"timeoutMs"`
 }
 
 type TLS struct {
@@ -129,6 +150,11 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("waf.coraza.owaspCRS", true)
 	v.SetDefault("waf.coraza.requestBodyLimit", 10485760)
 	v.SetDefault("admin.enabled", false)
+	v.SetDefault("scheduler.enabled", false)
+	v.SetDefault("metrics.cacheTTLSeconds", 90)
+	v.SetDefault("metrics.scrapeCacheSeconds", 10)
+	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
+	v.SetDefault("metrics.listenAddr", ":9090")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -174,6 +200,7 @@ func NewConfig() (*Config, error) {
 	}
 	mergeSupabaseKeys(&cfg)
 	mergeAdminDefaults(&cfg)
+	mergeMetricsDefaults(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
 	}
