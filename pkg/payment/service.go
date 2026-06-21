@@ -163,7 +163,7 @@ func (s *Service) listPending(ctx context.Context) ([]txnRow, error) {
 	q.Set("select", "id,provider,status,data,expire_at")
 	q.Set("status", "in.(PENDING,_PENDING)")
 	q.Set("expire_at", "gt."+time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
-	if err := s.pr.Select(ctx, "transactions", q, &rows); err != nil {
+	if err := s.pr.SelectService(ctx, "transactions", q, &rows); err != nil {
 		return nil, err
 	}
 	return rows, nil

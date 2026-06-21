@@ -58,7 +58,7 @@ func (s *Service) loadProviderConfig(ctx context.Context) (providerConfig, error
 	q := url.Values{}
 	q.Set("select", "name,value")
 	q.Set("name", "in.(payos,stripe,payermax,payssion)")
-	if err := s.pr.Select(ctx, "constant", q, &rows); err != nil {
+	if err := s.pr.SelectService(ctx, "constant", q, &rows); err != nil {
 		return providerConfig{}, err
 	}
 	var out providerConfig
@@ -85,7 +85,7 @@ func (s *Service) loadExchangeRate(ctx context.Context, currency string) (float6
 	q.Set("select", "rate_to_system_credit")
 	q.Set("currency", "eq."+currency)
 	q.Set("limit", "1")
-	if err := s.pr.Select(ctx, "currency_rates", q, &rows); err != nil {
+	if err := s.pr.SelectService(ctx, "currency_rates", q, &rows); err != nil {
 		return 0, err
 	}
 	if len(rows) == 0 || rows[0].Rate == 0 {
