@@ -37,6 +37,10 @@ func newProxy(rawURL string, rt http.RoundTripper, director func(*http.Request))
 				director(req)
 			}
 		},
+		ModifyResponse: func(resp *http.Response) error {
+			stripUpstreamCORS(resp.Header)
+			return nil
+		},
 		ErrorHandler: proxyError,
 	}
 }

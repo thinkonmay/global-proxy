@@ -56,7 +56,7 @@ func newMux(
 
 	chain := []guard.Middleware{
 		guard.Denylist(guard.IPSet(ipBlacklist...)),
-		withCORS,
+		corsMiddleware(cfg),
 		guard.Allowlist(guard.IPSet(ipWhitelist...)),
 		guard.RateLimit(guard.RateLimitConfig{RPS: rateRPS, Burst: rateBurst}),
 	}
