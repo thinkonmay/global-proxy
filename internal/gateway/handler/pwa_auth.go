@@ -33,7 +33,8 @@ func pwaAuthFromRequest(ctx context.Context, rt http.RoundTripper, r *http.Reque
 	defer cancel()
 	auth, err := pbUserAuth.Validate(ctx, issuer, authHeader, rt)
 	if err != nil {
-		return pwaUserAuth{}, http.StatusUnauthorized, "pocketbase auth failed"
+		status, msg := authErrFromValidate(err)
+		return pwaUserAuth{}, status, msg
 	}
 	return pwaUserAuth{Email: auth.Email, UserID: auth.UserID}, 0, ""
 }

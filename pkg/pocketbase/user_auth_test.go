@@ -26,6 +26,12 @@ func testUserJWT(t *testing.T, userID string) string {
 	return tok
 }
 
+func testRegistry(fetchURL, issuerHost string) IssuerAllowlist {
+	return newStaticIssuerAllowlist(map[string]string{
+		issuerHost: fetchURL,
+	}, fetchURL, issuerHost)
+}
+
 func TestUserTokenValidatorHomeIssuerFetch(t *testing.T) {
 	const userID = "u1"
 	token := testUserJWT(t, userID)
@@ -42,8 +48,7 @@ func TestUserTokenValidatorHomeIssuerFetch(t *testing.T) {
 	t.Cleanup(pb.Close)
 
 	v := NewUserTokenValidator(UserTokenValidatorConfig{
-		URL:        pb.URL,
-		IssuerHost: "https://haiphong.thinkmay.net",
+		Issuers: testRegistry(pb.URL, "https://haiphong.thinkmay.net"),
 	})
 
 	auth, err := v.Validate(context.Background(), "https://haiphong.thinkmay.net", token, nil)
@@ -63,6 +68,16 @@ func TestUserTokenValidatorHomeIssuerFetch(t *testing.T) {
 	}
 }
 
+func TestUserTokenValidatorRejectsUnknownIssuer(t *testing.T) {
+	v := NewUserTokenValidator(UserTokenValidatorConfig{
+		Issuers: testRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"),
+	})
+	_, err := v.Validate(context.Background(), "https://evil.example.com", testUserJWT(t, "u1"), nil)
+	if err != ErrUnknownIssuer {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestUserTokenValidatorRemoteIssuerPassthrough(t *testing.T) {
 	const userID = "u1"
 	token := testUserJWT(t, userID)
@@ -73,8 +88,9 @@ func TestUserTokenValidatorRemoteIssuerPassthrough(t *testing.T) {
 	t.Cleanup(remote.Close)
 
 	v := NewUserTokenValidator(UserTokenValidatorConfig{
-		URL:        "https://host.docker.internal",
-		IssuerHost: "https://haiphong.thinkmay.net",
+		Issuers: newStaticIssuerAllowlist(map[string]string{
+			remote.URL: remote.URL,
+		}, "", ""),
 	})
 
 	auth, err := v.Validate(context.Background(), remote.URL, token, nil)
@@ -105,7 +121,9 @@ func TestUserTokenValidatorAuthRefreshFallback(t *testing.T) {
 	}))
 	t.Cleanup(pb.Close)
 
-	v := NewUserTokenValidator(UserTokenValidatorConfig{URL: pb.URL})
+	v := NewUserTokenValidator(UserTokenValidatorConfig{
+		Issuers: testRegistry(pb.URL, pb.URL),
+	})
 	auth, err := v.Validate(context.Background(), pb.URL, token, nil)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -124,28 +142,12 @@ func TestUserTokenValidatorInvalidToken(t *testing.T) {
 	}))
 	t.Cleanup(pb.Close)
 
-	v := NewUserTokenValidator(UserTokenValidatorConfig{URL: pb.URL})
+	v := NewUserTokenValidator(UserTokenValidatorConfig{
+		Issuers: testRegistry(pb.URL, pb.URL),
+	})
 	_, err := v.Validate(context.Background(), pb.URL, "bad", nil)
 	if err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestHostFromBaseURL(t *testing.T) {
-	tests := []struct {
-		raw  string
-		want string
-	}{
-		{"https://haiphong.thinkmay.net:443", "haiphong.thinkmay.net"},
-		{"haiphong.thinkmay.net", "haiphong.thinkmay.net"},
-		{"", ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.raw, func(t *testing.T) {
-			if got := hostFromBaseURL(tc.raw); got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
-			}
-		})
 	}
 }
 
@@ -162,7 +164,9 @@ func TestIntegrationUserTokenValidator(t *testing.T) {
 	}
 	tok := userAuthToken(t, env.URL, email, pass)
 
-	v := NewUserTokenValidator(UserTokenValidatorConfig{URL: env.URL})
+	v := NewUserTokenValidator(UserTokenValidatorConfig{
+		Issuers: testRegistry(env.URL, env.URL),
+	})
 	auth, err := v.Validate(ctx, env.URL, tok, nil)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)

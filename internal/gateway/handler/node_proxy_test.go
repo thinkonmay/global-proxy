@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"github.com/thinkonmay/global-proxy/api/config"
 )
 
 func TestNodeProxyMissingCluster(t *testing.T) {
@@ -36,6 +38,7 @@ func TestNodeProxyForwardSnapshots(t *testing.T) {
 	defer upstream.Close()
 
 	host := upstream.URL
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry(host, host))
 	h := NewNodeProxyHandler(nil)
 	mux := http.NewServeMux()
 	h.Register(mux)

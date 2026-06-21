@@ -150,12 +150,15 @@ func (h *FilesHandler) resolveBucket(r *http.Request) (string, int, string) {
 	if authHeader == "" {
 		return "", http.StatusUnauthorized, "authorization required"
 	}
-	base := clusterBaseURL(cluster)
 	ctx, cancel := context.WithTimeout(r.Context(), grantTimeout)
 	defer cancel()
-	email, err := pbUserAuth.UserEmail(ctx, base, authHeader, h.transport)
+	email, err := pbUserAuth.UserEmail(ctx, cluster, authHeader, h.transport)
 	if err != nil {
-		return "", http.StatusUnauthorized, "invalid auth"
+		status, msg := authErrFromValidate(err)
+		if msg == "invalid issuer" {
+			msg = "invalid cluster"
+		}
+		return "", status, msg
 	}
 	var lookup map[string]any
 	if err := h.pr.RPC(ctx, "lookup_user_bucket_v1", map[string]any{

@@ -62,7 +62,11 @@ func (h *NodeProxyHandler) forward(w http.ResponseWriter, r *http.Request, pbPat
 		return
 	}
 
-	base := clusterBaseURL(cluster)
+	base, code, msg := resolveClusterURL(r.Context(), cluster)
+	if code != 0 {
+		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
 	target, err := url.Parse(base + pbPath)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cluster"})

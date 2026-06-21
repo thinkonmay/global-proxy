@@ -24,6 +24,14 @@ const (
 	usersPath     = "/api/collections/users/records/"
 )
 
+// ErrUnknownIssuer is returned when ?issuer= / cluster= is not in infra.clusters.
+var ErrUnknownIssuer = errors.New("unknown cluster issuer")
+
+// IssuerAllowlist resolves client issuers to trusted PocketBase base URLs.
+type IssuerAllowlist interface {
+	FetchURL(ctx context.Context, clientIssuer string) (string, error)
+}
+
 // UserAuth is the validated PocketBase users-collection identity.
 type UserAuth struct {
 	Email  string
@@ -33,9 +41,7 @@ type UserAuth struct {
 // UserTokenValidator validates PocketBase user JWTs without auth-refresh.
 // Valid results are cached until the token expires.
 type UserTokenValidator struct {
-	homeIssuer string // client-facing issuer hostname for the local cluster
-	homeFetch  string // gateway-reachable base URL for the local cluster
-	homeTLSName string // TLS ServerName when homeFetch host differs from issuer cert
+	issuers IssuerAllowlist
 
 	mu    sync.Mutex
 	cache map[string]cachedUserAuth
@@ -46,30 +52,15 @@ type cachedUserAuth struct {
 	exp  time.Time
 }
 
-// UserTokenValidatorConfig configures token validation and home-cluster fetch routing.
+// UserTokenValidatorConfig configures token validation.
 type UserTokenValidatorConfig struct {
-	// URL is the gateway-reachable PocketBase base for the local cluster.
-	URL string
-	// IssuerHost is the hostname clients send as ?issuer= for the local cluster.
-	// When empty, the hostname of URL is used.
-	IssuerHost string
+	Issuers IssuerAllowlist
 }
 
 func NewUserTokenValidator(cfg UserTokenValidatorConfig) *UserTokenValidator {
-	homeFetch := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	homeIssuer := strings.TrimSpace(cfg.IssuerHost)
-	if homeIssuer == "" {
-		homeIssuer = homeFetch
-	}
-	tlsName := ""
-	if hostFromBaseURL(homeIssuer) != hostFromBaseURL(homeFetch) {
-		tlsName = hostFromBaseURL(homeIssuer)
-	}
 	return &UserTokenValidator{
-		homeIssuer:  homeIssuer,
-		homeFetch:   homeFetch,
-		homeTLSName: tlsName,
-		cache:       make(map[string]cachedUserAuth),
+		issuers: cfg.Issuers,
+		cache:   make(map[string]cachedUserAuth),
 	}
 }
 
@@ -95,8 +86,14 @@ func (v *UserTokenValidator) Validate(ctx context.Context, clientIssuer, authori
 	}
 	userID, _ := claims[core.TokenClaimId].(string)
 
-	fetchBase := v.fetchBaseURL(clientIssuer)
-	auth, err := v.validateOnCluster(ctx, fetchBase, token, userID)
+	if v.issuers == nil {
+		return UserAuth{}, errors.New("cluster issuer registry not configured")
+	}
+	fetchBase, err := v.issuers.FetchURL(ctx, clientIssuer)
+	if err != nil {
+		return UserAuth{}, err
+	}
+	auth, err := v.validateOnCluster(ctx, fetchBase, clientIssuer, token, userID)
 	if err != nil {
 		return UserAuth{}, err
 	}
@@ -113,27 +110,13 @@ func (v *UserTokenValidator) UserEmail(ctx context.Context, clientIssuer, author
 	return auth.Email, nil
 }
 
-func (v *UserTokenValidator) isHomeIssuer(clientIssuer string) bool {
-	if v.homeFetch == "" {
-		return false
-	}
-	return strings.EqualFold(hostFromBaseURL(v.homeIssuer), hostFromBaseURL(clientIssuer))
-}
-
-func (v *UserTokenValidator) fetchBaseURL(clientIssuer string) string {
-	if v.homeFetch != "" && v.isHomeIssuer(clientIssuer) {
-		return v.homeFetch
-	}
-	return clientIssuer
-}
-
-func (v *UserTokenValidator) validateOnCluster(ctx context.Context, baseURL, token, userID string) (UserAuth, error) {
-	auth, err := v.validateViaRecordGET(ctx, baseURL, token, userID)
+func (v *UserTokenValidator) validateOnCluster(ctx context.Context, baseURL, clientIssuer, token, userID string) (UserAuth, error) {
+	auth, err := v.validateViaRecordGET(ctx, baseURL, clientIssuer, token, userID)
 	if err == nil {
 		return auth, nil
 	}
 	// Fallback: auth-refresh against the same reachable base (e.g. Docker hairpin fix).
-	resp, refreshErr := RefreshAuth(ctx, baseURL, usersCollection, token, v.pbTransport())
+	resp, refreshErr := RefreshAuth(ctx, baseURL, usersCollection, token, v.pbTransport(baseURL, clientIssuer))
 	if refreshErr != nil {
 		return UserAuth{}, err
 	}
@@ -150,7 +133,7 @@ func (v *UserTokenValidator) validateOnCluster(ctx context.Context, baseURL, tok
 	return UserAuth{Email: record.Email, UserID: userID}, nil
 }
 
-func (v *UserTokenValidator) validateViaRecordGET(ctx context.Context, baseURL, token, userID string) (UserAuth, error) {
+func (v *UserTokenValidator) validateViaRecordGET(ctx context.Context, baseURL, clientIssuer, token, userID string) (UserAuth, error) {
 	u := strings.TrimRight(baseURL, "/") + usersPath + userID
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -159,7 +142,7 @@ func (v *UserTokenValidator) validateViaRecordGET(ctx context.Context, baseURL, 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", bearerToken(token))
 
-	client := &http.Client{Transport: v.pbTransport()}
+	client := &http.Client{Transport: v.pbTransport(baseURL, clientIssuer)}
 
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
@@ -245,7 +228,16 @@ func tokenExpiry(claims map[string]any) time.Time {
 	}
 }
 
-func hostFromBaseURL(raw string) string {
+func (v *UserTokenValidator) pbTransport(fetchBase, clientIssuer string) http.RoundTripper {
+	if normalizeHost(fetchBase) != normalizeHost(clientIssuer) {
+		if sni := sniTransport(normalizeHost(clientIssuer)); sni != nil {
+			return sni
+		}
+	}
+	return http.DefaultTransport
+}
+
+func normalizeHost(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -262,15 +254,6 @@ func hostFromBaseURL(raw string) string {
 		return strings.ToLower(strings.TrimSpace(u.Host))
 	}
 	return strings.ToLower(host)
-}
-
-func (v *UserTokenValidator) pbTransport() http.RoundTripper {
-	if v.homeTLSName != "" {
-		if sni := sniTransport(v.homeTLSName); sni != nil {
-			return sni
-		}
-	}
-	return http.DefaultTransport
 }
 
 func sniTransport(serverName string) http.RoundTripper {

@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/security"
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
 )
 
 func testUserJWT(t *testing.T, userID string) string {
@@ -26,6 +27,19 @@ func testUserJWT(t *testing.T, userID string) string {
 	return tok
 }
 
+func testIssuerRegistry(fetchURL, issuerHost string) *cluster.IssuerRegistry {
+	host := issuerHost
+	if host == "" {
+		host = fetchURL
+	}
+	return cluster.NewStaticIssuerRegistry(map[string]string{
+		host: fetchURL,
+	}, cluster.IssuerRegistryConfig{
+		HomeFetch:      fetchURL,
+		HomeIssuerHost: issuerHost,
+	})
+}
+
 func TestRequireUserUsesCachedValidator(t *testing.T) {
 	const userID = "u1"
 	token := testUserJWT(t, userID)
@@ -38,10 +52,7 @@ func TestRequireUserUsesCachedValidator(t *testing.T) {
 	}))
 	t.Cleanup(pb.Close)
 
-	ConfigurePocketBaseAuth(config.PocketBase{
-		URL:        pb.URL,
-		IssuerHost: "https://haiphong.thinkmay.net",
-	})
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry(pb.URL, "https://haiphong.thinkmay.net"))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer=https://haiphong.thinkmay.net", nil)
 	req.Header.Set("Authorization", token)
@@ -55,8 +66,19 @@ func TestRequireUserUsesCachedValidator(t *testing.T) {
 	}
 }
 
+func TestRequireUserRejectsUnknownIssuer(t *testing.T) {
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer=https://evil.example.com", nil)
+	req.Header.Set("Authorization", testUserJWT(t, "u1"))
+	_, ok, status, msg := requireUser(context.Background(), req, nil)
+	if ok || status != http.StatusForbidden || msg != "invalid issuer" {
+		t.Fatalf("ok=%v status=%d msg=%q", ok, status, msg)
+	}
+}
+
 func TestRequireUserMissingAuth(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{URL: "https://haiphong.thinkmay.net"})
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer=https://haiphong.thinkmay.net", nil)
 	_, ok, status, msg := requireUser(context.Background(), req, nil)
@@ -66,7 +88,7 @@ func TestRequireUserMissingAuth(t *testing.T) {
 }
 
 func TestRequireUserMissingIssuer(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{URL: "https://haiphong.thinkmay.net"})
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
 	req.Header.Set("Authorization", "Bearer tok")
@@ -83,7 +105,7 @@ func TestRequireUserAuthFailure(t *testing.T) {
 	}))
 	t.Cleanup(pb.Close)
 
-	ConfigurePocketBaseAuth(config.PocketBase{URL: pb.URL})
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry(pb.URL, pb.URL))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer="+pb.URL, nil)
 	req.Header.Set("Authorization", token)
@@ -101,7 +123,7 @@ func TestPWAAuthFromRequestUsesValidator(t *testing.T) {
 	}))
 	t.Cleanup(pb.Close)
 
-	ConfigurePocketBaseAuth(config.PocketBase{URL: pb.URL})
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry(pb.URL, pb.URL))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/pwa/persona/recommendations", nil)
 	req.Header.Set("Authorization", token)
@@ -116,7 +138,7 @@ func TestPWAAuthFromRequestUsesValidator(t *testing.T) {
 }
 
 func TestPWAAuthFromRequestMissingIssuer(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{URL: "https://haiphong.thinkmay.net"})
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/pwa/persona/recommendations", nil)
 	req.Header.Set("Authorization", "tok")
@@ -127,7 +149,7 @@ func TestPWAAuthFromRequestMissingIssuer(t *testing.T) {
 }
 
 func TestPWAAuthFromRequestMissingAuthHeader(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{URL: "https://haiphong.thinkmay.net"})
+	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/pwa/persona/recommendations", nil)
 	_, status, msg := pwaAuthFromRequest(context.Background(), nil, req, "https://haiphong.thinkmay.net")

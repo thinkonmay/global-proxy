@@ -34,7 +34,7 @@ func Run() error {
 	}
 	cfg.SetupLogger()
 
-	handler.ConfigurePocketBaseAuth(cfg.PocketBase)
+	handler.ConfigureAuth(pr, cfg.PocketBase)
 
 	bt := guard.New(nil, guard.Config{MaxFailures: 5, Cooldown: 30 * time.Second, MaxConcurrent: 64})
 

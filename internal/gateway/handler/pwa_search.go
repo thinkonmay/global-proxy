@@ -102,7 +102,11 @@ func (h *PWAHandler) fetchPersonaProfile(ctx context.Context, issuer, authHeader
 	if issuer == "" || uid == "" {
 		return nil, nil
 	}
-	u := strings.TrimRight(issuer, "/") + "/api/collections/persona/records?" + url.Values{
+	fetchBase, code, msg := resolveClusterURL(ctx, issuer)
+	if code != 0 {
+		return nil, fmt.Errorf("%s", msg)
+	}
+	u := strings.TrimRight(fetchBase, "/") + "/api/collections/persona/records?" + url.Values{
 		"filter":  {fmt.Sprintf(`user=%q`, uid)},
 		"perPage": {"1"},
 	}.Encode()
