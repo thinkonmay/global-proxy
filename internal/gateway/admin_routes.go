@@ -61,9 +61,6 @@ func wrapHostRouter(public http.Handler, cfg *config.Config, gate *admingate.Gat
 
 const grafanaProxyUserHeader = "X-WEBAUTH-USER"
 
-// grafanaSessionCookies are set by Grafana after auth.proxy login-token minting on /login.
-var grafanaSessionCookies = []string{"grafana_session", "grafana_sess"}
-
 func registerGrafanaHost(router *admingate.HostRouter, cfg *config.Config, gate *admingate.Gate) {
 	host := cfg.Admin.Hosts.Grafana
 	upstreamURL := cfg.Admin.Upstreams.Grafana
@@ -84,55 +81,8 @@ func registerGrafanaHost(router *admingate.HostRouter, cfg *config.Config, gate 
 		slog.Error("admin upstream invalid", "host", host, "url", upstreamURL)
 		return
 	}
-	upstream := wrapGrafanaSessionBootstrap(proxy)
+	upstream := newGrafanaSessionMiddleware(upstreamURL, proxyUser, proxy)
 	router.Register(host, newAdminHostHandler(gate, upstream))
-}
-
-// wrapGrafanaSessionBootstrap redirects browser GETs to /login until Grafana sets
-// grafana_session. With enable_login_token, the cookie is minted on /login (not /).
-// Without this, auth.proxy authenticates API calls but the SPA has no session token
-// and POST /api/user/auth-tokens/rotate loops with 401 "user token not found".
-func wrapGrafanaSessionBootstrap(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if shouldBootstrapGrafanaSession(r) {
-			target := "/login"
-			if q := r.URL.RawQuery; q != "" {
-				target += "?" + q
-			}
-			http.Redirect(w, r, target, http.StatusFound)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func shouldBootstrapGrafanaSession(r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	path := r.URL.Path
-	switch {
-	case path == "/login":
-		return false
-	case strings.HasPrefix(path, "/public/"):
-		return false
-	case strings.HasPrefix(path, "/avatar/"):
-		return false
-	case strings.HasPrefix(path, "/api/"):
-		return false
-	case strings.HasPrefix(path, "/apis/"):
-		return false
-	}
-	return !hasGrafanaSessionCookie(r)
-}
-
-func hasGrafanaSessionCookie(r *http.Request) bool {
-	for _, name := range grafanaSessionCookies {
-		if _, err := r.Cookie(name); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func registerAdminHost(router *admingate.HostRouter, host, upstreamURL string, gate *admingate.Gate, rt http.RoundTripper) {
