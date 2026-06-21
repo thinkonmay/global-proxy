@@ -62,6 +62,9 @@ func (m *grafanaSessionMiddleware) needsMint(r *http.Request) bool {
 	if grafanaStaticOrAPIPath(r.URL.Path) {
 		return false
 	}
+	if r.URL.Query().Get("grafana_relogin") == "1" {
+		return true
+	}
 	return !hasValidGrafanaSession(r)
 }
 
