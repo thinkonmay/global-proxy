@@ -25,7 +25,7 @@ func DefaultConfig() Config {
 		Enabled:          true,
 		OWASPCRS:         true,
 		RequestBodyLimit: 10 << 20,
-		SkipPaths:        []string{"/storage/v1/"},
+		SkipPaths:        []string{"/storage/v1/", "/api/global_rpc", "/api/pwa/global_rpc"},
 	}
 }
 

@@ -309,13 +309,37 @@ func mergeSupabaseKeys(cfg *Config) {
 	mergeCorazaDefaults(&cfg.WAF.Coraza)
 }
 
+func defaultCorazaSkipPaths() []string {
+	return []string{
+		"/storage/v1/",
+		"/api/global_rpc",
+		"/api/pwa/global_rpc",
+	}
+}
+
+func mergeCorazaSkipPaths(existing, defaults []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(defaults))
+	out := make([]string, 0, len(existing)+len(defaults))
+	for _, paths := range [][]string{existing, defaults} {
+		for _, p := range paths {
+			if p == "" {
+				continue
+			}
+			if _, ok := seen[p]; ok {
+				continue
+			}
+			seen[p] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func mergeCorazaDefaults(c *Coraza) {
 	if c.RequestBodyLimit <= 0 {
 		c.RequestBodyLimit = 10 << 20
 	}
-	if len(c.SkipPaths) == 0 {
-		c.SkipPaths = []string{"/storage/v1/"}
-	}
+	c.SkipPaths = mergeCorazaSkipPaths(c.SkipPaths, defaultCorazaSkipPaths())
 }
 
 func splitCommaTrim(s string) []string {

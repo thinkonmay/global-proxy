@@ -61,3 +61,31 @@ func TestDecodeEncodeRPCRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// wireLikeWebCryptoClient builds salt+iv+ciphertext using a 12-byte GCM nonce in the
+// 16-byte IV wire slot (matches website/utils/crypto.ts and gateway EncryptJSON).
+func wireLikeWebCryptoClient(t *testing.T, v any, password string) []byte {
+	t.Helper()
+	wire, err := EncryptJSON(v, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire
+}
+
+func TestDecodeRPCLikeWebCryptoClient(t *testing.T) {
+	req := Request{
+		RPC:         "get_user",
+		Issuer:      "https://pb.example",
+		Args:        json.RawMessage(`{"email":"a@b.c"}`),
+		ResponseKey: "resp-key-1234567890123456",
+	}
+	wire := wireLikeWebCryptoClient(t, req, PasswordL2(DefaultPassword1()))
+	dec, err := DecodeRPC(Shuffle(wire), DefaultPassword1())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.RPC != req.RPC {
+		t.Fatalf("rpc mismatch: %q", dec.RPC)
+	}
+}
