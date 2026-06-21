@@ -55,7 +55,6 @@ func (h *Handler) StartUsageCollector(ctx context.Context, cfg *config.Config, l
 		h.eventBus,
 		log,
 		usage.Options{
-			ShadowMode:    uc.ShadowMode,
 			TickInterval:  every,
 			AddonInterval: addonEvery,
 			SessionMins:   uc.SessionMinutes,
@@ -71,7 +70,6 @@ func (h *Handler) StartUsageCollector(ctx context.Context, cfg *config.Config, l
 	log.Info("usage collector started in worker",
 		"session_every", every,
 		"addon_every", addonEvery,
-		"shadow", uc.ShadowMode,
 		"session_minutes", uc.SessionMinutes,
 	)
 	return nil

@@ -82,7 +82,7 @@ func main() {
 			PollEvery: every,
 			Providers: payment.ConfigFromGateway(cfg.Payment),
 		}, slog.Default())
-		pay.Run(ctx, cfg.Payment.CheckoutEnabled, cfg.Payment.PollerEnabled)
+		pay.Run(ctx)
 	}
 
 	slog.Info("worker started")

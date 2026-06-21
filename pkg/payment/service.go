@@ -55,15 +55,11 @@ func NewPoller(pr *postgrest.Client, cfg Config, log *slog.Logger) *Service {
 }
 
 // Run starts checkout backfill and provider status polling until ctx is cancelled.
-func (s *Service) Run(ctx context.Context, checkoutEnabled, pollerEnabled bool) {
-	if checkoutEnabled {
-		s.log.Info("payment checkout worker started", "every", s.pollEvery)
-		go s.runCheckoutLoop(ctx)
-	}
-	if pollerEnabled {
-		s.log.Info("payment status poller started", "every", s.pollEvery)
-		go s.runPollLoop(ctx)
-	}
+func (s *Service) Run(ctx context.Context) {
+	s.log.Info("payment checkout worker started", "every", s.pollEvery)
+	go s.runCheckoutLoop(ctx)
+	s.log.Info("payment status poller started", "every", s.pollEvery)
+	go s.runPollLoop(ctx)
 }
 
 func (s *Service) runCheckoutLoop(ctx context.Context) {

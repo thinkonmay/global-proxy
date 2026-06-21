@@ -18,7 +18,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 )
 
-func TestCollectorTickShadowPublishesAnalytics(t *testing.T) {
+func TestCollectorTickPublishesAnalyticsAndBills(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +63,11 @@ func TestCollectorTickShadowPublishesAnalytics(t *testing.T) {
 			rpcCalls++
 			rpcMu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
+		case r.URL.Path == "/rpc/increment_subscription_data_usage":
+			rpcMu.Lock()
+			rpcCalls++
+			rpcMu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -81,7 +86,6 @@ func TestCollectorTickShadowPublishesAnalytics(t *testing.T) {
 	})
 
 	collector := NewCollector(cache, NewCatalog(pr, time.Minute), dedup, pr, eventBus, nil, Options{
-		ShadowMode:   true,
 		TickInterval: 5 * time.Minute,
 		SessionMins:  5,
 	})
@@ -96,8 +100,8 @@ func TestCollectorTickShadowPublishesAnalytics(t *testing.T) {
 	rpcMu.Lock()
 	calls := rpcCalls
 	rpcMu.Unlock()
-	if calls != 0 {
-		t.Fatalf("shadow mode rpc calls = %d", calls)
+	if calls == 0 {
+		t.Fatalf("expected billing rpc calls, got %d", calls)
 	}
 
 	pubMu.Lock()

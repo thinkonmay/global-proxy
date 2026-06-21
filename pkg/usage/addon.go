@@ -88,14 +88,12 @@ func (c *Collector) processAppAccessRows(ctx context.Context, rows []cluster.App
 			stats.skippedDedup++
 			continue
 		}
-		if !c.shadowMode {
-			if err := c.pr.RPC(ctx, "sync_addon_app_access_usage", map[string]any{
-				"p_email": row.Email, "p_usage": row.Usage,
-			}, nil); err != nil {
-				return err
-			}
-			stats.billed++
+		if err := c.pr.RPC(ctx, "sync_addon_app_access_usage", map[string]any{
+			"p_email": row.Email, "p_usage": row.Usage,
+		}, nil); err != nil {
+			return err
 		}
+		stats.billed++
 		stats.events++
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, Metric: "app_access.units",
@@ -119,14 +117,12 @@ func (c *Collector) processBucketRows(ctx context.Context, rows []cluster.Bucket
 			stats.skippedDedup++
 			continue
 		}
-		if !c.shadowMode {
-			if err := c.pr.RPC(ctx, "increment_addon_bucket_usage", map[string]any{
-				"p_email": row.Email, "p_size_mb": row.SizeMB,
-			}, nil); err != nil {
-				return err
-			}
-			stats.billed++
+		if err := c.pr.RPC(ctx, "increment_addon_bucket_usage", map[string]any{
+			"p_email": row.Email, "p_size_mb": row.SizeMB,
+		}, nil); err != nil {
+			return err
 		}
+		stats.billed++
 		stats.events++
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, SessionID: row.BucketName,
@@ -147,14 +143,12 @@ func (c *Collector) processLLMRows(ctx context.Context, rows []cluster.LLMUsage,
 			stats.skippedDedup++
 			continue
 		}
-		if !c.shadowMode {
-			if err := c.pr.RPC(ctx, "sync_addon_llm_usage", map[string]any{
-				"p_email": row.Email, "p_usage": row.Usage,
-			}, nil); err != nil {
-				return err
-			}
-			stats.billed++
+		if err := c.pr.RPC(ctx, "sync_addon_llm_usage", map[string]any{
+			"p_email": row.Email, "p_usage": row.Usage,
+		}, nil); err != nil {
+			return err
 		}
+		stats.billed++
 		stats.events++
 		_ = busPublish(ctx, c, model.UsageMsg{
 			EventTime: at, UserEmail: row.Email, Metric: "llm.units",

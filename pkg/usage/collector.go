@@ -20,14 +20,12 @@ type Collector struct {
 	pr           *postgrest.Client
 	bus          bus.Client
 	log          *slog.Logger
-	shadowMode    bool
 	tickInterval  time.Duration
 	addonInterval time.Duration
 	sessionMins   int
 }
 
 type Options struct {
-	ShadowMode    bool
 	TickInterval  time.Duration
 	AddonInterval time.Duration
 	SessionMins   int
@@ -64,7 +62,6 @@ func NewCollector(
 		pr:            pr,
 		bus:           eventBus,
 		log:           log,
-		shadowMode:    opts.ShadowMode,
 		tickInterval:  interval,
 		addonInterval: addonEvery,
 		sessionMins:   mins,
@@ -76,7 +73,6 @@ func (c *Collector) Run(ctx context.Context) {
 	c.log.Info("usage collector started",
 		"session_every", c.tickInterval,
 		"addon_every", c.addonInterval,
-		"shadow", c.shadowMode,
 		"session_minutes", c.sessionMins,
 	)
 	sessionTicker := time.NewTicker(c.tickInterval)
@@ -111,7 +107,6 @@ func (c *Collector) tickAddon(ctx context.Context) {
 		"events", stats.events,
 		"skipped_dedup", stats.skippedDedup,
 		"errors", stats.errors,
-		"shadow", c.shadowMode,
 		"bucket", bucket,
 	)
 }
@@ -231,21 +226,18 @@ func (c *Collector) tick(ctx context.Context) {
 		"skipped_dedup", stats.skippedDedup,
 		"skipped_owner", stats.skippedOwner,
 		"errors", stats.errors,
-		"shadow", c.shadowMode,
 		"bucket", bucket,
 	)
 }
 
 func (c *Collector) applySessionUsage(ctx context.Context, email, cluster string, tick SessionTick, at time.Time, bucket int64, stats *tickStats) error {
-	if !c.shadowMode {
-		if err := c.pr.RPC(ctx, "increment_subscription_usage", map[string]any{
-			"p_email":   email,
-			"p_minutes": c.sessionMins,
-		}, nil); err != nil {
-			return err
-		}
-		stats.sessionBilled++
+	if err := c.pr.RPC(ctx, "increment_subscription_usage", map[string]any{
+		"p_email":   email,
+		"p_minutes": c.sessionMins,
+	}, nil); err != nil {
+		return err
 	}
+	stats.sessionBilled++
 	stats.events++
 	return bus.Publish(ctx, c.bus, model.TopicUsage, model.UsageMsg{
 		EventTime:  at,
@@ -262,15 +254,13 @@ func (c *Collector) applySessionUsage(ctx context.Context, email, cluster string
 }
 
 func (c *Collector) applyVolumeUsage(ctx context.Context, email, cluster string, tick VolumeTick, at time.Time, bucket int64, stats *tickStats) error {
-	if !c.shadowMode {
-		if err := c.pr.RPC(ctx, "increment_subscription_data_usage", map[string]any{
-			"p_email":    email,
-			"p_size_gb":  tick.SizeGB,
-		}, nil); err != nil {
-			return err
-		}
-		stats.volumeBilled++
+	if err := c.pr.RPC(ctx, "increment_subscription_data_usage", map[string]any{
+		"p_email":    email,
+		"p_size_gb":  tick.SizeGB,
+	}, nil); err != nil {
+		return err
 	}
+	stats.volumeBilled++
 	stats.events++
 	return bus.Publish(ctx, c.bus, model.TopicUsage, model.UsageMsg{
 		EventTime:  at,

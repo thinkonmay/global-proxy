@@ -61,7 +61,6 @@ type UsageCollector struct {
 	Enabled        bool   `mapstructure:"enabled"`
 	Every          string `mapstructure:"every"`
 	AddonEvery     string `mapstructure:"addonEvery"`
-	ShadowMode     bool   `mapstructure:"shadowMode"`
 	SessionMinutes int    `mapstructure:"sessionMinutes"`
 }
 
@@ -81,10 +80,8 @@ type Persona struct {
 // Replaces Postgres get_*_data, on_transaction_driver_v2, and verify_all_transactions_v2 HTTP.
 // Provider credentials are loaded from .env via APP_PAYMENT_* (not config.yaml).
 type Payment struct {
-	Enabled         bool   `mapstructure:"enabled"`
-	CheckoutEnabled bool   `mapstructure:"checkoutEnabled"`
-	PollerEnabled   bool   `mapstructure:"pollerEnabled"`
-	PollEvery       string `mapstructure:"pollEvery"`
+	Enabled   bool   `mapstructure:"enabled"`
+	PollEvery string `mapstructure:"pollEvery"`
 	Stripe          struct {
 		SecretKey string `mapstructure:"secretKey"`
 	} `mapstructure:"stripe"`
@@ -228,7 +225,6 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("usageCollector.enabled", false)
 	v.SetDefault("usageCollector.every", "5m")
 	v.SetDefault("usageCollector.addonEvery", "1h")
-	v.SetDefault("usageCollector.shadowMode", false)
 	v.SetDefault("usageCollector.sessionMinutes", 5)
 	v.SetDefault("persona.enabled", false)
 	v.SetDefault("persona.every", "1m")
@@ -236,8 +232,6 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("persona.concurrent", 10)
 	v.SetDefault("persona.rybbitMinSpacing", "250ms")
 	v.SetDefault("payment.enabled", false)
-	v.SetDefault("payment.checkoutEnabled", true)
-	v.SetDefault("payment.pollerEnabled", true)
 	v.SetDefault("payment.pollEvery", "10s")
 	v.SetDefault("metrics.scrapeCacheSeconds", 10)
 	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
