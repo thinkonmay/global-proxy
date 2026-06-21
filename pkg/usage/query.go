@@ -52,20 +52,20 @@ func (q *Querier) Heatmap(ctx context.Context, email string, days int) ([]Heatma
 // DailySessionCount counts session.minutes events today (vm_snapshoot_v4 row parity).
 func (q *Querier) DailySessionCount(ctx context.Context, email string) (int, error) {
 	var count uint64
-	err := q.ch.Select(ctx, &count, `
+	err := q.ch.QueryRow(ctx, `
 		SELECT count()
 		FROM usage_events
 		WHERE user_email = ?
 		  AND metric = 'session.minutes'
 		  AND toDate(event_time) = today()
-	`, email)
+	`, email).Scan(&count)
 	return int(count), err
 }
 
 // PlayStreak counts consecutive calendar days with session usage ending today.
 func (q *Querier) PlayStreak(ctx context.Context, email string) (int, error) {
 	var streak uint64
-	err := q.ch.Select(ctx, &streak, `
+	err := q.ch.QueryRow(ctx, `
 		WITH daily AS (
 			SELECT DISTINCT toDate(event_time) AS d
 			FROM usage_events
@@ -80,7 +80,7 @@ func (q *Querier) PlayStreak(ctx context.Context, email string) (int, error) {
 		SELECT count() AS streak
 		FROM numbered
 		WHERE grp = (SELECT grp FROM numbered WHERE d = today() LIMIT 1)
-	`, email)
+	`, email).Scan(&streak)
 	return int(streak), err
 }
 

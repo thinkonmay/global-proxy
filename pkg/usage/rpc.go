@@ -38,11 +38,11 @@ func MergeMissionUsageProgress(ctx context.Context, q MissionProgressReader, ema
 	}
 	daily, err := q.DailySessionCount(ctx, email)
 	if err != nil {
-		return nil, err
+		return raw, nil
 	}
 	streak, err := q.PlayStreak(ctx, email)
 	if err != nil {
-		return nil, err
+		return raw, nil
 	}
 	for i := range rows {
 		switch rows[i].Type {

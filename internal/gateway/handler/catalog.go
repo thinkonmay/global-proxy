@@ -559,14 +559,24 @@ func (h *CatalogHandler) SearchStoresBatch(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		Texts []string `json:"texts"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Texts) == 0 {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "texts required"})
+		return
+	}
+	texts := make([]string, 0, len(body.Texts))
+	for _, text := range body.Texts {
+		if t := strings.TrimSpace(text); t != "" {
+			texts = append(texts, t)
+		}
+	}
+	if len(texts) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"data": []any{}})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), catalogQueryTimeout)
 	defer cancel()
 	var rows []map[string]any
-	if err := h.pr.RPC(ctx, "search_stores", map[string]any{"texts": body.Texts}, &rows); err != nil {
+	if err := h.pr.RPC(ctx, "search_stores", map[string]any{"texts": texts}, &rows); err != nil {
 		writePostgrestErr(w, err)
 		return
 	}

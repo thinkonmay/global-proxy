@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -42,6 +43,27 @@ func TestMergeMissionUsageProgress(t *testing.T) {
 	if rows[2].Progress != 2 {
 		t.Fatalf("referral unchanged: %+v", rows[2])
 	}
+}
+
+func TestMergeMissionUsageProgressCHUnavailable(t *testing.T) {
+	raw := json.RawMessage(`[{"id":1,"code":"DAILY","category":"play","type":"DAILY_SESSION","target_value":3,"reward_stars":5,"title_key":"t","description_key":"d","icon":"🎯","is_repeatable":true,"progress":1,"status":"in_progress"}]`)
+	out, err := MergeMissionUsageProgress(context.Background(), &fakeMissionProgressErr{}, "u@example.com", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(raw) {
+		t.Fatalf("expected RPC fallback, got %s", out)
+	}
+}
+
+type fakeMissionProgressErr struct{}
+
+func (f *fakeMissionProgressErr) DailySessionCount(_ context.Context, _ string) (int, error) {
+	return 0, errors.New("clickhouse down")
+}
+
+func (f *fakeMissionProgressErr) PlayStreak(_ context.Context, _ string) (int, error) {
+	return 0, errors.New("clickhouse down")
 }
 
 func TestUsageRPCEmail(t *testing.T) {
