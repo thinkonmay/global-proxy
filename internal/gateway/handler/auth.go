@@ -6,10 +6,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 )
 
 const pbAuthTimeout = 3 * time.Second
+
+var pbIssuerResolver pocketbase.IssuerResolver
+
+// ConfigurePocketBaseAuth sets the issuer→internal URL resolver for user token
+// verification (auth-refresh). Call once at gateway startup.
+func ConfigurePocketBaseAuth(cfg config.PocketBase) {
+	pbIssuerResolver = pocketbase.NewIssuerResolver(cfg.URL, cfg.InternalURL)
+}
 
 func issuerFromRequest(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("issuer"))
@@ -27,7 +36,7 @@ func requireUser(ctx context.Context, r *http.Request, rt http.RoundTripper) (em
 	}
 	ctx, cancel := context.WithTimeout(ctx, pbAuthTimeout)
 	defer cancel()
-	recordEmail, err := pocketbase.UserEmailFromRefresh(ctx, issuer, authHeader, rt)
+	recordEmail, err := pocketbase.UserEmailFromRefresh(ctx, pbIssuerResolver, issuer, authHeader, rt)
 	if err != nil {
 		return "", false, http.StatusUnauthorized, "pocketbase auth refresh failed"
 	}

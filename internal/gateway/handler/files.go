@@ -154,7 +154,7 @@ func (h *FilesHandler) resolveBucket(r *http.Request) (string, int, string) {
 	base := clusterBaseURL(cluster)
 	ctx, cancel := context.WithTimeout(r.Context(), grantTimeout)
 	defer cancel()
-	email, err := pocketbase.UserEmailFromRefresh(ctx, base, authHeader, h.transport)
+	email, err := pocketbase.UserEmailFromRefresh(ctx, pbIssuerResolver, base, authHeader, h.transport)
 	if err != nil {
 		return "", http.StatusUnauthorized, "invalid auth"
 	}

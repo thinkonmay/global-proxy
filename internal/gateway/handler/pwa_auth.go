@@ -31,7 +31,7 @@ func pwaAuthFromRequest(ctx context.Context, rt http.RoundTripper, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(ctx, pwaAuthTimeout)
 	defer cancel()
-	resp, err := pocketbase.RefreshAuth(ctx, issuer, "users", authHeader, rt)
+	resp, err := pocketbase.RefreshAuth(ctx, pbIssuerResolver, issuer, "users", authHeader, rt)
 	if err != nil {
 		return pwaUserAuth{}, http.StatusUnauthorized, "pocketbase auth refresh failed"
 	}
