@@ -50,9 +50,11 @@ func wrapHostRouter(public http.Handler, cfg *config.Config, gate *admingate.Gat
 	if gate == nil {
 		return router
 	}
-	registerAdminHost(router, cfg.Admin.Hosts.Studio, cfg.Admin.Upstreams.Studio, gate, rt)
+	// Dashboard upstreams use DefaultTransport: their HTTP 5xx (e.g. Grafana
+	// /api/gnet/* marketplace proxy) must not trip the global outbound breaker.
+	registerAdminHost(router, cfg.Admin.Hosts.Studio, cfg.Admin.Upstreams.Studio, gate, http.DefaultTransport)
 	registerAnalyticsHost(router, cfg, gate, rt)
-	registerAdminHost(router, cfg.Admin.Hosts.Grafana, cfg.Admin.Upstreams.Grafana, gate, rt)
+	registerAdminHost(router, cfg.Admin.Hosts.Grafana, cfg.Admin.Upstreams.Grafana, gate, http.DefaultTransport)
 	return router
 }
 
