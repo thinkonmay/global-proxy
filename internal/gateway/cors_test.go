@@ -87,3 +87,22 @@ func TestBuildAllowedOriginsIncludesPort(t *testing.T) {
 		t.Fatal("missing http origin with port")
 	}
 }
+
+func TestBuildAllowedOriginsUsesPublicURLPortOverTLSListenPort(t *testing.T) {
+	cfg := &config.Config{
+		TLS: config.TLS{
+			HTTPSPort: "443",
+			Hosts:     []string{"haiphong.thinkmay.net", "studio.haiphong.thinkmay.net"},
+		},
+		Gateway: config.Gateway{PublicURL: "https://haiphong.thinkmay.net:4433"},
+	}
+	allowed := buildAllowedOrigins(cfg)
+	for _, origin := range []string{
+		"https://haiphong.thinkmay.net:4433",
+		"https://studio.haiphong.thinkmay.net:4433",
+	} {
+		if _, ok := allowed[origin]; !ok {
+			t.Fatalf("missing allowed origin %q", origin)
+		}
+	}
+}

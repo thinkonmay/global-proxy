@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/config"
@@ -32,15 +33,30 @@ func stripUpstreamCORS(h http.Header) {
 	}
 }
 
-func buildAllowedOrigins(cfg *config.Config) map[string]struct{} {
-	allowed := make(map[string]struct{})
-	if cfg == nil {
-		return allowed
+// corsHTTPSPort is the port browsers use in Origin (gateway.publicURL), not the
+// in-container listen port (tls.httpsPort, often 443 while compose publishes 4433).
+func corsHTTPSPort(cfg *config.Config) string {
+	if u := strings.TrimSpace(cfg.Gateway.PublicURL); u != "" {
+		if parsed, err := url.Parse(u); err == nil && parsed.Scheme == "https" {
+			if p := parsed.Port(); p != "" {
+				return p
+			}
+			return "443"
+		}
 	}
 	httpsPort := cfg.TLS.HTTPSPort
 	if httpsPort == "" {
 		httpsPort = "443"
 	}
+	return httpsPort
+}
+
+func buildAllowedOrigins(cfg *config.Config) map[string]struct{} {
+	allowed := make(map[string]struct{})
+	if cfg == nil {
+		return allowed
+	}
+	httpsPort := corsHTTPSPort(cfg)
 	httpPort := cfg.TLS.HTTPPort
 	if httpPort == "" {
 		httpPort = "80"

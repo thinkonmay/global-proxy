@@ -29,11 +29,16 @@ func mergeAdminDefaults(cfg *Config) {
 	if a.Upstreams.Studio == "" {
 		a.Upstreams.Studio = cfg.Upstreams.Studio
 	}
-	if a.BasicAuthUser == "" {
-		a.BasicAuthUser = cfg.Supabase.DashboardUser
-	}
-	if a.BasicAuthPass == "" {
-		a.BasicAuthPass = cfg.Supabase.DashboardPassword
+	if a.BasicAuthEnabled {
+		if a.BasicAuthUser == "" {
+			a.BasicAuthUser = cfg.Supabase.DashboardUser
+		}
+		if a.BasicAuthPass == "" {
+			a.BasicAuthPass = cfg.Supabase.DashboardPassword
+		}
+	} else {
+		a.BasicAuthUser = ""
+		a.BasicAuthPass = ""
 	}
 	if len(a.AllowedIPs) == 0 && len(cfg.WAF.AllowedIPs) > 0 {
 		// Ops IPs often overlap catalog WAF until dedicated admin list is configured.
