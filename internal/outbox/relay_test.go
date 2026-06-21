@@ -29,9 +29,10 @@ func TestParsePayload(t *testing.T) {
 func TestPollOncePublishesAndMarksPublished(t *testing.T) {
 	var mu sync.Mutex
 	marked := []int64{}
+	released := []int64{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/rpc/fetch_unpublished_outbox":
+		case "/rpc/claim_unpublished_outbox":
 			_ = json.NewEncoder(w).Encode([]Row{{
 				ID:    7,
 				Topic: "jobs.volume",
@@ -42,6 +43,13 @@ func TestPollOncePublishesAndMarksPublished(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			mu.Lock()
 			marked = append(marked, int64(body["p_id"].(float64)))
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		case "/rpc/release_outbox_claim":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			released = append(released, int64(body["p_id"].(float64)))
 			mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -69,5 +77,30 @@ func TestPollOncePublishesAndMarksPublished(t *testing.T) {
 	defer mu.Unlock()
 	if len(marked) != 1 || marked[0] != 7 {
 		t.Fatalf("marked ids: %v", marked)
+	}
+	if len(released) != 0 {
+		t.Fatalf("unexpected release: %v", released)
+	}
+}
+
+func TestPollOnceReleasesClaimOnPublishFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc/claim_unpublished_outbox":
+			_ = json.NewEncoder(w).Encode([]Row{{ID: 9, Topic: "jobs.volume", Payload: json.RawMessage(`{}`)}})
+		case "/rpc/release_outbox_claim":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	closed := busmemory.New(nil)
+	_ = closed.Close()
+
+	if err := PollOnce(context.Background(), pr, closed, 10); err == nil {
+		t.Fatal("expected publish failure")
 	}
 }

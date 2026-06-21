@@ -39,7 +39,8 @@ func (h *Handler) Init() {
 		func(ctx context.Context, env model.VolumeJobEnvelope) error {
 			return h.volumes.handle(ctx, env)
 		},
-		bus.WithConcurrency(100),
+		bus.WithConcurrency(16),
+		bus.WithMaxDeliver(5),
 	)
 
 	bus.SubscribeBatch(
@@ -50,5 +51,7 @@ func (h *Handler) Init() {
 		bus.WithBatchSize(5000),
 		bus.WithLinger(2*time.Second),
 		bus.WithConcurrency(1),
+		bus.WithDeliverNew(),
+		bus.WithoutDLQ(),
 	)
 }

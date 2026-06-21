@@ -9,12 +9,30 @@ CREATE TABLE IF NOT EXISTS processed_message (
 
 CREATE OR REPLACE FUNCTION register_message(p_id text)
 RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  v_status text;
+  v_updated timestamptz;
 BEGIN
-  INSERT INTO processed_message (id) VALUES (p_id) ON CONFLICT (id) DO NOTHING;
-  IF FOUND THEN
+  SELECT status, updated_at INTO v_status, v_updated
+  FROM processed_message WHERE id = p_id;
+
+  IF NOT FOUND THEN
+    INSERT INTO processed_message (id, status) VALUES (p_id, 'pending');
     RETURN 'acquired';
   END IF;
-  RETURN 'skip';
+
+  IF v_status = 'done' THEN
+    RETURN 'skip';
+  END IF;
+
+  IF v_status = 'pending' AND v_updated > now() - interval '2 minutes' THEN
+    RETURN 'skip';
+  END IF;
+
+  UPDATE processed_message
+  SET status = 'pending', updated_at = now()
+  WHERE id = p_id;
+  RETURN 'acquired';
 END $$;
 
 CREATE OR REPLACE FUNCTION mark_done(p_id text) RETURNS void LANGUAGE sql AS $$

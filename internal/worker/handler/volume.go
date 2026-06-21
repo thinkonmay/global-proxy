@@ -37,32 +37,50 @@ func (h *volumeHandler) handle(ctx context.Context, env model.VolumeJobEnvelope)
 	key := fmt.Sprintf("outbox-%d", env.OutboxID)
 	return h.idem.Run(ctx, key, func(ctx context.Context) error {
 		p := env.Payload
+		var err error
 		switch p.Command {
 		case "create volume v7", "create volume v6":
-			return h.createVolume(ctx, p)
+			err = h.createVolume(ctx, p)
 		case "update volume v7":
-			return h.updateVolume(ctx, p)
+			err = h.updateVolume(ctx, p)
 		case "delete volume v5":
-			return h.deleteVolume(ctx, p)
+			err = h.deleteVolume(ctx, p)
 		case "grant app_access", "grant buckets", "grant llm",
 			"unmap app_access", "unmap buckets", "unmap llm",
 			"reset app_access", "reset llm":
-			return h.handleGrantJob(ctx, p)
+			err = h.handleGrantJob(ctx, p)
 		default:
-			slog.Info("skip unsupported command", "command", p.Command)
+			if patchErr := h.patchJob(ctx, p.JobID, false, jobErrorResult("unsupported command: "+p.Command)); patchErr != nil {
+				return patchErr
+			}
 			return nil
 		}
+		if err == nil || isPermanentDispatchError(err) {
+			return nil
+		}
+		return err
 	})
+}
+
+func isPermanentDispatchError(err error) bool {
+	var pe *pocketbase.Error
+	if errors.As(err, &pe) {
+		return pe.Status >= 400 && pe.Status < 500 && pe.Status != http.StatusTooManyRequests
+	}
+	return false
 }
 
 func (h *volumeHandler) createVolume(ctx context.Context, p model.VolumeJobPayload) error {
 	baseURL, err := h.clusterURL(ctx, p.ClusterID)
 	if err != nil {
-		return err
+		return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
 	}
 	pb := h.pb.WithBaseURL(baseURL)
 	userID, err := h.ensurePBUser(ctx, pb, p.Email)
 	if err != nil {
+		if isPermanentDispatchError(err) {
+			return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+		}
 		return err
 	}
 
@@ -83,29 +101,44 @@ func (h *volumeHandler) createVolume(ctx context.Context, p model.VolumeJobPaylo
 	headers.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
 	var created map[string]any
 	err = pb.CreateRecord(ctx, "volumes", body, &created, pocketbase.WithHeaders(headers))
-	success := err == nil
-	var respBody []byte
 	if err != nil {
-		var pe *pocketbase.Error
-		if errors.As(err, &pe) {
-			respBody = pe.Body
-		} else {
-			respBody = jobErrorResult(err.Error())
+		if p.VolumeID != "" && h.volumeExistsByLocalID(ctx, pb, userID, p.VolumeID) {
+			return h.patchJob(ctx, p.JobID, true, jobExistsResult(p.VolumeID))
 		}
-	} else {
-		respBody, _ = json.Marshal(created)
+		return h.patchJobFromPBError(ctx, p.JobID, err)
 	}
-	return h.patchJob(ctx, p.JobID, success, respBody)
+	respBody, _ := json.Marshal(created)
+	return h.patchJob(ctx, p.JobID, true, respBody)
+}
+
+func (h *volumeHandler) volumeExistsByLocalID(ctx context.Context, pb *pocketbase.Client, userID, localID string) bool {
+	if localID == "" {
+		return false
+	}
+	q := url.Values{}
+	q.Set("filter", fmt.Sprintf(`(user~"%s" && local_id="%s")`, userID, localID))
+	var list struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := pb.ListRecords(ctx, "volumes", q, &list); err != nil {
+		return false
+	}
+	return len(list.Items) > 0
 }
 
 func (h *volumeHandler) updateVolume(ctx context.Context, p model.VolumeJobPayload) error {
 	baseURL, err := h.clusterURL(ctx, p.ClusterID)
 	if err != nil {
-		return err
+		return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
 	}
 	pb := h.pb.WithBaseURL(baseURL)
 	userID, err := h.ensurePBUser(ctx, pb, p.Email)
 	if err != nil {
+		if isPermanentDispatchError(err) {
+			return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+		}
 		return err
 	}
 
@@ -118,6 +151,9 @@ func (h *volumeHandler) updateVolume(ctx context.Context, p model.VolumeJobPaylo
 		} `json:"items"`
 	}
 	if err := pb.ListRecords(ctx, "volumes", q, &list); err != nil {
+		if isPermanentDispatchError(err) {
+			return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+		}
 		return err
 	}
 	if len(list.Items) == 0 {
@@ -145,31 +181,24 @@ func (h *volumeHandler) updateVolume(ctx context.Context, p model.VolumeJobPaylo
 	headers.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
 	var updated map[string]any
 	err = pb.UpdateRecord(ctx, "volumes", item.ID, map[string]any{"configuration": argCfg}, &updated, pocketbase.WithHeaders(headers))
-	success := err == nil
-	var respBody []byte
 	if err != nil {
-		var pe *pocketbase.Error
-		if errors.As(err, &pe) {
-			respBody = pe.Body
-		} else {
-			respBody = jobErrorResult(err.Error())
-		}
-	} else {
-		respBody, _ = json.Marshal(updated)
+		return h.patchJobFromPBError(ctx, p.JobID, err)
 	}
-	return h.patchJob(ctx, p.JobID, success, respBody)
+	respBody, _ := json.Marshal(updated)
+	return h.patchJob(ctx, p.JobID, true, respBody)
 }
 
-// deleteVolume replaces the v2-stubbed unmap_user_email_v2: it resolves the node
-// PocketBase user and deletes their volume record directly (G8, no DB HTTP).
 func (h *volumeHandler) deleteVolume(ctx context.Context, p model.VolumeJobPayload) error {
 	baseURL, err := h.clusterURL(ctx, p.ClusterID)
 	if err != nil {
-		return err
+		return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
 	}
 	pb := h.pb.WithBaseURL(baseURL)
 	userID, err := h.ensurePBUser(ctx, pb, p.Email)
 	if err != nil {
+		if isPermanentDispatchError(err) {
+			return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+		}
 		return err
 	}
 
@@ -181,6 +210,9 @@ func (h *volumeHandler) deleteVolume(ctx context.Context, p model.VolumeJobPaylo
 		} `json:"items"`
 	}
 	if err := pb.ListRecords(ctx, "volumes", q, &list); err != nil {
+		if isPermanentDispatchError(err) {
+			return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+		}
 		return err
 	}
 	if len(list.Items) == 0 {
@@ -190,13 +222,29 @@ func (h *volumeHandler) deleteVolume(ctx context.Context, p model.VolumeJobPaylo
 	headers := http.Header{}
 	headers.Set("Idempotency-Key", fmt.Sprintf("%d", p.JobID))
 	if err := pb.DeleteRecord(ctx, "volumes", list.Items[0].ID, pocketbase.WithHeaders(headers)); err != nil {
-		var pe *pocketbase.Error
-		if errors.As(err, &pe) {
-			return h.patchJob(ctx, p.JobID, false, pe.Body)
+		if pocketbase.IsNotFound(err) {
+			return h.patchJob(ctx, p.JobID, true, []byte(`{"deleted":true}`))
 		}
-		return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+		return h.patchJobFromPBError(ctx, p.JobID, err)
 	}
 	return h.patchJob(ctx, p.JobID, true, []byte(`{"deleted":true}`))
+}
+
+func (h *volumeHandler) patchJobFromPBError(ctx context.Context, jobID int64, err error) error {
+	var pe *pocketbase.Error
+	if errors.As(err, &pe) {
+		if patchErr := h.patchJob(ctx, jobID, false, pe.Body); patchErr != nil {
+			return patchErr
+		}
+		if isPermanentDispatchError(err) {
+			return nil
+		}
+		return err
+	}
+	if patchErr := h.patchJob(ctx, jobID, false, jobErrorResult(err.Error())); patchErr != nil {
+		return patchErr
+	}
+	return err
 }
 
 func (h *volumeHandler) patchJob(ctx context.Context, jobID int64, success bool, content []byte) error {
@@ -211,7 +259,11 @@ func (h *volumeHandler) patchJob(ctx context.Context, jobID int64, success bool,
 	}
 	q := url.Values{}
 	q.Set("id", fmt.Sprintf("eq.%d", jobID))
-	return h.pr.Update(ctx, "job", q, patch, nil)
+	if err := h.pr.Update(ctx, "job", q, patch, nil); err != nil {
+		slog.Error("patch job failed", "job_id", jobID, "err", err)
+		return err
+	}
+	return nil
 }
 
 func (h *volumeHandler) clusterURL(ctx context.Context, clusterID int64) (string, error) {
@@ -273,5 +325,10 @@ func randomPBPassword() (string, error) {
 
 func jobErrorResult(msg string) []byte {
 	b, _ := json.Marshal(map[string]string{"error": msg})
+	return b
+}
+
+func jobExistsResult(localID string) []byte {
+	b, _ := json.Marshal(map[string]any{"idempotent": true, "local_id": localID})
 	return b
 }

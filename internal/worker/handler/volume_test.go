@@ -369,14 +369,33 @@ func TestVolumeHandlerResetAppAccessJob(t *testing.T) {
 var null = json.RawMessage("null")
 
 func TestVolumeHandlerSkipsUnknownCommand(t *testing.T) {
-	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"})
+	var mu sync.Mutex
+	var jobPatch map[string]any
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
+			_ = json.NewDecoder(r.Body).Decode(&jobPatch)
+			mu.Lock()
+			w.WriteHeader(http.StatusNoContent)
+			mu.Unlock()
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer prSrv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
 	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})
 	vh := newVolumeHandler(idempotency.New(idempotency.NewMemStore()), pr, pb)
 	err := vh.handle(context.Background(), model.VolumeJobEnvelope{
 		OutboxID: 2,
-		Payload:  model.VolumeJobPayload{Command: "unknown"},
+		Payload:  model.VolumeJobPayload{Command: "unknown", JobID: 55},
 	})
 	if err != nil {
 		t.Fatalf("expected nil for unknown command, got %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if jobPatch == nil || jobPatch["success"] != false {
+		t.Fatalf("job patch: %v", jobPatch)
 	}
 }

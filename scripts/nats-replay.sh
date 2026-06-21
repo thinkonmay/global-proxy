@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
 # Republish messages from a JetStream DLQ subject back to the primary subject.
-# Usage: nats-replay jobs.volume.dlq jobs.volume
+#
+# Usage:
+#   ./scripts/nats-replay.sh jobs.volume.dlq jobs.volume
+#   NATS_URL=nats://localhost:4222 ./scripts/nats-replay.sh jobs.volume.dlq jobs.volume
+#
+# Requires: nats CLI (https://github.com/nats-io/natscli)
 set -euo pipefail
-DLQ="${1:?dlq subject}"
-PRIMARY="${2:?primary subject}"
+
+DLQ="${1:?dlq subject (e.g. jobs.volume.dlq)}"
+PRIMARY="${2:?primary subject (e.g. jobs.volume)}"
 NATS_URL="${NATS_URL:-nats://localhost:4222}"
-nats --server "$NATS_URL" stream view "${DLQ//./_}" --raw | while read -r line; do
+STREAM="${DLQ//./_}"
+
+echo "Replaying stream ${STREAM} (${DLQ}) -> ${PRIMARY} via ${NATS_URL}"
+
+count=0
+while IFS= read -r line; do
+  [[ -z "${line}" ]] && continue
   nats --server "$NATS_URL" pub "$PRIMARY" "$line"
-done
+  count=$((count + 1))
+done < <(nats --server "$NATS_URL" stream view "$STREAM" --raw 2>/dev/null || true)
+
+echo "Replayed ${count} message(s)"

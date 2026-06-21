@@ -16,17 +16,17 @@ import (
 )
 
 const (
-	fetchWait    = 5 * time.Second  // poll bound so Close is noticed when idle
-	retryBackoff = time.Second      // wait after a real fetch error
-	ackWait      = 30 * time.Second // redelivery window for un-acked msgs
+	fetchWait       = 5 * time.Second
+	retryBackoff    = time.Second
+	ackWait         = 30 * time.Second
+	defaultMaxDeliver = 5
 )
 
 var _ bus.Client = (*Nats)(nil)
 
 // Nats is a Client backed by NATS JetStream: one durable pull consumer per
-// (topic, group). A message is Ack'd only after the handler returns nil; a
-// handler error Naks it for redelivery (at-least-once). No DLQ — a message that
-// never succeeds redelivers until its handler acks it.
+// (topic, group). Handlers return nil to Ack; non-nil Nak for redelivery.
+// After MaxDeliver failures the payload is copied to <topic>.dlq and Ack'd.
 type Nats struct {
 	nc     *nats.Conn
 	js     jetstream.JetStream
@@ -36,7 +36,7 @@ type Nats struct {
 	wg     sync.WaitGroup
 
 	mu      sync.Mutex
-	streams map[string]struct{} // ensured stream names
+	streams map[string]struct{}
 }
 
 // New dials the NATS URLs and wraps JetStream as a bus.
@@ -62,13 +62,10 @@ func New(urls []string, logger *slog.Logger) (*Nats, error) {
 	return n, nil
 }
 
-// streamName maps a topic (subject — may contain dots) to a valid JetStream
-// stream name (no dots/spaces/wildcards).
 func streamName(topic string) string {
 	return strings.NewReplacer(".", "_", "*", "_", ">", "_", " ", "_").Replace(topic)
 }
 
-// ensureStream idempotently creates a stream covering the topic subject.
 func (n *Nats) ensureStream(ctx context.Context, topic string) error {
 	name := streamName(topic)
 	n.mu.Lock()
@@ -113,15 +110,22 @@ func (n *Nats) consume(topic, group string, h bus.Handler, opts bus.SubscribeOpt
 		n.logger.Error("bus: nats ensure stream", "topic", topic, "err", err)
 		return
 	}
-	// A durable shared by N subscribers = competing consumers within a group.
+
+	maxDeliver := opts.MaxDeliver
+	if maxDeliver < 1 {
+		maxDeliver = defaultMaxDeliver
+	}
+	deliverPolicy := jetstream.DeliverAllPolicy
+	if opts.DeliverNew {
+		deliverPolicy = jetstream.DeliverNewPolicy
+	}
+
 	cons, err := n.js.CreateOrUpdateConsumer(n.ctx, streamName(topic), jetstream.ConsumerConfig{
-		Durable:   group,
-		AckPolicy: jetstream.AckExplicitPolicy,
-		AckWait:   ackWait,
-		// Deliver only messages published after the durable is first created —
-		// matches the redis backend ($ start). The durable then resumes from its
-		// last ack across restarts.
-		DeliverPolicy: jetstream.DeliverNewPolicy,
+		Durable:       group,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		AckWait:       ackWait,
+		DeliverPolicy: deliverPolicy,
+		MaxDeliver:    maxDeliver,
 	})
 	if err != nil {
 		n.logger.Error("bus: nats consumer", "topic", topic, "group", group, "err", err)
@@ -133,9 +137,6 @@ func (n *Nats) consume(topic, group string, h bus.Handler, opts bus.SubscribeOpt
 		wait = opts.Linger
 	}
 
-	// Concurrency caps the handler batches in flight (sem); 0 leaves it uncapped
-	// (a goroutine per fetched batch). A bounded sem also backpressures the fetch
-	// loop, so the pool can't be outrun.
 	var sem chan struct{}
 	if opts.Concurrency >= 1 {
 		sem = make(chan struct{}, opts.Concurrency)
@@ -165,30 +166,44 @@ func (n *Nats) consume(topic, group string, h bus.Handler, opts bus.SubscribeOpt
 		}
 
 		if sem != nil {
-			sem <- struct{}{} // block once the pool is full
+			sem <- struct{}{}
 		}
 		wg.Go(func() {
 			if sem != nil {
 				defer func() { <-sem }()
 			}
-			n.handle(topic, group, h, msgs)
+			n.handle(topic, group, h, msgs, opts, maxDeliver)
 		})
 	}
-	wg.Wait() // let in-flight handlers ack/nak before the consumer exits
+	wg.Wait()
 }
 
-// handle runs h for one fetched batch and applies the per-message verdict:
-// errs[i] nil => Ack, non-nil => Nak (redelivered).
-func (n *Nats) handle(topic, group string, h bus.Handler, msgs []jetstream.Msg) {
+func (n *Nats) handle(topic, group string, h bus.Handler, msgs []jetstream.Msg, opts bus.SubscribeOptions, maxDeliver int) {
 	payloads := make([][]byte, len(msgs))
 	for i, m := range msgs {
 		payloads[i] = m.Data()
 	}
 	errs := safeHandle(n.ctx, h, payloads)
+	dlqTopic := topic + ".dlq"
 	var failed int
 	for i, m := range msgs {
 		if bus.Failed(errs, i) {
 			failed++
+			delivered := uint64(1)
+			if meta, err := m.Metadata(); err == nil {
+				delivered = meta.NumDelivered
+			}
+			if !opts.DisableDLQ && delivered >= uint64(maxDeliver) {
+				if err := n.moveToDLQ(n.ctx, dlqTopic, m.Data()); err != nil {
+					n.logger.Error("bus: dlq publish failed", "topic", topic, "dlq", dlqTopic, "err", err)
+					_ = m.Nak()
+					continue
+				}
+				n.logger.Warn("bus: message moved to DLQ",
+					"topic", topic, "group", group, "dlq", dlqTopic, "deliveries", delivered)
+				_ = m.Ack()
+				continue
+			}
 			_ = m.Nak()
 		} else {
 			_ = m.Ack()
@@ -207,8 +222,14 @@ func (n *Nats) handle(topic, group string, h bus.Handler, msgs []jetstream.Msg) 
 	}
 }
 
-// safeHandle runs h, converting a panic into a per-message failure so a bad
-// payload nacks its batch instead of crashing the consumer.
+func (n *Nats) moveToDLQ(ctx context.Context, dlqTopic string, payload []byte) error {
+	if err := n.ensureStream(ctx, dlqTopic); err != nil {
+		return err
+	}
+	_, err := n.js.Publish(ctx, dlqTopic, payload)
+	return err
+}
+
 func safeHandle(ctx context.Context, h bus.Handler, payloads [][]byte) (errs []error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -218,7 +239,6 @@ func safeHandle(ctx context.Context, h bus.Handler, payloads [][]byte) (errs []e
 	return h(ctx, payloads)
 }
 
-// Ping reports whether the NATS connection is alive.
 func (n *Nats) Ping() error {
 	if n.nc.IsClosed() {
 		return bus.ErrClosed
@@ -229,8 +249,6 @@ func (n *Nats) Ping() error {
 	return nil
 }
 
-// Close stops all consumers, waits for in-flight batches, then closes the
-// connection.
 func (n *Nats) Close() error {
 	n.cancel()
 	n.wg.Wait()

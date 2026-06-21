@@ -48,7 +48,10 @@ func (h *volumeHandler) handleGrantJob(ctx context.Context, p model.VolumeJobPay
 
 	var result any
 	if err := h.pr.RPC(ctx, rpcName, args, &result); err != nil {
-		return h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error()))
+		if patchErr := h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error())); patchErr != nil {
+			return patchErr
+		}
+		return nil
 	}
 
 	respBody, _ := json.Marshal(result)

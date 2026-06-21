@@ -60,6 +60,7 @@ type Config struct {
 	Username  string
 	Password  string
 	Transport http.RoundTripper
+	Timeout   time.Duration
 }
 
 // RequestOption customizes an outbound PocketBase call.
@@ -93,12 +94,16 @@ type Client struct {
 
 // New builds a client for cfg.URL. Use WithBaseURL for other cluster domains.
 func New(cfg Config) *Client {
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
 	return &Client{
 		baseURL:  strings.TrimRight(cfg.URL, "/"),
 		username: strings.TrimSpace(cfg.Username),
 		password: cfg.Password,
 		http:     &http.Client{Transport: cfg.Transport},
-		timeout:  defaultTimeout,
+		timeout:  timeout,
 	}
 }
 

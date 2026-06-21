@@ -46,6 +46,14 @@ type SubscribeOptions struct {
 	BatchSize   int           // flush once the batch holds this many payloads (min 1)
 	Linger      time.Duration // max wait after the first payload before flushing a partial batch
 	Concurrency int           // max handler invocations in flight; 0 = unlimited, 1 = serial
+
+	// JetStream (NATS backend only). DeliverNew=false (default) uses DeliverAll so
+	// messages published before the consumer exists are not skipped.
+	DeliverNew bool
+	// MaxDeliver caps redelivery attempts before the message is copied to DLQ (default 5).
+	MaxDeliver int
+	// DisableDLQ skips terminal DLQ publish (e.g. usage batches with their own dedupe).
+	DisableDLQ bool
 }
 
 type SubscribeOption func(*SubscribeOptions)
@@ -78,6 +86,30 @@ func WithConcurrency(n int) SubscribeOption {
 		if n >= 1 {
 			o.Concurrency = n
 		}
+	}
+}
+
+// WithDeliverNew delivers only messages published after the durable consumer is
+// created (JetStream DeliverNew). Default is DeliverAll.
+func WithDeliverNew() SubscribeOption {
+	return func(o *SubscribeOptions) {
+		o.DeliverNew = true
+	}
+}
+
+// WithMaxDeliver sets JetStream MaxDeliver before DLQ routing (default 5).
+func WithMaxDeliver(n int) SubscribeOption {
+	return func(o *SubscribeOptions) {
+		if n >= 1 {
+			o.MaxDeliver = n
+		}
+	}
+}
+
+// WithoutDLQ disables terminal publish to <topic>.dlq after max deliveries.
+func WithoutDLQ() SubscribeOption {
+	return func(o *SubscribeOptions) {
+		o.DisableDLQ = true
 	}
 }
 

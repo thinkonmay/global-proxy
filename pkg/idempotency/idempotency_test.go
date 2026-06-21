@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// First delivery acquires and runs fn.
 func TestRun_FirstRuns(t *testing.T) {
 	g := New(NewMemStore())
 	ran := false
@@ -18,7 +17,6 @@ func TestRun_FirstRuns(t *testing.T) {
 	}
 }
 
-// A duplicate (row exists, not errored) skips without rerunning fn.
 func TestRun_DuplicateSkips(t *testing.T) {
 	g := New(NewMemStore())
 	ctx := context.Background()
@@ -34,29 +32,27 @@ func TestRun_DuplicateSkips(t *testing.T) {
 	}
 }
 
-// fn error is recorded but acked (nil) and never retried — at most once.
-func TestRun_ErrorIsNotRetried(t *testing.T) {
+func TestRun_ErrorIsRetried(t *testing.T) {
 	g := New(NewMemStore())
 	ctx := context.Background()
 	boom := errors.New("boom")
-	if err := g.Run(ctx, "a", func(context.Context) error { return boom }); err != nil {
-		t.Fatalf("Run = %v, want nil (ack, no retry)", err)
+	if err := g.Run(ctx, "a", func(context.Context) error { return boom }); err != boom {
+		t.Fatalf("Run = %v, want boom (nak)", err)
 	}
 	reran := false
 	if err := g.Run(ctx, "a", func(context.Context) error { reran = true; return nil }); err != nil {
 		t.Fatalf("second Run = %v, want nil", err)
 	}
-	if reran {
-		t.Error("errored id was rerun, want at-most-once skip")
+	if !reran {
+		t.Error("errored id was not retried")
 	}
 }
 
-// A duplicate arriving while the first is still pending also skips.
 func TestRun_SkipsWhilePending(t *testing.T) {
 	s := NewMemStore()
 	g := New(s)
 	ctx := context.Background()
-	if acquired, _ := s.Register(ctx, "a"); !acquired { // first still processing
+	if acquired, _ := s.Register(ctx, "a"); !acquired {
 		t.Fatal("seed register must acquire")
 	}
 	ran := false

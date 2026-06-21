@@ -86,12 +86,12 @@ func TestRegisterMessage_DoneSkips(t *testing.T) {
 	}
 }
 
-// An errored id is NOT re-acquired — at most once, no retry.
-func TestRegisterMessage_ErrorStaysSkipped(t *testing.T) {
+// An errored id may be re-acquired for retry.
+func TestRegisterMessage_ErrorAllowsRetry(t *testing.T) {
 	ctr := startPostgres(t)
 	psql(t, ctr, register("c"))
 	psql(t, ctr, "select mark_error('c')")
-	if got := psql(t, ctr, register("c")); got != "skip" {
-		t.Fatalf("register after error = %q, want skip (no retry)", got)
+	if got := psql(t, ctr, register("c")); got != "acquired" {
+		t.Fatalf("register after error = %q, want acquired", got)
 	}
 }

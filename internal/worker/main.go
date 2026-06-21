@@ -1,6 +1,5 @@
-// Command worker consumes jobs and usage events off the bus: it runs each job
-// at most once and batch-inserts usage into ClickHouse. The heavy logic lives in
-// the command handlers; everything else is just subscribe → run → record.
+// Command worker consumes jobs and usage events off the bus. Volume jobs use
+// at-least-once delivery with idempotency; usage batches insert into ClickHouse.
 package main
 
 import (
@@ -15,6 +14,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/handler"
+	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
 	"github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
@@ -30,16 +30,25 @@ func main() {
 	}
 	cfg.SetupLogger()
 
+	outbound := guard.New(nil, guard.Config{
+		MaxFailures:   5,
+		Cooldown:      30 * time.Second,
+		MaxConcurrent: 32,
+	})
+
 	pr := postgrest.New(postgrest.Config{
 		URL:        cfg.PostgREST.URL,
 		AnonKey:    cfg.PostgREST.AnonKey,
 		ServiceKey: cfg.PostgREST.ServiceKey,
+		Transport:  outbound,
 	})
 
 	pb := pocketbase.New(pocketbase.Config{
 		URL:       cfg.PocketBase.URL,
 		Username:  cfg.PocketBase.Username,
 		Password:  cfg.PocketBase.Password,
+		Transport: outbound,
+		Timeout:   30 * time.Second,
 	})
 
 	ch, err := clickhouse.Open(&clickhouse.Options{
