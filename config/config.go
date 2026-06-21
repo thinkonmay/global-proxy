@@ -285,6 +285,7 @@ func NewConfig() (*Config, error) {
 	} else if cfg.Port == "" {
 		cfg.Port = "4000"
 	}
+	mergeEnvSecrets(&cfg)
 	mergeSupabaseKeys(&cfg)
 	mergeAdminDefaults(&cfg)
 	mergeMetricsDefaults(&cfg)
