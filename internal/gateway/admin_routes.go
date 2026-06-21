@@ -42,7 +42,7 @@ func initAdminGate(cfg *config.Config) (*admingate.Gate, error) {
 		SigningSecret:   cfg.Admin.SigningSecret,
 		BasicAuthUser:   cfg.Admin.BasicAuthUser,
 		BasicAuthPass:   cfg.Admin.BasicAuthPass,
-	}, otp, mailer)
+	}, otp, otp, mailer)
 }
 
 func wrapHostRouter(public http.Handler, cfg *config.Config, gate *admingate.Gate, rt http.RoundTripper) http.Handler {

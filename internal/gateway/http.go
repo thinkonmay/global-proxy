@@ -49,6 +49,9 @@ func newMux(
 	mux.HandleFunc("GET /sse", hub.Serve)
 
 	registerInternalAdminRoutes(mux, gate)
+	if gate != nil {
+		gate.RegisterPublicAccessRoutes(mux)
+	}
 	registerKongRoutes(mux, cfg, rt)
 
 	chain := []guard.Middleware{

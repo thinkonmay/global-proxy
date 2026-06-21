@@ -3,14 +3,16 @@ package admingate
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 const otpKeyPrefix = "admin:otp:"
+const ipAllowKeyPrefix = "admin:ipallow:"
 
-// RedisOTPStore stores OTP hashes in Redis.
+// RedisOTPStore stores OTP hashes and temporary IP grants in Redis.
 type RedisOTPStore struct {
 	client *redis.Client
 }
@@ -53,3 +55,28 @@ func (s *RedisOTPStore) Verify(ctx context.Context, email, code string) (bool, e
 	_ = s.client.Del(ctx, key).Err()
 	return true, nil
 }
+
+func (s *RedisOTPStore) GrantIP(ctx context.Context, ip string, ttl time.Duration) error {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = 8 * time.Hour
+	}
+	return s.client.Set(ctx, ipAllowKeyPrefix+ip, "1", ttl).Err()
+}
+
+func (s *RedisOTPStore) IPAllowed(ctx context.Context, ip string) (bool, error) {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return false, nil
+	}
+	n, err := s.client.Exists(ctx, ipAllowKeyPrefix+ip).Result()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+var _ IPAllowStore = (*RedisOTPStore)(nil)

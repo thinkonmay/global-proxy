@@ -33,7 +33,7 @@ func testGate(t *testing.T) (*Gate, *miniredis.Miniredis) {
 		SigningSecret:   "unit-test-secret",
 		BasicAuthUser:   "admin",
 		BasicAuthPass:   "secret",
-	}, store, LogMailer{})
+	}, store, store, LogMailer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,4 +138,43 @@ func TestAnalyticsIngestBypassesAdminGate(t *testing.T) {
 		t.Fatalf("ingest bypass failed called=%v code=%d", backendCalled, rec.Code)
 	}
 	_ = backend
+}
+
+func TestGatePublicAccessGrantsIPWithoutAllowlist(t *testing.T) {
+	gate, _ := testGate(t)
+	mux := http.NewServeMux()
+	gate.RegisterPublicAccessRoutes(mux)
+
+	plain, err := generateOTP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.SaveOTP(context.Background(), "ops@thinkmay.net", plain, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	verifyBody, _ := json.Marshal(map[string]string{"email": "ops@thinkmay.net", "code": plain})
+	req := httptest.NewRequest(http.MethodPost, "/admin/access/otp/verify", bytes.NewReader(verifyBody))
+	req.RemoteAddr = "198.51.100.50:1234"
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("verify failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	check := httptest.NewRequest(http.MethodGet, "/", nil)
+	check.RemoteAddr = "198.51.100.50:1234"
+	if !gate.ipAllowed(check) {
+		t.Fatal("expected granted IP to pass allowlist")
+	}
+
+	reqOTP := httptest.NewRequest(http.MethodPost, "/admin/access/otp/request", bytes.NewReader([]byte(`{"email":"ops@thinkmay.net"}`)))
+	reqOTP.RemoteAddr = "198.51.100.50:1234"
+	reqOTP.Header.Set("Content-Type", "application/json")
+	recOTP := httptest.NewRecorder()
+	mux.ServeHTTP(recOTP, reqOTP)
+	if recOTP.Code != http.StatusOK {
+		t.Fatalf("otp request from granted ip failed: %d %s", recOTP.Code, recOTP.Body.String())
+	}
 }

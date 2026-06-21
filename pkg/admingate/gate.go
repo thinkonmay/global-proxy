@@ -28,16 +28,18 @@ type Config struct {
 
 // Gate enforces admin access controls and serves OTP login handlers.
 type Gate struct {
-	cfg   Config
-	otp   OTPStore
-	mail  Mailer
-	secret []byte
+	cfg     Config
+	otp     OTPStore
+	ipAllow IPAllowStore
+	mail    Mailer
+	secret  []byte
 	ipMatch guard.Match
 	emails  map[string]struct{}
 }
 
 // NewGate builds an admin gate. allowedEmails map is normalized to lowercase.
-func NewGate(cfg Config, otp OTPStore, mail Mailer) (*Gate, error) {
+// ipAllow may be nil; when set, OTP on /admin/access grants the client IP until session TTL.
+func NewGate(cfg Config, otp OTPStore, ipAllow IPAllowStore, mail Mailer) (*Gate, error) {
 	if cfg.SigningSecret == "" {
 		return nil, errSigningSecret
 	}
@@ -51,6 +53,7 @@ func NewGate(cfg Config, otp OTPStore, mail Mailer) (*Gate, error) {
 	return &Gate{
 		cfg:     cfg,
 		otp:     otp,
+		ipAllow: ipAllow,
 		mail:    mail,
 		secret:  []byte(cfg.SigningSecret),
 		ipMatch: guard.IPSet(cfg.AllowedIPs...),
@@ -73,10 +76,20 @@ func (g *Gate) emailAllowed(email string) bool {
 }
 
 func (g *Gate) ipAllowed(r *http.Request) bool {
+	if g.ipMatch(r) {
+		return true
+	}
+	if g.ipAllow != nil {
+		ip := guard.ClientIP(r)
+		ok, err := g.ipAllow.IPAllowed(r.Context(), ip)
+		if err == nil && ok {
+			return true
+		}
+	}
 	if len(g.cfg.AllowedIPs) == 0 {
 		return true
 	}
-	return g.ipMatch(r)
+	return false
 }
 
 func (g *Gate) sessionFromRequest(r *http.Request) (Session, bool) {
@@ -127,11 +140,19 @@ func (g *Gate) WithBasicAuth(next http.Handler) http.Handler {
 	return auth.BasicAuth(g.cfg.BasicAuthUser, g.cfg.BasicAuthPass)(next)
 }
 
-// RegisterRoutes mounts SSO OTP login handlers on mux.
+// RegisterRoutes mounts SSO OTP login handlers on admin hostnames.
 func (g *Gate) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/login", g.serveLogin)
 	mux.HandleFunc("POST /admin/otp/request", g.handleOTPRequest)
 	mux.HandleFunc("POST /admin/otp/verify", g.handleOTPVerify)
+}
+
+// RegisterPublicAccessRoutes mounts the public gateway IP authorization flow.
+// No IP allowlist is required to reach these paths; a successful OTP grants the client IP.
+func (g *Gate) RegisterPublicAccessRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /admin/access", g.serveAccessLogin)
+	mux.HandleFunc("POST /admin/access/otp/request", g.handleAccessOTPRequest)
+	mux.HandleFunc("POST /admin/access/otp/verify", g.handleAccessOTPVerify)
 }
 
 func (g *Gate) serveLogin(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +165,13 @@ func (g *Gate) serveLogin(w http.ResponseWriter, r *http.Request) {
 		next = "/"
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, loginHTML(next))
+	_, _ = io.WriteString(w, loginHTML(next, "/admin/otp/request", "/admin/otp/verify", false, ""))
+}
+
+func (g *Gate) serveAccessLogin(w http.ResponseWriter, r *http.Request) {
+	clientIP := guard.ClientIP(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, loginHTML("/", "/admin/access/otp/request", "/admin/access/otp/verify", true, clientIP))
 }
 
 func (g *Gate) handleOTPRequest(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +179,14 @@ func (g *Gate) handleOTPRequest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, `{"message":"forbidden"}`)
 		return
 	}
+	g.processOTPRequest(w, r)
+}
+
+func (g *Gate) handleAccessOTPRequest(w http.ResponseWriter, r *http.Request) {
+	g.processOTPRequest(w, r)
+}
+
+func (g *Gate) processOTPRequest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -198,12 +233,28 @@ func (g *Gate) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, `{"message":"email and code required"}`)
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	g.finishOTPVerify(w, r, req.Email, req.Code, req.Next, false)
+}
+
+func (g *Gate) handleAccessOTPVerify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || req.Code == "" {
+		writeJSON(w, http.StatusBadRequest, `{"message":"email and code required"}`)
+		return
+	}
+	g.finishOTPVerify(w, r, req.Email, req.Code, "", true)
+}
+
+func (g *Gate) finishOTPVerify(w http.ResponseWriter, r *http.Request, email, code, next string, grantIP bool) {
+	email = strings.ToLower(strings.TrimSpace(email))
 	if !g.emailAllowed(email) {
 		writeJSON(w, http.StatusForbidden, `{"message":"email not allowed"}`)
 		return
 	}
-	ok, err := g.otp.Verify(r.Context(), email, strings.TrimSpace(req.Code))
+	ok, err := g.otp.Verify(r.Context(), email, strings.TrimSpace(code))
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, `{"message":"otp store unavailable"}`)
 		return
@@ -212,6 +263,7 @@ func (g *Gate) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, `{"message":"invalid or expired code"}`)
 		return
 	}
+
 	ttl := sessionTTL(g.cfg.SessionTTLHours)
 	exp := time.Now().Add(ttl)
 	token, _, err := signSession(email, exp, g.secret)
@@ -224,7 +276,27 @@ func (g *Gate) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 		domain = ".thinkmay.net"
 	}
 	w.Header().Add("Set-Cookie", formatCookie(token, domain, ttl))
-	writeJSON(w, http.StatusOK, `{"message":"ok","next":`+jsonString(req.Next)+`}`)
+
+	clientIP := guard.ClientIP(r)
+	if grantIP {
+		if g.ipAllow == nil {
+			writeJSON(w, http.StatusServiceUnavailable, `{"message":"ip authorization unavailable"}`)
+			return
+		}
+		if err := g.ipAllow.GrantIP(r.Context(), clientIP, ttl); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, `{"message":"failed to authorize ip"}`)
+			return
+		}
+		body, _ := json.Marshal(map[string]string{
+			"message": "ok",
+			"ip":      clientIP,
+			"email":   email,
+		})
+		writeJSONBytes(w, http.StatusOK, body)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, `{"message":"ok","next":`+jsonString(next)+`}`)
 }
 
 func jsonString(s string) string {
@@ -236,17 +308,44 @@ func jsonString(s string) string {
 }
 
 func writeJSON(w http.ResponseWriter, code int, body string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_, _ = io.WriteString(w, body)
+	writeJSONBytes(w, code, []byte(body))
 }
 
-func loginHTML(next string) string {
+func writeJSONBytes(w http.ResponseWriter, code int, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_, _ = w.Write(body)
+}
+
+func loginHTML(next, requestPath, verifyPath string, accessPage bool, clientIP string) string {
+	title := "Admin login"
+	intro := "Enter your team email. We will send a one-time code valid across all admin dashboards."
+	if accessPage {
+		title = "Admin access"
+		intro = "Authorize your current IP for Studio, Rybbit, and Grafana. Enter your admin email, paste the OTP from your inbox, then verify."
+	}
+	ipLine := ""
+	if accessPage && clientIP != "" {
+		ipLine = `<p>Your current IP: <strong>` + clientIP + `</strong></p>`
+	}
+	verifyScript := `
+  const body = await r.json();
+  msg.textContent = JSON.stringify(body, null, 2);
+  if (r.ok && body.next) location.href = body.next;`
+	if accessPage {
+		verifyScript = `
+  const body = await r.json();
+  msg.textContent = JSON.stringify(body, null, 2);
+  if (r.ok) {
+    msg.textContent = 'Authorized IP ' + body.ip + '. You can open Studio / Rybbit / Grafana now.';
+  }`
+	}
 	return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Thinkmay Admin</title></head>
+<html><head><meta charset="utf-8"><title>Thinkmay ` + title + `</title></head>
 <body>
-<h1>Admin login</h1>
-<p>Enter your team email. We will send a one-time code valid across all admin dashboards.</p>
+<h1>` + title + `</h1>
+<p>` + intro + `</p>
+` + ipLine + `
 <label>Email <input id="email" type="email" autocomplete="username"></label>
 <button id="send">Send code</button>
 <label>Code <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code"></label>
@@ -254,19 +353,18 @@ func loginHTML(next string) string {
 <pre id="msg"></pre>
 <script>
 const next = ` + jsonString(next) + `;
+const requestPath = ` + jsonString(requestPath) + `;
+const verifyPath = ` + jsonString(verifyPath) + `;
 const msg = document.getElementById('msg');
 document.getElementById('send').onclick = async () => {
   const email = document.getElementById('email').value;
-  const r = await fetch('/admin/otp/request', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email})});
+  const r = await fetch(requestPath, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email})});
   msg.textContent = await r.text();
 };
 document.getElementById('verify').onclick = async () => {
   const email = document.getElementById('email').value;
   const code = document.getElementById('code').value;
-  const r = await fetch('/admin/otp/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, code, next})});
-  const body = await r.json();
-  msg.textContent = JSON.stringify(body);
-  if (r.ok && body.next) location.href = body.next;
+  const r = await fetch(verifyPath, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, code, next})});` + verifyScript + `
 };
 </script>
 </body></html>`
