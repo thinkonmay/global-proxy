@@ -13,17 +13,18 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/supabase/auth"
 )
 
-// Config for B12 admin gate (IP + email + Redis OTP SSO + basic-auth).
+// Config for B12 admin gate (IP + email + Redis OTP SSO; optional basic-auth).
 type Config struct {
-	Enabled         bool
-	AllowedIPs      []string
-	AllowedEmails   []string
-	CookieDomain    string
-	SessionTTLHours int
-	OTPTTLMinutes   int
-	SigningSecret   string
-	BasicAuthUser   string
-	BasicAuthPass   string
+	Enabled          bool
+	AllowedIPs       []string
+	AllowedEmails    []string
+	CookieDomain     string
+	SessionTTLHours  int
+	OTPTTLMinutes    int
+	SigningSecret    string
+	BasicAuthEnabled bool
+	BasicAuthUser    string
+	BasicAuthPass    string
 }
 
 // Gate enforces admin access controls and serves OTP login handlers.
@@ -115,7 +116,7 @@ func exemptPath(path string) bool {
 	return strings.HasPrefix(path, "/admin/login")
 }
 
-// Protect wraps an admin upstream handler (OTP SSO, then basic-auth is applied separately).
+// Protect wraps an admin upstream handler (IP allowlist + OTP SSO).
 func (g *Gate) Protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exemptPath(r.URL.Path) {
@@ -135,9 +136,18 @@ func (g *Gate) Protect(next http.Handler) http.Handler {
 	})
 }
 
-// WithBasicAuth adds Kong-style basic-auth as the last defense before upstream.
+// WithBasicAuth adds Kong-style basic-auth before upstream (legacy; off by default).
 func (g *Gate) WithBasicAuth(next http.Handler) http.Handler {
 	return auth.BasicAuth(g.cfg.BasicAuthUser, g.cfg.BasicAuthPass)(next)
+}
+
+// ProtectUpstream applies SSO gate and optional basic-auth when enabled.
+func (g *Gate) ProtectUpstream(next http.Handler) http.Handler {
+	upstream := next
+	if g.cfg.BasicAuthEnabled && g.cfg.BasicAuthUser != "" && g.cfg.BasicAuthPass != "" {
+		upstream = g.WithBasicAuth(next)
+	}
+	return g.Protect(upstream)
 }
 
 // RegisterRoutes mounts SSO OTP login handlers on admin hostnames.

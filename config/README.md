@@ -8,4 +8,4 @@ Domain-specific settings live in the repo root:
 
 Compose mounts `./config.yaml` → `/config/config.yaml` and passes `.env` secrets as `APP_*` environment variables (see root `docker-compose.yaml`). Viper reads `APP_*` over YAML.
 
-Go package defaults for production hostnames (`admin_defaults.go`) apply only when YAML leaves `admin.hosts` empty. Admin basic-auth falls back to `APP_SUPABASE_DASHBOARDUSER` / `APP_SUPABASE_DASHBOARDPASSWORD` from `.env`.
+Go package defaults for production hostnames (`admin_defaults.go`) apply only when YAML leaves `admin.hosts` empty. Admin basic-auth is **disabled by default** (`admin.basicAuthEnabled: false`); SSO is the only gate unless re-enabled.

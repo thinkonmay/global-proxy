@@ -15,7 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/admingate"
 )
 
-func TestAdminStudioHostRequiresBasicAuthAfterSSO(t *testing.T) {
+func TestAdminStudioHostSSOOnly(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
@@ -29,6 +29,55 @@ func TestAdminStudioHostRequiresBasicAuthAfterSSO(t *testing.T) {
 			AllowedEmails: []string{"ops@thinkmay.net"},
 			SigningSecret: "test-secret",
 			Redis:         config.Redis{URL: "redis://" + mr.Addr()},
+			Hosts: config.AdminHosts{
+				Public: "thinkmay.net",
+				Studio: "studio.thinkmay.net",
+			},
+			CookieDomain: ".thinkmay.net",
+		},
+	}
+	studio := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "studio")
+	}))
+	defer studio.Close()
+	cfg.Admin.Upstreams.Studio = studio.URL
+
+	gate, err := initAdminGate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token := adminSSOCookie(t, gate)
+	public := http.NewServeMux()
+	router := admingate.NewHostRouter(cfg.Admin.Hosts.Public, public)
+	registerAdminHost(router, cfg.Admin.Hosts.Studio, cfg.Admin.Upstreams.Studio, gate, http.DefaultTransport)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "studio.thinkmay.net"
+	req.RemoteAddr = "203.0.113.1:1234"
+	req.AddCookie(&http.Cookie{Name: "tm_admin_sso", Value: token})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "studio" {
+		t.Fatalf("expected studio proxy after SSO, code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminStudioHostOptionalBasicAuth(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	cfg := &config.Config{
+		Admin: config.Admin{
+			Enabled:          true,
+			BasicAuthEnabled: true,
+			AllowedIPs:       []string{"203.0.113.1"},
+			AllowedEmails:    []string{"ops@thinkmay.net"},
+			SigningSecret:    "test-secret",
+			Redis:            config.Redis{URL: "redis://" + mr.Addr()},
 			Hosts: config.AdminHosts{
 				Public: "thinkmay.net",
 				Studio: "studio.thinkmay.net",
@@ -90,10 +139,8 @@ func TestGrafanaHostStripsAuthorizationAndSetsProxyUser(t *testing.T) {
 				Public:  "thinkmay.net",
 				Grafana: "grafana.thinkmay.net",
 			},
-			BasicAuthUser: "dashboard-user",
-			BasicAuthPass: "pass",
-			CookieDomain:  ".thinkmay.net",
-			Upstreams:     config.AdminUpstreams{Grafana: ""},
+			CookieDomain: ".thinkmay.net",
+			Upstreams:    config.AdminUpstreams{Grafana: ""},
 		},
 	}
 
@@ -120,7 +167,6 @@ func TestGrafanaHostStripsAuthorizationAndSetsProxyUser(t *testing.T) {
 	req.Host = "grafana.thinkmay.net"
 	req.RemoteAddr = "203.0.113.1:1234"
 	req.AddCookie(&http.Cookie{Name: "tm_admin_sso", Value: token})
-	req.SetBasicAuth("dashboard-user", "pass")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 

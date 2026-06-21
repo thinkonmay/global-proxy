@@ -33,15 +33,16 @@ func initAdminGate(cfg *config.Config) (*admingate.Gate, error) {
 		}
 	}
 	return admingate.NewGate(admingate.Config{
-		Enabled:         true,
-		AllowedIPs:      cfg.Admin.AllowedIPs,
-		AllowedEmails:   cfg.Admin.AllowedEmails,
-		CookieDomain:    cfg.Admin.CookieDomain,
-		SessionTTLHours: cfg.Admin.SessionTTLHours,
-		OTPTTLMinutes:   cfg.Admin.OTPTTLMinutes,
-		SigningSecret:   cfg.Admin.SigningSecret,
-		BasicAuthUser:   cfg.Admin.BasicAuthUser,
-		BasicAuthPass:   cfg.Admin.BasicAuthPass,
+		Enabled:          true,
+		AllowedIPs:       cfg.Admin.AllowedIPs,
+		AllowedEmails:    cfg.Admin.AllowedEmails,
+		CookieDomain:     cfg.Admin.CookieDomain,
+		SessionTTLHours:  cfg.Admin.SessionTTLHours,
+		OTPTTLMinutes:    cfg.Admin.OTPTTLMinutes,
+		SigningSecret:    cfg.Admin.SigningSecret,
+		BasicAuthEnabled: cfg.Admin.BasicAuthEnabled,
+		BasicAuthUser:    cfg.Admin.BasicAuthUser,
+		BasicAuthPass:    cfg.Admin.BasicAuthPass,
 	}, otp, otp, mailer)
 }
 
@@ -70,7 +71,7 @@ func registerGrafanaHost(router *admingate.HostRouter, cfg *config.Config, gate 
 	proxyUser := "admin"
 	proxy := newProxy(upstreamURL, http.DefaultTransport, func(req *http.Request) {
 		setForwardedHeaders(req)
-		// Gateway already validated basic-auth; do not forward it (confuses Grafana auth).
+		// Gateway validated SSO; do not forward Authorization (confuses Grafana auth.proxy).
 		req.Header.Del("Authorization")
 		req.Header.Set(grafanaProxyUserHeader, proxyUser)
 	})
@@ -115,7 +116,7 @@ func registerAnalyticsHost(router *admingate.HostRouter, cfg *config.Config, gat
 	}
 	if cfg.Admin.Upstreams.RybbitClient != "" {
 		if client := newProxy(cfg.Admin.Upstreams.RybbitClient, rt, setForwardedHeaders); client != nil {
-			mux.Handle("/", gate.Protect(gate.WithBasicAuth(client)))
+			mux.Handle("/", gate.ProtectUpstream(client))
 		}
 	}
 	router.Register(host, mux)
@@ -124,7 +125,7 @@ func registerAnalyticsHost(router *admingate.HostRouter, cfg *config.Config, gat
 func newAdminHostHandler(gate *admingate.Gate, upstream http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	gate.RegisterRoutes(mux)
-	mux.Handle("/", gate.Protect(gate.WithBasicAuth(upstream)))
+	mux.Handle("/", gate.ProtectUpstream(upstream))
 	return mux
 }
 
@@ -132,7 +133,7 @@ func registerInternalAdminRoutes(mux *http.ServeMux, gate *admingate.Gate) {
 	if gate == nil {
 		return
 	}
-	h := gate.Protect(gate.WithBasicAuth(http.HandlerFunc(serveInternalNotImplemented)))
+	h := gate.ProtectUpstream(http.HandlerFunc(serveInternalNotImplemented))
 	mux.Handle("/v1/internal/", h)
 }
 

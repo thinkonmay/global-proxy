@@ -8,9 +8,10 @@ type Admin struct {
 	CookieDomain    string       `mapstructure:"cookieDomain"`
 	SessionTTLHours int          `mapstructure:"sessionTTLHours"`
 	OTPTTLMinutes   int          `mapstructure:"otpTTLMinutes"`
-	SigningSecret   string       `mapstructure:"signingSecret"`
-	BasicAuthUser   string       `mapstructure:"basicAuthUser"`
-	BasicAuthPass   string       `mapstructure:"basicAuthPassword"`
+	SigningSecret    string       `mapstructure:"signingSecret"`
+	BasicAuthEnabled bool         `mapstructure:"basicAuthEnabled"`
+	BasicAuthUser    string       `mapstructure:"basicAuthUser"`
+	BasicAuthPass    string       `mapstructure:"basicAuthPassword"`
 	Redis           Redis        `mapstructure:"redis"`
 	Resend          Resend       `mapstructure:"resend"`
 	Hosts           AdminHosts   `mapstructure:"hosts"`

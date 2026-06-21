@@ -222,6 +222,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("waf.coraza.owaspCRS", true)
 	v.SetDefault("waf.coraza.requestBodyLimit", 10485760)
 	v.SetDefault("admin.enabled", false)
+	v.SetDefault("admin.basicAuthEnabled", false)
 	v.SetDefault("scheduler.enabled", false)
 	v.SetDefault("metrics.cacheTTLSeconds", 90)
 	v.SetDefault("usageCollector.enabled", false)
