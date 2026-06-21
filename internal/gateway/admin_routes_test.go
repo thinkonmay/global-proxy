@@ -72,6 +72,69 @@ func TestAdminStudioHostRequiresBasicAuthAfterSSO(t *testing.T) {
 	}
 }
 
+func TestGrafanaHostStripsAuthorizationAndSetsProxyUser(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	cfg := &config.Config{
+		Admin: config.Admin{
+			Enabled:       true,
+			AllowedIPs:    []string{"203.0.113.1"},
+			AllowedEmails: []string{"ops@thinkmay.net"},
+			SigningSecret: "test-secret",
+			Redis:         config.Redis{URL: "redis://" + mr.Addr()},
+			Hosts: config.AdminHosts{
+				Public:  "thinkmay.net",
+				Grafana: "grafana.thinkmay.net",
+			},
+			BasicAuthUser: "dashboard-user",
+			BasicAuthPass: "pass",
+			CookieDomain:  ".thinkmay.net",
+			Upstreams:     config.AdminUpstreams{Grafana: ""},
+		},
+	}
+
+	var gotAuth, gotProxyUser string
+	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotProxyUser = r.Header.Get(grafanaProxyUserHeader)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer grafana.Close()
+	cfg.Admin.Upstreams.Grafana = grafana.URL
+
+	gate, err := initAdminGate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := adminSSOCookie(t, gate)
+
+	public := http.NewServeMux()
+	router := admingate.NewHostRouter(cfg.Admin.Hosts.Public, public)
+	registerGrafanaHost(router, cfg, gate)
+
+	req := httptest.NewRequest(http.MethodGet, "/apis/dashboard.grafana.app/v2/namespaces/default/dashboards", nil)
+	req.Host = "grafana.thinkmay.net"
+	req.RemoteAddr = "203.0.113.1:1234"
+	req.AddCookie(&http.Cookie{Name: "tm_admin_sso", Value: token})
+	req.SetBasicAuth("dashboard-user", "pass")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if gotAuth != "" {
+		t.Fatalf("Authorization forwarded to grafana: %q", gotAuth)
+	}
+	if gotProxyUser != "admin" {
+		t.Fatalf("X-WEBAUTH-USER = %q, want admin", gotProxyUser)
+	}
+}
+
 func adminSSOCookie(t *testing.T, gate *admingate.Gate) string {
 	t.Helper()
 	mux := http.NewServeMux()

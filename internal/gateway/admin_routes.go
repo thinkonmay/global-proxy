@@ -54,8 +54,31 @@ func wrapHostRouter(public http.Handler, cfg *config.Config, gate *admingate.Gat
 	// /api/gnet/* marketplace proxy) must not trip the global outbound breaker.
 	registerAdminHost(router, cfg.Admin.Hosts.Studio, cfg.Admin.Upstreams.Studio, gate, http.DefaultTransport)
 	registerAnalyticsHost(router, cfg, gate, rt)
-	registerAdminHost(router, cfg.Admin.Hosts.Grafana, cfg.Admin.Upstreams.Grafana, gate, http.DefaultTransport)
+	registerGrafanaHost(router, cfg, gate)
 	return router
+}
+
+const grafanaProxyUserHeader = "X-WEBAUTH-USER"
+
+func registerGrafanaHost(router *admingate.HostRouter, cfg *config.Config, gate *admingate.Gate) {
+	host := cfg.Admin.Hosts.Grafana
+	upstreamURL := cfg.Admin.Upstreams.Grafana
+	if host == "" || upstreamURL == "" {
+		return
+	}
+	// Grafana auth.proxy user — must match security.admin_user in volumes/grafana/grafana.ini.
+	proxyUser := "admin"
+	proxy := newProxy(upstreamURL, http.DefaultTransport, func(req *http.Request) {
+		setForwardedHeaders(req)
+		// Gateway already validated basic-auth; do not forward it (confuses Grafana auth).
+		req.Header.Del("Authorization")
+		req.Header.Set(grafanaProxyUserHeader, proxyUser)
+	})
+	if proxy == nil {
+		slog.Error("admin upstream invalid", "host", host, "url", upstreamURL)
+		return
+	}
+	router.Register(host, newAdminHostHandler(gate, proxy))
 }
 
 func registerAdminHost(router *admingate.HostRouter, host, upstreamURL string, gate *admingate.Gate, rt http.RoundTripper) {
