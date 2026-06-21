@@ -53,6 +53,9 @@ func registerStorageRoute(mux *http.ServeMux, cfg *config.Config, rt http.RoundT
 		return
 	}
 	storage := newProxy(cfg.Upstreams.Storage, rt, func(req *http.Request) {
+		if req.Header.Get("X-Forwarded-Prefix") == "" {
+			req.Header.Set("X-Forwarded-Prefix", storagePrefix)
+		}
 		req.URL.Path = strings.TrimPrefix(req.URL.Path, storagePrefix)
 		setForwardedHeaders(req)
 	})

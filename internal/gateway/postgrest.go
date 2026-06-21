@@ -30,6 +30,10 @@ func newProxy(rawURL string, rt http.RoundTripper, director func(*http.Request))
 	return &httputil.ReverseProxy{
 		Transport: rt,
 		Director: func(req *http.Request) {
+			// Capture client Host before rewriting to upstream (Kong parity).
+			if req.Header.Get("X-Forwarded-Host") == "" {
+				req.Header.Set("X-Forwarded-Host", req.Host)
+			}
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host
