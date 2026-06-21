@@ -84,7 +84,6 @@ type Payment struct {
 	CheckoutEnabled bool   `mapstructure:"checkoutEnabled"`
 	PollerEnabled   bool   `mapstructure:"pollerEnabled"`
 	PollEvery       string `mapstructure:"pollEvery"`
-	RSASignerURL    string `mapstructure:"rsaSignerURL"`
 }
 
 type TLS struct {
@@ -217,7 +216,6 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("payment.checkoutEnabled", true)
 	v.SetDefault("payment.pollerEnabled", true)
 	v.SetDefault("payment.pollEvery", "10s")
-	v.SetDefault("payment.rsaSignerURL", "http://rsa:8080")
 	v.SetDefault("metrics.scrapeCacheSeconds", 10)
 	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
 	v.SetDefault("metrics.listenAddr", ":9090")

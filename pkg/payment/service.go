@@ -20,14 +20,12 @@ const defaultPollInterval = 10 * time.Second
 type Service struct {
 	pr        *postgrest.Client
 	http      *http.Client
-	rsaSigner string
 	log       *slog.Logger
 	pollEvery time.Duration
 }
 
 // Config configures checkout backfill and status polling intervals.
 type Config struct {
-	RSASignerURL  string
 	PollEvery     time.Duration
 	CheckoutEvery time.Duration
 }
@@ -43,7 +41,6 @@ func NewService(pr *postgrest.Client, cfg Config, log *slog.Logger) *Service {
 	return &Service{
 		pr:        pr,
 		http:      &http.Client{Timeout: 15 * time.Second},
-		rsaSigner: strings.TrimRight(strings.TrimSpace(cfg.RSASignerURL), "/"),
 		log:       log,
 		pollEvery: every,
 	}

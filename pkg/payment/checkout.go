@@ -1,7 +1,6 @@
 package payment
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/json"
@@ -137,41 +136,28 @@ func (s *Service) createStripe(ctx context.Context, cfg stripeConfig, txn txnRow
 }
 
 func (s *Service) createPayerMax(ctx context.Context, cfg payerMaxConfig, txn txnRow, amount float64) (json.RawMessage, error) {
-	if cfg.AppID == "" || cfg.MerchantNo == "" || cfg.BaseURL == "" {
-		return nil, fmt.Errorf("payermax config incomplete")
+	client, err := s.payerMaxClient(cfg)
+	if err != nil {
+		return nil, err
 	}
-	cur := strings.ToUpper(txn.Currency)
-	if cur != "USD" && cur != "IDR" {
-		return nil, fmt.Errorf("payermax only supports USD or IDR")
+	payload, err := payerMaxOrderPayload(txn, amount, txn.Currency)
+	if err != nil {
+		return nil, err
 	}
-	if client, err := s.payermaxClient(cfg); err == nil {
-		data, _ := json.Marshal(map[string]any{
-			"userId":           "U10001",
-			"integrate":        "Hosted_Checkout",
-			"outTradeNo":       "P" + strconv.FormatInt(txn.ID, 10),
-			"totalAmount":      int64(math.Round(amount)),
-			"currency":         cur,
-			"country":          "ID",
-			"subject":          "Thinkmay Service",
-			"body":             "Order # " + strconv.FormatInt(txn.ID, 10),
-			"frontCallbackUrl": "https://thinkmay.net/id/payment/success?" + metadataQuery(txn.Metadata),
-		})
-		resp, err := client.Send("orderAndPay", string(data))
-		if err != nil {
-			return nil, err
-		}
-		var parsed struct {
-			Code string `json:"code"`
-		}
-		if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
-			return nil, err
-		}
-		if parsed.Code != "APPLY_SUCCESS" {
-			return nil, fmt.Errorf("payermax checkout failed: %s", resp)
-		}
-		return json.RawMessage(resp), nil
+	resp, err := client.Send("orderAndPay", payload)
+	if err != nil {
+		return nil, err
 	}
-	return s.createPayerMaxHTTP(ctx, cfg, txn, amount, cur)
+	var parsed struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		return nil, err
+	}
+	if parsed.Code != "APPLY_SUCCESS" {
+		return nil, fmt.Errorf("payermax checkout failed: %s", resp)
+	}
+	return json.RawMessage(resp), nil
 }
 
 func (s *Service) createPayssion(ctx context.Context, cfg payssionConfig, txn txnRow, amount float64) (json.RawMessage, error) {
@@ -256,54 +242,4 @@ func metadataQuery(raw json.RawMessage) string {
 		vals.Set(k, fmt.Sprint(v))
 	}
 	return vals.Encode()
-}
-
-func (s *Service) createPayerMaxHTTP(ctx context.Context, cfg payerMaxConfig, txn txnRow, amount float64, cur string) (json.RawMessage, error) {
-	reqTime := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	reqData := map[string]any{
-		"userId":           "U10001",
-		"integrate":        "Hosted_Checkout",
-		"outTradeNo":       "P" + strconv.FormatInt(txn.ID, 10),
-		"totalAmount":      int64(math.Round(amount)),
-		"currency":         cur,
-		"country":          "ID",
-		"subject":          "Thinkmay Service",
-		"body":             "Order # " + strconv.FormatInt(txn.ID, 10),
-		"frontCallbackUrl": "https://thinkmay.net/id/payment/success?" + metadataQuery(txn.Metadata),
-	}
-	reqBody := map[string]any{
-		"version": "1.4", "keyVersion": "1", "requestTime": reqTime,
-		"appId": cfg.AppID, "merchantNo": cfg.MerchantNo, "data": reqData,
-	}
-	bodyBytes, _ := json.Marshal(reqBody)
-	sign, err := s.signPayerMax(ctx, string(bodyBytes), cfg.PrivateKey)
-	if err != nil {
-		return nil, err
-	}
-	base := strings.TrimRight(cfg.BaseURL, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/orderAndPay", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("sign", sign)
-
-	respBody, status, err := s.do(req)
-	if err != nil {
-		return nil, err
-	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("payermax checkout: status %d: %s", status, respBody)
-	}
-	var parsed struct {
-		Code string `json:"code"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return nil, err
-	}
-	if parsed.Code != "APPLY_SUCCESS" {
-		return nil, fmt.Errorf("payermax checkout failed: %s", respBody)
-	}
-	return respBody, nil
 }

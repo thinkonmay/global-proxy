@@ -86,7 +86,6 @@ payment:
   checkoutEnabled: true
   pollerEnabled: true
   pollEvery: 10s
-  rsaSignerURL: "http://rsa:8080"
 
 # Usage collector (F06 / P1-B): runs inside worker when enabled.
 # Replaces snapshoot_v6 (5m), snapshoot_volume_v1 (hourly), and addon snapshoot_* (hourly).

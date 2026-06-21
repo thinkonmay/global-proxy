@@ -69,9 +69,7 @@ func Run() error {
 		usageQ = usage.NewQuerier(chConn)
 	}
 
-	paySvc := payment.NewService(pr, payment.Config{
-		RSASignerURL: cfg.Payment.RSASignerURL,
-	}, slog.Default())
+	paySvc := payment.NewService(pr, payment.Config{}, slog.Default())
 
 	globalRPC := handler.NewGlobalRPCHandler(*cfg, pr, bt, usageQ, paySvc)
 	grants := handler.NewGrantHandler(*cfg, pr, bt)

@@ -79,8 +79,7 @@ func main() {
 			log.Fatalf("payment.pollEvery: %v", err)
 		}
 		pay := payment.NewService(pr, payment.Config{
-			RSASignerURL: cfg.Payment.RSASignerURL,
-			PollEvery:    every,
+			PollEvery: every,
 		}, slog.Default())
 		pay.Run(ctx, cfg.Payment.CheckoutEnabled, cfg.Payment.PollerEnabled)
 	}
