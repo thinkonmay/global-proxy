@@ -74,7 +74,7 @@ func Run() error {
 	}, slog.Default())
 
 	catalogHTTP := handler.NewCatalogHandler(pr)
-	otaHTTP := handler.NewOTAHandler(pr)
+	otaHTTP := handler.NewOTAHandler(pr, cfg.PostgREST.ServiceKey)
 	gamificationHTTP := handler.NewGamificationHandler(pr, bt, usageQ)
 	billingHTTP := handler.NewBillingHandler(pr, bt, paySvc)
 	storeHTTP := handler.NewStoreHandler(pr, bt)

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,17 +13,34 @@ import (
 
 const otaQueryTimeout = 10 * time.Second
 
-// OTAHandler serves GET /v1/ota/manifest (F15).
+// OTAHandler serves /v1/ota/* (F15).
 type OTAHandler struct {
-	pr *postgrest.Client
+	pr         *postgrest.Client
+	serviceKey string
 }
 
-func NewOTAHandler(pr *postgrest.Client) *OTAHandler {
-	return &OTAHandler{pr: pr}
+func NewOTAHandler(pr *postgrest.Client, serviceKey string) *OTAHandler {
+	return &OTAHandler{pr: pr, serviceKey: strings.TrimSpace(serviceKey)}
 }
 
 func (h *OTAHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/ota/manifest", h.Manifest)
+	mux.HandleFunc("POST /v1/ota/releases", h.PublishRelease)
+	mux.HandleFunc("POST /v1/ota/releases/", h.PublishRelease)
+}
+
+func (h *OTAHandler) requireServiceKey(r *http.Request) bool {
+	if h.serviceKey == "" {
+		return true
+	}
+	if key := strings.TrimSpace(r.Header.Get("apikey")); key == h.serviceKey {
+		return true
+	}
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return strings.TrimSpace(auth[7:]) == h.serviceKey
+	}
+	return false
 }
 
 type otaNodeRow struct {
@@ -119,4 +137,45 @@ func firstNonEmptyOTA(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (h *OTAHandler) PublishRelease(w http.ResponseWriter, r *http.Request) {
+	if !h.requireServiceKey(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid service credentials"})
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		MD5         string `json:"md5"`
+		StoragePath string `json:"storage_path"`
+		PublicURL   string `json:"public_url"`
+		Channel     string `json:"channel"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if body.Name == "" || body.MD5 == "" || body.StoragePath == "" || body.PublicURL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name, md5, storage_path, and public_url required"})
+		return
+	}
+	if body.Channel == "" {
+		body.Channel = "verified"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), otaQueryTimeout)
+	defer cancel()
+
+	var out json.RawMessage
+	if err := h.pr.RPC(ctx, "publish_binary_release", map[string]any{
+		"p_name":         body.Name,
+		"p_md5":          body.MD5,
+		"p_storage_path": body.StoragePath,
+		"p_public_url":   body.PublicURL,
+		"p_channel":      body.Channel,
+	}, &out); err != nil {
+		writePostgrestErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]json.RawMessage{"data": out})
 }
