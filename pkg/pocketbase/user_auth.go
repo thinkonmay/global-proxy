@@ -96,7 +96,7 @@ func (v *UserTokenValidator) Validate(ctx context.Context, clientIssuer, authori
 	userID, _ := claims[core.TokenClaimId].(string)
 
 	fetchBase := v.fetchBaseURL(clientIssuer)
-	auth, err := v.validateViaRecordGET(ctx, fetchBase, token, userID, rt)
+	auth, err := v.validateOnCluster(ctx, fetchBase, token, userID)
 	if err != nil {
 		return UserAuth{}, err
 	}
@@ -127,7 +127,30 @@ func (v *UserTokenValidator) fetchBaseURL(clientIssuer string) string {
 	return clientIssuer
 }
 
-func (v *UserTokenValidator) validateViaRecordGET(ctx context.Context, baseURL, token, userID string, rt http.RoundTripper) (UserAuth, error) {
+func (v *UserTokenValidator) validateOnCluster(ctx context.Context, baseURL, token, userID string) (UserAuth, error) {
+	auth, err := v.validateViaRecordGET(ctx, baseURL, token, userID)
+	if err == nil {
+		return auth, nil
+	}
+	// Fallback: auth-refresh against the same reachable base (e.g. Docker hairpin fix).
+	resp, refreshErr := RefreshAuth(ctx, baseURL, usersCollection, token, v.pbTransport())
+	if refreshErr != nil {
+		return UserAuth{}, err
+	}
+	var record struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(resp.Record, &record); err != nil || record.Email == "" {
+		return UserAuth{}, errors.New("invalid auth record")
+	}
+	if record.ID != "" && record.ID != userID {
+		return UserAuth{}, errors.New("auth record id mismatch")
+	}
+	return UserAuth{Email: record.Email, UserID: userID}, nil
+}
+
+func (v *UserTokenValidator) validateViaRecordGET(ctx context.Context, baseURL, token, userID string) (UserAuth, error) {
 	u := strings.TrimRight(baseURL, "/") + usersPath + userID
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -136,16 +159,7 @@ func (v *UserTokenValidator) validateViaRecordGET(ctx context.Context, baseURL, 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", bearerToken(token))
 
-	transport := rt
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-	if v.homeTLSName != "" && strings.EqualFold(hostFromBaseURL(baseURL), hostFromBaseURL(v.homeFetch)) {
-		if sni := sniTransport(v.homeTLSName); sni != nil {
-			transport = sni
-		}
-	}
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: v.pbTransport()}
 
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
@@ -248,6 +262,15 @@ func hostFromBaseURL(raw string) string {
 		return strings.ToLower(strings.TrimSpace(u.Host))
 	}
 	return strings.ToLower(host)
+}
+
+func (v *UserTokenValidator) pbTransport() http.RoundTripper {
+	if v.homeTLSName != "" {
+		if sni := sniTransport(v.homeTLSName); sni != nil {
+			return sni
+		}
+	}
+	return http.DefaultTransport
 }
 
 func sniTransport(serverName string) http.RoundTripper {

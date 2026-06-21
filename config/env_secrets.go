@@ -16,6 +16,10 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Admin.Resend.APIKey, "APP_ADMIN_RESEND_APIKEY")
 	setEnvString(&cfg.PocketBase.URL, "APP_POCKETBASE_URL")
 	setEnvString(&cfg.PocketBase.IssuerHost, "APP_POCKETBASE_ISSUERHOST")
+	// When issuer host is unset, default to the public PB_URL workers/clients use.
+	if cfg.PocketBase.IssuerHost == "" {
+		setEnvString(&cfg.PocketBase.IssuerHost, "PB_URL")
+	}
 	setEnvString(&cfg.PocketBase.Username, "APP_POCKETBASE_USERNAME")
 	setEnvString(&cfg.PocketBase.Password, "APP_POCKETBASE_PASSWORD")
 	setEnvString(&cfg.LLM.BaseURL, "APP_LLM_BASEURL")

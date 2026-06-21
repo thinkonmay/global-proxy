@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +82,38 @@ func TestUserTokenValidatorRemoteIssuerPassthrough(t *testing.T) {
 		t.Fatalf("Validate: %v", err)
 	}
 	if auth.Email != "remote@example.com" {
+		t.Fatalf("email = %q", auth.Email)
+	}
+}
+
+func TestUserTokenValidatorAuthRefreshFallback(t *testing.T) {
+	const userID = "u1"
+	token := testUserJWT(t, userID)
+	var gotRefresh bool
+	pb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, usersPath):
+			w.WriteHeader(http.StatusForbidden)
+			return
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/auth-refresh"):
+			gotRefresh = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"token":"new","record":{"id":"u1","email":"fallback@example.com"}}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(pb.Close)
+
+	v := NewUserTokenValidator(UserTokenValidatorConfig{URL: pb.URL})
+	auth, err := v.Validate(context.Background(), pb.URL, token, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !gotRefresh {
+		t.Fatal("expected auth-refresh fallback")
+	}
+	if auth.Email != "fallback@example.com" {
 		t.Fatalf("email = %q", auth.Email)
 	}
 }
