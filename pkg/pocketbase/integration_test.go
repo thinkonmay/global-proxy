@@ -233,7 +233,7 @@ func TestIntegrationUserEmailFromRefresh(t *testing.T) {
 	}
 
 	userTok := userAuthToken(t, env.URL, email, pass)
-	got, err := UserEmailFromRefresh(ctx, NewIssuerResolver("", ""), env.URL, userTok, nil)
+	got, err := UserEmailFromRefresh(ctx, env.URL, userTok, nil)
 	if err != nil {
 		t.Fatalf("UserEmailFromRefresh: %v", err)
 	}

@@ -31,18 +31,11 @@ func pwaAuthFromRequest(ctx context.Context, rt http.RoundTripper, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(ctx, pwaAuthTimeout)
 	defer cancel()
-	resp, err := pocketbase.RefreshAuth(ctx, pbIssuerResolver, issuer, "users", authHeader, rt)
+	auth, err := pbUserAuth.Validate(ctx, issuer, authHeader, rt)
 	if err != nil {
-		return pwaUserAuth{}, http.StatusUnauthorized, "pocketbase auth refresh failed"
+		return pwaUserAuth{}, http.StatusUnauthorized, "pocketbase auth failed"
 	}
-	var record struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-	}
-	if err := json.Unmarshal(resp.Record, &record); err != nil || record.Email == "" {
-		return pwaUserAuth{}, http.StatusUnauthorized, "invalid auth record"
-	}
-	return pwaUserAuth{Email: record.Email, UserID: record.ID}, 0, ""
+	return pwaUserAuth{Email: auth.Email, UserID: auth.UserID}, 0, ""
 }
 
 func pwaAuthEmailMatch(auth pwaUserAuth, email string) (int, string) {

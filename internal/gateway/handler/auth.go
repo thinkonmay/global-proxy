@@ -12,12 +12,15 @@ import (
 
 const pbAuthTimeout = 3 * time.Second
 
-var pbIssuerResolver pocketbase.IssuerResolver
+var pbUserAuth *pocketbase.UserTokenValidator
 
-// ConfigurePocketBaseAuth sets the issuer→internal URL resolver for user token
-// verification (auth-refresh). Call once at gateway startup.
+// ConfigurePocketBaseAuth sets the cached PocketBase user-token validator.
+// Call once at gateway startup.
 func ConfigurePocketBaseAuth(cfg config.PocketBase) {
-	pbIssuerResolver = pocketbase.NewIssuerResolver(cfg.URL, cfg.InternalURL)
+	pbUserAuth = pocketbase.NewUserTokenValidator(pocketbase.UserTokenValidatorConfig{
+		URL:        cfg.URL,
+		IssuerHost: cfg.IssuerHost,
+	})
 }
 
 func issuerFromRequest(r *http.Request) string {
@@ -36,9 +39,9 @@ func requireUser(ctx context.Context, r *http.Request, rt http.RoundTripper) (em
 	}
 	ctx, cancel := context.WithTimeout(ctx, pbAuthTimeout)
 	defer cancel()
-	recordEmail, err := pocketbase.UserEmailFromRefresh(ctx, pbIssuerResolver, issuer, authHeader, rt)
+	recordEmail, err := pbUserAuth.UserEmail(ctx, issuer, authHeader, rt)
 	if err != nil {
-		return "", false, http.StatusUnauthorized, "pocketbase auth refresh failed"
+		return "", false, http.StatusUnauthorized, "pocketbase auth failed"
 	}
 	return recordEmail, true, 0, ""
 }

@@ -244,7 +244,7 @@ func TestUserEmailFromRefresh(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	email, err := UserEmailFromRefresh(context.Background(), NewIssuerResolver("", ""), srv.URL, "Bearer user-token", nil)
+	email, err := UserEmailFromRefresh(context.Background(), srv.URL, "Bearer user-token", nil)
 	if err != nil {
 		t.Fatalf("UserEmailFromRefresh: %v", err)
 	}

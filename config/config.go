@@ -180,10 +180,10 @@ type PostgREST struct {
 // PocketBase holds cluster PocketBase superuser credentials for gateway-side
 // admin API calls (auth-with-password once, bearer token reuse).
 type PocketBase struct {
-	URL         string `mapstructure:"url" validate:"omitempty,url"`
-	InternalURL string `mapstructure:"internalURL" validate:"omitempty,url"`
-	Username    string `mapstructure:"username"`
-	Password    string `mapstructure:"password"`
+	URL        string `mapstructure:"url" validate:"omitempty,url"`
+	IssuerHost string `mapstructure:"issuerHost" validate:"omitempty"`
+	Username   string `mapstructure:"username"`
+	Password   string `mapstructure:"password"`
 }
 
 type Nats struct {

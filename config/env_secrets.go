@@ -15,7 +15,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Admin.SigningSecret, "APP_ADMIN_SIGNINGSECRET")
 	setEnvString(&cfg.Admin.Resend.APIKey, "APP_ADMIN_RESEND_APIKEY")
 	setEnvString(&cfg.PocketBase.URL, "APP_POCKETBASE_URL")
-	setEnvString(&cfg.PocketBase.InternalURL, "APP_POCKETBASE_INTERNALURL")
+	setEnvString(&cfg.PocketBase.IssuerHost, "APP_POCKETBASE_ISSUERHOST")
 	setEnvString(&cfg.PocketBase.Username, "APP_POCKETBASE_USERNAME")
 	setEnvString(&cfg.PocketBase.Password, "APP_POCKETBASE_PASSWORD")
 	setEnvString(&cfg.LLM.BaseURL, "APP_LLM_BASEURL")

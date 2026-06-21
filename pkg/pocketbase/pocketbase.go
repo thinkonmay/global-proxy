@@ -196,12 +196,10 @@ func (c *Client) Do(ctx context.Context, method, path string, q url.Values, body
 }
 
 // RefreshAuth POSTs /api/collections/{collection}/auth-refresh with the caller token.
-// clientIssuer is the URL the client sent (?issuer=); resolver may map it to an
-// internal base reachable from the gateway container.
-func RefreshAuth(ctx context.Context, resolver IssuerResolver, clientIssuer, collection, authorization string, rt http.RoundTripper) (*AuthResponse, error) {
-	baseURL := resolver.Resolve(clientIssuer)
+func RefreshAuth(ctx context.Context, clientIssuer, collection, authorization string, rt http.RoundTripper) (*AuthResponse, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(clientIssuer), "/")
 	path := "/api/collections/" + strings.Trim(collection, "/") + "/auth-refresh"
-	u := strings.TrimRight(baseURL, "/") + path
+	u := baseURL + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, http.NoBody)
 	if err != nil {
 		return nil, err
@@ -209,7 +207,10 @@ func RefreshAuth(ctx context.Context, resolver IssuerResolver, clientIssuer, col
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", bearerToken(authorization))
 
-	client := resolver.httpClient(baseURL, rt)
+	client := &http.Client{Transport: rt}
+	if client.Transport == nil {
+		client.Transport = http.DefaultTransport
+	}
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
 
@@ -235,8 +236,8 @@ func RefreshAuth(ctx context.Context, resolver IssuerResolver, clientIssuer, col
 
 // UserEmailFromRefresh validates a users-collection token via auth-refresh
 // and returns the record email.
-func UserEmailFromRefresh(ctx context.Context, resolver IssuerResolver, clientIssuer, authorization string, rt http.RoundTripper) (string, error) {
-	resp, err := RefreshAuth(ctx, resolver, clientIssuer, usersCollection, authorization, rt)
+func UserEmailFromRefresh(ctx context.Context, clientIssuer, authorization string, rt http.RoundTripper) (string, error) {
+	resp, err := RefreshAuth(ctx, clientIssuer, usersCollection, authorization, rt)
 	if err != nil {
 		return "", err
 	}
@@ -464,6 +465,14 @@ func bearerToken(token string) string {
 		return token
 	}
 	return "Bearer " + token
+}
+
+func rawAuthToken(authorization string) string {
+	token := strings.TrimSpace(authorization)
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return strings.TrimSpace(token[7:])
+	}
+	return token
 }
 
 func normalizeAuthHeader(v string) string {
