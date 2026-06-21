@@ -73,7 +73,7 @@ func DecodeRPC(wire []byte, password1 string) (*Request, error) {
 	return &req, nil
 }
 
-// EncodeRPCRequest encrypts and shuffles a client RPC request for POST /api/global_rpc.
+// EncodeRPCRequest encrypts and shuffles a legacy RPC request (tests only).
 func EncodeRPCRequest(req Request, password1 string) ([]byte, error) {
 	if password1 == "" {
 		password1 = DefaultPassword1()

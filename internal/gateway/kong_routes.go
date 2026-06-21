@@ -19,10 +19,13 @@ const (
 )
 
 var removedStackMsg = []byte(`{"message":"GoTrue, Realtime, and Edge Functions are not deployed in this stack"}`)
+var removedPublicRPCMsg = []byte(`{"error":"RPC endpoints are not exposed on the public gateway; use /v1/* controllers"}`)
 
 // registerKongRoutes wires Supabase-compatible Kong service mappings (rest, graphql,
 // storage, meta, studio) with key-auth, ACL, WAF, and basic-auth parity.
 func registerKongRoutes(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper) {
+	registerRemovedPublicRPCRoutes(mux)
+
 	keys := auth.NewKeys(
 		cfg.Supabase.AnonKey,
 		cfg.Supabase.PublishableKey,
@@ -72,6 +75,20 @@ func registerKongRoutes(mux *http.ServeMux, cfg *config.Config, rt http.RoundTri
 	registerBlockedRoutes(mux)
 
 	// Studio is served on studio.<domain> via admin host router (B12).
+}
+
+func registerRemovedPublicRPCRoutes(mux *http.ServeMux) {
+	serve := http.HandlerFunc(servePublicRPCRemoved)
+	mux.Handle("POST /v1/rpc", serve)
+	mux.Handle("POST /v1/rpc/", serve)
+	mux.Handle(restPrefix+"/rpc", serve)
+	mux.Handle(restPrefix+"/rpc/", serve)
+}
+
+func servePublicRPCRemoved(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(removedPublicRPCMsg)
 }
 
 func registerRemovedRoutes(mux *http.ServeMux) {

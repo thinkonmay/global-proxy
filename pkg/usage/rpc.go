@@ -69,7 +69,7 @@ func MergeMissionUsageProgress(ctx context.Context, q MissionProgressReader, ema
 	return out, nil
 }
 
-// UsageRPCEmail extracts the user email from common global_rpc arg shapes.
+// UsageRPCEmail extracts the user email from common RPC arg shapes.
 func UsageRPCEmail(args json.RawMessage) string {
 	if len(args) == 0 {
 		return ""

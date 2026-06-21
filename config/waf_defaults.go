@@ -13,10 +13,5 @@ func defaultPublicReadPaths() []string {
 		"/rest/v1/banner",
 		"/rest/v1/binary_release",
 		"/rest/v1/constant",
-		"/rest/v1/rpc/get_depotkey",
-		"/rest/v1/rpc/search_stores",
-		"/rest/v1/rpc/local_version_control_v1",
-		"/rest/v1/rpc/keepalive_v1",
-		"/rest/v1/rpc/sync_volume_data_v1",
 	}
 }

@@ -24,11 +24,16 @@ var (
 func newMux(
 	h *handler.Handler,
 	hub *SSEHub,
-	globalRPC *handler.GlobalRPCHandler,
+	catalog *handler.CatalogHandler,
+	ota *handler.OTAHandler,
+	gamification *handler.GamificationHandler,
+	billing *handler.BillingHandler,
+	store *handler.StoreHandler,
 	grants *handler.GrantHandler,
 	files *handler.FilesHandler,
 	nodeProxy *handler.NodeProxyHandler,
 	personaHTTP *handler.PersonaHandler,
+	nodeRuntime *handler.NodeRuntimeHandler,
 	pwa *handler.PWAHandler,
 	devJobs bool,
 	cfg *config.Config,
@@ -39,12 +44,17 @@ func newMux(
 	mux := http.NewServeMux()
 
 	h.Register(mux, handler.RouteOptions{DevJobs: devJobs})
-	globalRPC.Register(mux)
+	catalog.Register(mux)
+	ota.Register(mux)
+	gamification.Register(mux)
+	billing.Register(mux)
+	store.Register(mux)
 	pwa.Register(mux)
 	grants.Register(mux)
 	files.Register(mux)
 	nodeProxy.Register(mux)
 	personaHTTP.Register(mux)
+	nodeRuntime.Register(mux)
 
 	mux.HandleFunc("GET /sse", hub.Serve)
 

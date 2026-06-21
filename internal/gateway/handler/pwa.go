@@ -12,10 +12,8 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
-	"github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
-	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 )
 
 const pwaQueryTimeout = 5 * time.Second
@@ -25,14 +23,13 @@ type PWAHandler struct {
 	pr         *postgrest.Client
 	pbAdmin    *pocketbase.Client
 	pbURL      string
-	rpc        *GlobalRPCHandler
 	persona    *PersonaHandler
 	llm        config.LLM
 	httpClient *http.Client
 	transport  http.RoundTripper
 }
 
-func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier, persona *PersonaHandler, pay *payment.Service) *PWAHandler {
+func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, persona *PersonaHandler) *PWAHandler {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
@@ -40,7 +37,6 @@ func NewPWAHandler(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper
 		pr:      pr,
 		pbURL:   strings.TrimRight(cfg.PocketBase.URL, "/"),
 		pbAdmin: pocketbase.New(pocketbase.Config{URL: cfg.PocketBase.URL, Username: cfg.PocketBase.Username, Password: cfg.PocketBase.Password, Transport: rt}),
-		rpc:     NewGlobalRPCHandler(cfg, pr, rt, usageQ, pay),
 		persona: persona,
 		llm:     cfg.LLM,
 		httpClient: &http.Client{
@@ -67,17 +63,14 @@ func (h *PWAHandler) Register(mux *http.ServeMux) {
 		{http.MethodPost, "/update_code_name", h.UpdateCodeName},
 		{http.MethodPost, "/search", h.Search},
 		{http.MethodGet, "/persona/recommendations", h.persona.GetRecommendations},
-		{http.MethodPost, "/global_rpc", h.rpc.Serve},
 	}
 	for _, route := range routes {
 		pwaPath := "/api/pwa" + route.path
 		legacyPath := "/api" + route.path
 		mux.HandleFunc(route.method+" "+pwaPath, route.fn)
 		mux.HandleFunc(route.method+" "+pwaPath+"/", route.fn)
-		if route.path != "/global_rpc" {
-			mux.HandleFunc(route.method+" "+legacyPath, route.fn)
-			mux.HandleFunc(route.method+" "+legacyPath+"/", route.fn)
-		}
+		mux.HandleFunc(route.method+" "+legacyPath, route.fn)
+		mux.HandleFunc(route.method+" "+legacyPath+"/", route.fn)
 	}
 }
 

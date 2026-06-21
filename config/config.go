@@ -306,8 +306,6 @@ func mergeSupabaseKeys(cfg *Config) {
 func defaultCorazaSkipPaths() []string {
 	return []string{
 		"/storage/v1/",
-		"/api/global_rpc",
-		"/api/pwa/global_rpc",
 		"/api/track",
 		"/api/identify",
 		"/api/script.js",

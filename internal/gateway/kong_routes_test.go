@@ -258,6 +258,24 @@ func TestKongMCPBlocked(t *testing.T) {
 	}
 }
 
+func TestKongPublicRPCRemoved(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer backend.Close()
+
+	mux := http.NewServeMux()
+	registerKongRoutes(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+
+	for _, path := range []string{"/v1/rpc", "/rest/v1/rpc/get_all_rank_rewards"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}")))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: expected 404, got %d", path, rec.Code)
+		}
+	}
+}
+
 func TestKongRestBreakerRejection(t *testing.T) {
 	bt := guard.New(nil, guard.Config{MaxFailures: 1, Cooldown: time.Minute, MaxConcurrent: 1})
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

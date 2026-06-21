@@ -15,7 +15,7 @@ func TestIsGatewayAPIPath(t *testing.T) {
 		"/pg/tables",
 		"/api/pwa/plans",
 		"/api/plans",
-		"/api/global_rpc",
+		"/v1/billing/wallet",
 		"/v1/files/list/foo",
 		"/v1/volumes/snapshots",
 		"/sse",
