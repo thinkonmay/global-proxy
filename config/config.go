@@ -308,6 +308,11 @@ func defaultCorazaSkipPaths() []string {
 		"/storage/v1/",
 		"/api/global_rpc",
 		"/api/pwa/global_rpc",
+		"/api/track",
+		"/api/identify",
+		"/api/script.js",
+		"/api/site/tracking-config/",
+		"/api/session-replay/",
 	}
 }
 

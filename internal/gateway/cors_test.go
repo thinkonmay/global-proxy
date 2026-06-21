@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/thinkonmay/global-proxy/api/config"
@@ -85,6 +86,33 @@ func TestBuildAllowedOriginsIncludesPort(t *testing.T) {
 	}
 	if _, ok := allowed["http://studio.haiphong.thinkmay.net:8080"]; !ok {
 		t.Fatal("missing http origin with port")
+	}
+}
+
+func TestCORSMiddlewareAllowsRybbitAPIKeyPreflight(t *testing.T) {
+	cfg := &config.Config{
+		TLS:     config.TLS{HTTPSPort: "4433", Hosts: []string{"haiphong.thinkmay.net", "analytics.haiphong.thinkmay.net"}},
+		Gateway: config.Gateway{PublicURL: "https://haiphong.thinkmay.net:4433"},
+	}
+	h := corsMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("OPTIONS should not reach handler")
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/track", nil)
+	req.Header.Set("Origin", "https://haiphong.thinkmay.net:4433")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "content-type,x-api-key")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://haiphong.thinkmay.net:4433" {
+		t.Fatalf("Allow-Origin = %q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "x-api-key") {
+		t.Fatalf("Allow-Headers = %q, want X-API-Key", got)
 	}
 }
 

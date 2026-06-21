@@ -52,6 +52,7 @@ func newMux(
 	if gate != nil {
 		gate.RegisterPublicAccessRoutes(mux)
 	}
+	registerRybbitIngestRoutes(mux, cfg, rt)
 	registerKongRoutes(mux, cfg, rt)
 
 	chain := []guard.Middleware{
@@ -68,7 +69,11 @@ func newMux(
 		routes = wrapWebsiteFallback(routes, website)
 	}
 	public := guard.Chain(routes, chain...)
-	return wrapHostRouter(public, cfg, gate, rt)
+	router := wrapHostRouter(public, cfg, gate, rt)
+	// All virtual hosts (public, analytics, studio, grafana) need CORS — admin hosts
+	// bypass the public middleware chain, and Rybbit ingest is cross-origin until the
+	// PWA loads script.js from the public host (first-party proxy).
+	return corsMiddleware(cfg)(router)
 }
 
 func initCoraza(cfg config.Coraza) (*corazawaf.Middleware, error) {

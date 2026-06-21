@@ -10,7 +10,8 @@ import (
 )
 
 // Supabase/Kong parity — Studio cross-origin uploads (incl. TUS resumable) need these.
-const corsAllowHeaders = "Authorization, Content-Type, apikey, x-client-info, x-upsert, range, x-requested-with, accept, accept-profile, content-profile, prefer, x-forwarded-host, x-forwarded-for, upload-length, upload-offset, upload-metadata, tus-resumable, x-http-method-override"
+// X-API-Key: Rybbit browser ingest when data-api-key is present (cross-origin preflight).
+const corsAllowHeaders = "Authorization, Content-Type, apikey, X-API-Key, x-client-info, x-upsert, range, x-requested-with, accept, accept-profile, content-profile, prefer, x-forwarded-host, x-forwarded-for, upload-length, upload-offset, upload-metadata, tus-resumable, x-http-method-override"
 
 const corsAllowMethods = "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
 
