@@ -108,7 +108,7 @@ persona:
   rybbitSiteDomain: ""
 
 gateway:
-  publicURL: "https://thinkmay.net"
+  publicURL: "https://haiphong.thinkmay.net:4433"
 
 storj:
   accessGrant: ""
@@ -123,7 +123,7 @@ admin:
   enabled: false
   allowedIPs: []
   allowedEmails: []
-  cookieDomain: ".thinkmay.net"
+  cookieDomain: ".haiphong.thinkmay.net"
   sessionTTLHours: 8
   otpTTLMinutes: 10
   signingSecret: ""
@@ -135,10 +135,10 @@ admin:
     apiKey: ""
     from: "Thinkmay Ops <ops@thinkmay.net>"
   hosts:
-    public: thinkmay.net
-    studio: studio.thinkmay.net
-    analytics: analytics.thinkmay.net
-    grafana: grafana.thinkmay.net
+    public: haiphong.thinkmay.net
+    studio: studio.haiphong.thinkmay.net
+    analytics: analytics.haiphong.thinkmay.net
+    grafana: grafana.haiphong.thinkmay.net
   ingest:
     analyticsPrefix: /api/
   upstreams:
@@ -162,7 +162,10 @@ tls:
   httpsPort: "443"
   autocertCache: "/.autocert_cache"
   hosts:
-    - thinkmay.net
+    - haiphong.thinkmay.net
+    - studio.haiphong.thinkmay.net
+    - analytics.haiphong.thinkmay.net
+    - grafana.haiphong.thinkmay.net
 
 # Dev-only plain HTTP when APP_TLS_ENABLED=0 (not used in compose).
 port: "4000"
