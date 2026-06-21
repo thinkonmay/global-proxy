@@ -11,6 +11,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/app ./internal/${CMD}
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /
 COPY --from=build /out/app /app
-# Single shared config baked at /config/config.yaml (viper searches ./config).
-COPY --from=build /src/config /config
+# Runtime config is mounted from the repo root (see config.yaml.example).
+# Viper loads /config/config.yaml at container start.
 ENTRYPOINT ["/app"]
