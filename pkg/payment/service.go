@@ -22,12 +22,14 @@ type Service struct {
 	http      *http.Client
 	log       *slog.Logger
 	pollEvery time.Duration
+	providers providerConfig
 }
 
 // Config configures checkout backfill and status polling intervals.
 type Config struct {
 	PollEvery     time.Duration
 	CheckoutEvery time.Duration
+	Providers     providerConfig
 }
 
 func NewService(pr *postgrest.Client, cfg Config, log *slog.Logger) *Service {
@@ -43,6 +45,7 @@ func NewService(pr *postgrest.Client, cfg Config, log *slog.Logger) *Service {
 		http:      &http.Client{Timeout: 15 * time.Second},
 		log:       log,
 		pollEvery: every,
+		providers: cfg.Providers,
 	}
 }
 
@@ -127,11 +130,7 @@ func (s *Service) listNeedsCheckout(ctx context.Context) ([]txnRow, error) {
 }
 
 func (s *Service) tickPoll(ctx context.Context) {
-	cfg, err := s.loadProviderConfig(ctx)
-	if err != nil {
-		s.log.Warn("payment poller: load config", "err", err)
-		return
-	}
+	cfg := s.loadProviderConfig()
 	txns, err := s.listPending(ctx)
 	if err != nil {
 		s.log.Warn("payment poller: list pending", "err", err)

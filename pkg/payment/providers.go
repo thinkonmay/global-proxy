@@ -7,35 +7,35 @@ import (
 )
 
 type payOSConfig struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	ChecksumKey  string `json:"checksum_key"`
+	ClientID     string `json:"client_id" mapstructure:"clientId"`
+	ClientSecret string `json:"client_secret" mapstructure:"clientSecret"`
+	ChecksumKey  string `json:"checksum_key" mapstructure:"checksumKey"`
 }
 
 type stripeConfig struct {
-	SecretKey string `json:"secret_key"`
+	SecretKey string `json:"secret_key" mapstructure:"secretKey"`
 }
 
 type payerMaxConfig struct {
-	AppID      string `json:"app_id"`
-	MerchantNo string `json:"merchant_no"`
-	BaseURL    string `json:"base_url"`
-	PrivateKey string `json:"private_key"`
-	PublicKey  string `json:"public_key"`
+	AppID      string `json:"app_id" mapstructure:"appId"`
+	MerchantNo string `json:"merchant_no" mapstructure:"merchantNo"`
+	BaseURL    string `json:"base_url" mapstructure:"baseURL"`
+	PrivateKey string `json:"private_key" mapstructure:"privateKey"`
+	PublicKey  string `json:"public_key" mapstructure:"publicKey"`
 }
 
 type payssionConfig struct {
-	APIKey    string `json:"api_key"`
-	PMID      string `json:"pm_id"`
-	SecretKey string `json:"secret_key"`
-	Link      string `json:"link"`
+	APIKey    string `json:"api_key" mapstructure:"apiKey"`
+	PMID      string `json:"pm_id" mapstructure:"pmId"`
+	SecretKey string `json:"secret_key" mapstructure:"secretKey"`
+	Link      string `json:"link" mapstructure:"link"`
 }
 
 type providerConfig struct {
-	PayOS     payOSConfig
-	Stripe    stripeConfig
-	PayerMax  payerMaxConfig
-	Payssion  payssionConfig
+	PayOS    payOSConfig
+	Stripe   stripeConfig
+	PayerMax payerMaxConfig
+	Payssion payssionConfig
 }
 
 type txnRow struct {
@@ -50,31 +50,8 @@ type txnRow struct {
 	ExpireAt string          `json:"expire_at"`
 }
 
-func (s *Service) loadProviderConfig(ctx context.Context) (providerConfig, error) {
-	var rows []struct {
-		Name  string          `json:"name"`
-		Value json.RawMessage `json:"value"`
-	}
-	q := url.Values{}
-	q.Set("select", "name,value")
-	q.Set("name", "in.(payos,stripe,payermax,payssion)")
-	if err := s.pr.SelectService(ctx, "constant", q, &rows); err != nil {
-		return providerConfig{}, err
-	}
-	var out providerConfig
-	for _, row := range rows {
-		switch row.Name {
-		case "payos":
-			_ = json.Unmarshal(row.Value, &out.PayOS)
-		case "stripe":
-			_ = json.Unmarshal(row.Value, &out.Stripe)
-		case "payermax":
-			_ = json.Unmarshal(row.Value, &out.PayerMax)
-		case "payssion":
-			_ = json.Unmarshal(row.Value, &out.Payssion)
-		}
-	}
-	return out, nil
+func (s *Service) loadProviderConfig() providerConfig {
+	return s.providers
 }
 
 func (s *Service) loadExchangeRate(ctx context.Context, currency string) (float64, error) {

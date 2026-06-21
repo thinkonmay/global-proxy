@@ -36,10 +36,7 @@ func (s *Service) FillCheckout(ctx context.Context, txnID int64) (json.RawMessag
 		return nil, fmt.Errorf("transaction %d: provider not set", txnID)
 	}
 
-	cfg, err := s.loadProviderConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
+	cfg := s.loadProviderConfig()
 	rate, err := s.loadExchangeRate(ctx, txn.Currency)
 	if err != nil {
 		return nil, err

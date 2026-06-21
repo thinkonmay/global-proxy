@@ -28,10 +28,6 @@ func TestPollerTickUpdatesStripeTransaction(t *testing.T) {
 
 	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/constant":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"name": "stripe", "value": map[string]any{"secret_key": "sk_test"}},
-			})
 		case r.URL.Path == "/transactions" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"id": float64(42), "provider": "STRIPE", "status": "PENDING",
@@ -55,7 +51,12 @@ func TestPollerTickUpdatesStripeTransaction(t *testing.T) {
 	t.Cleanup(prSrv.Close)
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	p := NewPoller(pr, Config{PollEvery: time.Minute}, nil)
+	p := NewPoller(pr, Config{
+		PollEvery: time.Minute,
+		Providers: providerConfig{
+			Stripe: stripeConfig{SecretKey: "sk_test"},
+		},
+	}, nil)
 	stripeHost := strings.TrimPrefix(stripeSrv.URL, "http://")
 	p.http = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

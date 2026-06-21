@@ -80,6 +80,7 @@ func main() {
 		}
 		pay := payment.NewService(pr, payment.Config{
 			PollEvery: every,
+			Providers: payment.ConfigFromGateway(cfg.Payment),
 		}, slog.Default())
 		pay.Run(ctx, cfg.Payment.CheckoutEnabled, cfg.Payment.PollerEnabled)
 	}

@@ -79,11 +79,33 @@ type Persona struct {
 
 // Payment configures provider checkout + status polling in the worker (G8).
 // Replaces Postgres get_*_data, on_transaction_driver_v2, and verify_all_transactions_v2 HTTP.
+// Provider credentials are loaded from .env via APP_PAYMENT_* (not config.yaml).
 type Payment struct {
 	Enabled         bool   `mapstructure:"enabled"`
 	CheckoutEnabled bool   `mapstructure:"checkoutEnabled"`
 	PollerEnabled   bool   `mapstructure:"pollerEnabled"`
 	PollEvery       string `mapstructure:"pollEvery"`
+	Stripe          struct {
+		SecretKey string `mapstructure:"secretKey"`
+	} `mapstructure:"stripe"`
+	PayOS struct {
+		ClientID     string `mapstructure:"clientId"`
+		ClientSecret string `mapstructure:"clientSecret"`
+		ChecksumKey  string `mapstructure:"checksumKey"`
+	} `mapstructure:"payos"`
+	PayerMax struct {
+		AppID      string `mapstructure:"appId"`
+		MerchantNo string `mapstructure:"merchantNo"`
+		BaseURL    string `mapstructure:"baseURL"`
+		PrivateKey string `mapstructure:"privateKey"`
+		PublicKey  string `mapstructure:"publicKey"`
+	} `mapstructure:"payermax"`
+	Payssion struct {
+		APIKey    string `mapstructure:"apiKey"`
+		PMID      string `mapstructure:"pmId"`
+		SecretKey string `mapstructure:"secretKey"`
+		Link      string `mapstructure:"link"`
+	} `mapstructure:"payssion"`
 }
 
 type TLS struct {
