@@ -50,6 +50,41 @@ func TestBillingListActiveAddonsPublicRPC(t *testing.T) {
 	}
 }
 
+func TestBillingDomainsPublic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rpc/get_domains_availability_v5" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"domain": "haiphong.thinkmay.net", "routing_only": false},
+		})
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	h := NewBillingHandler(pr, nil, nil)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/billing/domains", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Data) != 1 || out.Data[0]["domain"] != "haiphong.thinkmay.net" {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
 func TestBillingUnsubscribeInvalidAddonID(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"})
 	h := NewBillingHandler(pr, nil, nil)

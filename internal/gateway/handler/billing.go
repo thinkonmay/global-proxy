@@ -179,12 +179,6 @@ func (h *BillingHandler) UnsubscribeAddon(w http.ResponseWriter, r *http.Request
 }
 
 func (h *BillingHandler) Domains(w http.ResponseWriter, r *http.Request) {
-	email, ok, status, msg := requireUser(r.Context(), r, h.transport)
-	if !ok {
-		writeAuthErr(w, status, msg)
-		return
-	}
-	_ = email
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
