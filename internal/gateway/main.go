@@ -34,8 +34,6 @@ func Run() error {
 	}
 	cfg.SetupLogger()
 
-	handler.ConfigureAuth(pr, cfg.PocketBase)
-
 	bt := guard.New(nil, guard.Config{MaxFailures: 5, Cooldown: 30 * time.Second, MaxConcurrent: 64})
 
 	pr := postgrest.New(postgrest.Config{
@@ -44,6 +42,8 @@ func Run() error {
 		ServiceKey: cfg.PostgREST.ServiceKey,
 		Transport:  bt,
 	})
+
+	handler.ConfigureAuth(pr, cfg.PocketBase)
 
 	eventBus, err := connectBus(cfg)
 	if err != nil {
