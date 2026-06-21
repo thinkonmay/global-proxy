@@ -135,8 +135,15 @@ func (m *Memory) handle(ctx context.Context, topic, group string, h bus.Handler,
 		}
 	}
 	if failed > 0 {
+		var firstErr error
+		for _, err := range errs {
+			if err != nil {
+				firstErr = err
+				break
+			}
+		}
 		m.logger.ErrorContext(ctx, "bus: handler failed",
-			"topic", topic, "group", group, "batch", len(batch), "failed", failed)
+			"topic", topic, "group", group, "batch", len(batch), "failed", failed, "err", firstErr)
 	}
 	m.inflight.Add(-len(batch))
 }

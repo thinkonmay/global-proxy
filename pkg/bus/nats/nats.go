@@ -195,8 +195,15 @@ func (n *Nats) handle(topic, group string, h bus.Handler, msgs []jetstream.Msg) 
 		}
 	}
 	if failed > 0 {
+		var firstErr error
+		for _, err := range errs {
+			if err != nil {
+				firstErr = err
+				break
+			}
+		}
 		n.logger.Error("bus: handler failed",
-			"topic", topic, "group", group, "batch", len(payloads), "failed", failed)
+			"topic", topic, "group", group, "batch", len(payloads), "failed", failed, "err", firstErr)
 	}
 }
 

@@ -1,5 +1,5 @@
 -- Test fixture for idempotency integration tests (register_message / mark_*).
--- Minimal Postgres bootstrap — not used by root docker-compose.
+-- Production schema: volumes/supabase/db/init/41_idempotency.sql
 
 CREATE TABLE IF NOT EXISTS processed_message (
   id         text PRIMARY KEY,
