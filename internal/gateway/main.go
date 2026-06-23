@@ -15,7 +15,8 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
-	"github.com/thinkonmay/global-proxy/api/pkg/payment"
+	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
+	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
@@ -71,14 +72,13 @@ func Run() error {
 		usageQ = usage.NewQuerier(chConn)
 	}
 
-	paySvc := payment.NewService(pr, payment.Config{
-		Providers: payment.ConfigFromGateway(cfg.Payment),
-	}, slog.Default())
+	payReg := registry.NewRegistry(registry.ConfigFromGateway(cfg.Payment))
+	payRates := payment.NewRateService(pr)
 
 	catalogHTTP := handler.NewCatalogHandler(pr)
 	otaHTTP := handler.NewOTAHandler(pr, cfg.PostgREST.ServiceKey)
 	gamificationHTTP := handler.NewGamificationHandler(pr, bt, usageQ)
-	billingHTTP := handler.NewBillingHandler(pr, bt, paySvc)
+	billingHTTP := handler.NewBillingHandler(pr, bt, payReg, payRates)
 	storeHTTP := handler.NewStoreHandler(pr, bt)
 	grants := handler.NewGrantHandler(*cfg, pr, bt)
 	filesHTTP := handler.NewFilesHandler(*cfg, pr, bt)
@@ -103,7 +103,7 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, nodeProxy, personaHTTP, nodeRuntimeHTTP, pwa, devJobs, cfg, bt, coraza, gate)
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, nodeProxy, personaHTTP, nodeRuntimeHTTP, pwa, devJobs, cfg, bt, coraza, gate, payReg, eventBus)
 
 	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
 	if err != nil {

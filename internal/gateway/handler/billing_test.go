@@ -1,17 +1,84 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
+	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
+// fakeCharger implements payment.Client returning a fixed redirect URL.
+type fakeCharger struct{ payment.Client }
+
+func (fakeCharger) Name() string { return "payos" }
+func (fakeCharger) Charge(_ context.Context, a payment.ChargeParams) (payment.Charge, error) {
+	return payment.Charge{ID: a.IdempotencyKey, Status: payment.StatusPending, RedirectURL: "https://pay/x"}, nil
+}
+
+func TestFillCheckoutReturnsURL(t *testing.T) {
+	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
+	h := &BillingHandler{registry: reg}
+	ch, err := h.fillCheckout(context.Background(), txnRow{ID: 7, Provider: "payos", Currency: "VND", Amount: 100}, 0.004)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch.RedirectURL != "https://pay/x" {
+		t.Fatalf("RedirectURL = %q", ch.RedirectURL)
+	}
+}
+
+// TestCreateDepositRowLoopDataShape verifies that fillCheckout + the data-shape assembly
+// in CreateDeposit produce the expected JSON keys (redirect_url, charge_id, and detail when
+// non-empty). The CreateDeposit handler itself cannot be driven end-to-end in a unit test
+// without auth: requireUser relies on the package-level pbUserAuth global which requires the
+// PocketBase + cluster issuer registry to be configured. End-to-end coverage of the full
+// row-loop (RPC → loadTransaction → rates.Load → fillCheckout → Update) is left for the
+// live-DB integration suite (WITH_INTEGRATION=1).
+func TestCreateDepositRowLoopDataShape(t *testing.T) {
+	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
+	h := &BillingHandler{registry: reg}
+
+	txn := txnRow{ID: 42, Provider: "payos", Currency: "VND", Amount: 200}
+	ch, err := h.fillCheckout(context.Background(), txn, 0.004)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Replicate the data-shape assembly from CreateDeposit.
+	out := map[string]any{"redirect_url": ch.RedirectURL, "charge_id": ch.ID}
+	if len(ch.Detail) > 0 {
+		out["detail"] = ch.Detail
+	}
+	dataBytes, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(dataBytes, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed["redirect_url"] != "https://pay/x" {
+		t.Fatalf("redirect_url = %v", parsed["redirect_url"])
+	}
+	if parsed["charge_id"] != "42" {
+		t.Fatalf("charge_id = %v", parsed["charge_id"])
+	}
+	// fakeCharger returns no Detail, so the key must be absent.
+	if _, ok := parsed["detail"]; ok {
+		t.Fatalf("detail should be absent for provider with nil Detail, got: %v", parsed["detail"])
+	}
+}
+
 func TestBillingListActiveAddonsRequireAuth(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"})
-	h := NewBillingHandler(pr, nil, nil)
+	h := NewBillingHandler(pr, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -37,7 +104,7 @@ func TestBillingListActiveAddonsPublicRPC(t *testing.T) {
 	defer srv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
-	h := NewBillingHandler(pr, nil, nil)
+	h := NewBillingHandler(pr, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -63,7 +130,7 @@ func TestBillingDomainsPublic(t *testing.T) {
 	defer srv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
-	h := NewBillingHandler(pr, nil, nil)
+	h := NewBillingHandler(pr, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -85,9 +152,40 @@ func TestBillingDomainsPublic(t *testing.T) {
 	}
 }
 
+// chargeSpy is a payment.Client that records charge params and returns success.
+type chargeSpy struct {
+	payment.Client
+	fn func(payment.ChargeParams)
+}
+
+func (chargeSpy) Name() string { return "stripe" }
+func (s chargeSpy) Charge(_ context.Context, a payment.ChargeParams) (payment.Charge, error) {
+	if s.fn != nil {
+		s.fn(a)
+	}
+	return payment.Charge{Status: payment.StatusSuccess}, nil
+}
+
+func TestFillCheckoutOffSession(t *testing.T) {
+	var gotToken, gotCustomer string
+	reg := registry.NewRegistryWith(map[string]payment.Client{"stripe": chargeSpy{
+		fn: func(a payment.ChargeParams) { gotToken = a.Token; gotCustomer = a.CustomerRef },
+	}})
+	h := &BillingHandler{registry: reg}
+	_, err := h.fillCheckoutCard(context.Background(),
+		txnRow{ID: 7, Provider: "stripe", Currency: "USD", Amount: 252}, 12.6,
+		"pm_1", "cus_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotToken != "pm_1" || gotCustomer != "cus_1" {
+		t.Fatalf("token=%q customer=%q", gotToken, gotCustomer)
+	}
+}
+
 func TestBillingUnsubscribeInvalidAddonID(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"})
-	h := NewBillingHandler(pr, nil, nil)
+	h := NewBillingHandler(pr, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -97,5 +195,38 @@ func TestBillingUnsubscribeInvalidAddonID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestResolveUserIDQueryIncludesEmail verifies that resolveUserID issues a SelectService
+// call whose query string contains both the "users" table and an email equality filter.
+// This confirms Fix 1's email→id lookup uses the correct filter before the user_id-scoped
+// card lookup — the full IDOR guard (user_id + provider filters) requires the live DB and
+// is covered by the integration suite (WITH_INTEGRATION=1).
+func TestResolveUserIDQueryIncludesEmail(t *testing.T) {
+	var capturedPath, capturedQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedQuery = r.URL.RawQuery
+		// Simulate no user found — resolveUserID must return an error.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	h := &BillingHandler{pr: pr}
+	_, err := h.resolveUserID(context.Background(), "alice@example.com")
+	if err == nil {
+		t.Fatal("expected error when user not found")
+	}
+
+	if capturedPath != "/users" {
+		t.Fatalf("path = %q, want /users", capturedPath)
+	}
+	if !strings.Contains(capturedQuery, "email=eq.alice%40example.com") &&
+		!strings.Contains(capturedQuery, "email=eq.alice@example.com") {
+		t.Fatalf("query %q missing email filter", capturedQuery)
 	}
 }

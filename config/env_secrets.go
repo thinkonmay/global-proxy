@@ -32,6 +32,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.ClickHouse.Password, "APP_CLICKHOUSE_PASSWORD")
 	setEnvString(&cfg.Persona.RybbitAPIKey, "APP_PERSONA_RYBBITAPIKEY")
 	setEnvString(&cfg.Payment.Stripe.SecretKey, "APP_PAYMENT_STRIPE_SECRETKEY")
+	setEnvString(&cfg.Payment.Stripe.WebhookSecret, "APP_PAYMENT_STRIPE_WEBHOOKSECRET")
 	setEnvString(&cfg.Payment.PayOS.ClientID, "APP_PAYMENT_PAYOS_CLIENTID")
 	setEnvString(&cfg.Payment.PayOS.ClientSecret, "APP_PAYMENT_PAYOS_CLIENTSECRET")
 	setEnvString(&cfg.Payment.PayOS.ChecksumKey, "APP_PAYMENT_PAYOS_CHECKSUMKEY")
@@ -44,6 +45,11 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Payment.Payssion.PMID, "APP_PAYMENT_PAYSSION_PMID")
 	setEnvString(&cfg.Payment.Payssion.SecretKey, "APP_PAYMENT_PAYSSION_SECRETKEY")
 	setEnvString(&cfg.Payment.Payssion.Link, "APP_PAYMENT_PAYSSION_LINK")
+	setEnvString(&cfg.Payment.SePay.MerchantID, "APP_PAYMENT_SEPAY_MERCHANTID")
+	setEnvString(&cfg.Payment.SePay.SecretKey, "APP_PAYMENT_SEPAY_SECRETKEY")
+	setEnvString(&cfg.Payment.SePay.IPNSecretKey, "APP_PAYMENT_SEPAY_IPNSECRETKEY")
+	setEnvString(&cfg.Payment.SePay.PublicBaseURL, "APP_PAYMENT_SEPAY_PUBLICBASEURL")
+	setEnvString(&cfg.Payment.SePay.ReturnURL, "APP_PAYMENT_SEPAY_RETURNURL")
 }
 
 func setEnvString(dst *string, key string) {

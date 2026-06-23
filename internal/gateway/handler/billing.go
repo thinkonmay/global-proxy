@@ -4,32 +4,135 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/thinkonmay/global-proxy/api/pkg/payment"
+	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
+	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
 const (
-	billingQueryTimeout  = 5 * time.Second
+	billingQueryTimeout   = 5 * time.Second
 	billingDepositTimeout = 30 * time.Second
 )
 
 // BillingHandler serves /v1/billing/* typed REST (replaces /v1/rpc billing RPCs).
 type BillingHandler struct {
 	pr        *postgrest.Client
-	payment   *payment.Service
+	registry  *registry.Registry
+	rates     *payment.RateService
 	transport http.RoundTripper
 }
 
-func NewBillingHandler(pr *postgrest.Client, rt http.RoundTripper, pay *payment.Service) *BillingHandler {
+func NewBillingHandler(pr *postgrest.Client, rt http.RoundTripper, reg *registry.Registry, rates *payment.RateService) *BillingHandler {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
-	return &BillingHandler{pr: pr, payment: pay, transport: rt}
+	return &BillingHandler{pr: pr, registry: reg, rates: rates, transport: rt}
+}
+
+// txnRow mirrors the transactions table columns used by billing.
+type txnRow struct {
+	ID       int64           `json:"id"`
+	Email    string          `json:"email"`
+	Amount   float64         `json:"amount"`
+	Currency string          `json:"currency"`
+	Provider string          `json:"provider"`
+	Data     json.RawMessage `json:"data"`
+	Metadata json.RawMessage `json:"metadata"`
+	ExpireAt string          `json:"expire_at"`
+}
+
+func dataIsEmpty(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return true
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	return len(m) == 0
+}
+
+// loadTransaction fetches a single transaction row by ID.
+func (h *BillingHandler) loadTransaction(ctx context.Context, id int64) (txnRow, error) {
+	var rows []txnRow
+	q := url.Values{}
+	q.Set("select", "id,email,amount,currency,provider,data,metadata,expire_at")
+	q.Set("id", "eq."+strconv.FormatInt(id, 10))
+	q.Set("limit", "1")
+	if err := h.pr.SelectService(ctx, "transactions", q, &rows); err != nil {
+		return txnRow{}, err
+	}
+	if len(rows) == 0 {
+		return txnRow{}, fmt.Errorf("transaction %d not found", id)
+	}
+	return rows[0], nil
+}
+
+// returnURLForMetadata builds a return URL from transaction metadata (e.g. a frontend callback URL).
+func returnURLForMetadata(raw json.RawMessage) string {
+	const base = "https://thinkmay.net"
+	if len(raw) == 0 {
+		return base
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil || len(m) == 0 {
+		return base
+	}
+	vals := url.Values{}
+	for k, v := range m {
+		vals.Set(k, fmt.Sprint(v))
+	}
+	q := vals.Encode()
+	if q == "" {
+		return base
+	}
+	return base + "?" + q
+}
+
+// fillCheckout converts the amount, calls the provider, and returns the Charge.
+func (h *BillingHandler) fillCheckout(ctx context.Context, txn txnRow, rate float64) (payment.Charge, error) {
+	if h.registry == nil {
+		return payment.Charge{}, fmt.Errorf("payment registry not configured")
+	}
+	client, ok := h.registry.Get(txn.Provider)
+	if !ok {
+		return payment.Charge{}, fmt.Errorf("unsupported provider %q", txn.Provider)
+	}
+	money := payment.ToMoney(txn.Amount, txn.Currency, rate)
+	return client.Charge(ctx, payment.ChargeParams{
+		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
+		Money:          money,
+		Description:    txn.Email,
+		ReturnURL:      returnURLForMetadata(txn.Metadata),
+	})
+}
+
+// fillCheckoutCard is like fillCheckout but charges a saved card off-session.
+// token is the provider payment-method handle (pm_ref) and customerRef is the
+// provider customer id (customer_ref). Both are required for off-session charges.
+func (h *BillingHandler) fillCheckoutCard(ctx context.Context, txn txnRow, rate float64, token, customerRef string) (payment.Charge, error) {
+	if h.registry == nil {
+		return payment.Charge{}, fmt.Errorf("payment registry not configured")
+	}
+	client, ok := h.registry.Get(txn.Provider)
+	if !ok {
+		return payment.Charge{}, fmt.Errorf("unsupported provider %q", txn.Provider)
+	}
+	money := payment.ToMoney(txn.Amount, txn.Currency, rate)
+	return client.Charge(ctx, payment.ChargeParams{
+		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
+		Money:          money,
+		Description:    txn.Email,
+		Token:          token,
+		CustomerRef:    customerRef,
+	})
 }
 
 func (h *BillingHandler) Register(mux *http.ServeMux) {
@@ -51,6 +154,7 @@ func (h *BillingHandler) Register(mux *http.ServeMux) {
 		{http.MethodPost, "/v1/billing/payments", h.CreatePayment},
 		{http.MethodPost, "/v1/billing/addon-charges/pay", h.PayAddonCharges},
 		{http.MethodPost, "/v1/billing/discount-codes/validate", h.ValidateDiscount},
+		{http.MethodGet, "/v1/billing/payment-methods", h.PaymentMethods},
 	}
 	for _, route := range routes {
 		mux.HandleFunc(route.method+" "+route.path, route.fn)
@@ -190,6 +294,80 @@ func (h *BillingHandler) Domains(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rows})
 }
 
+// pmRow mirrors the billing.payment_methods columns returned to the client.
+type pmRow struct {
+	ID          int64  `json:"id"`
+	Provider    string `json:"provider"`
+	CustomerRef string `json:"customer_ref"`
+	PmRef       string `json:"pm_ref"`
+	Brand       string `json:"brand"`
+	Last4       string `json:"last4"`
+	ExpMonth    int    `json:"exp_month"`
+	ExpYear     int    `json:"exp_year"`
+	IsDefault   bool   `json:"is_default"`
+}
+
+// appUserRow is a minimal projection of identity.app_user used to resolve email → id.
+type appUserRow struct {
+	ID int64 `json:"id"`
+}
+
+// PaymentMethods lists the saved payment methods for the authenticated user.
+// GET /v1/billing/payment-methods
+// Requires live DB — flagged for integration verification.
+func (h *BillingHandler) PaymentMethods(w http.ResponseWriter, r *http.Request) {
+	email, ok, status, msg := requireUser(r.Context(), r, h.transport)
+	if !ok {
+		writeAuthErr(w, status, msg)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
+	defer cancel()
+
+	// Resolve email → user_id via identity.app_user.
+	var users []appUserRow
+	uq := url.Values{}
+	uq.Set("select", "id")
+	uq.Set("email", "eq."+email)
+	uq.Set("limit", "1")
+	if err := h.pr.SelectService(ctx, "users", uq, &users); err != nil {
+		writeBillingErr(w, err)
+		return
+	}
+	if len(users) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	userID := users[0].ID
+
+	var rows []pmRow
+	q := url.Values{}
+	q.Set("select", "id,provider,customer_ref,pm_ref,brand,last4,exp_month,exp_year,is_default")
+	q.Set("user_id", "eq."+strconv.FormatInt(userID, 10))
+	if err := h.pr.SelectService(ctx, "payment_methods", q, &rows); err != nil {
+		writeBillingErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+// resolveUserID looks up the caller's numeric user id from the "users" view by email.
+// It returns an error (and writes the response) when the user is not found.
+func (h *BillingHandler) resolveUserID(ctx context.Context, email string) (int64, error) {
+	var users []appUserRow
+	uq := url.Values{}
+	uq.Set("select", "id")
+	uq.Set("email", "eq."+email)
+	uq.Set("limit", "1")
+	if err := h.pr.SelectService(ctx, "users", uq, &users); err != nil {
+		return 0, err
+	}
+	if len(users) == 0 {
+		return 0, fmt.Errorf("user not found")
+	}
+	return users[0].ID, nil
+}
+
 func (h *BillingHandler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	email, ok, status, msg := requireUser(r.Context(), r, h.transport)
 	if !ok {
@@ -197,11 +375,12 @@ func (h *BillingHandler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Amount       float64        `json:"amount"`
-		Currency     string         `json:"currency"`
-		Provider     string         `json:"provider"`
-		Metadata     map[string]any `json:"metadata"`
-		DiscountCode string         `json:"discount_code"`
+		Amount          float64        `json:"amount"`
+		Currency        string         `json:"currency"`
+		Provider        string         `json:"provider"`
+		Metadata        map[string]any `json:"metadata"`
+		DiscountCode    string         `json:"discount_code"`
+		PaymentMethodID int64          `json:"payment_method_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -221,7 +400,8 @@ func (h *BillingHandler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingDepositTimeout)
 	defer cancel()
 
-	var result json.RawMessage
+	// Call the RPC to create the deposit rows.
+	var rpcResult json.RawMessage
 	if err := h.pr.RPC(ctx, "create_pocket_deposit_v4", map[string]any{
 		"email":         email,
 		"amount":        body.Amount,
@@ -229,19 +409,122 @@ func (h *BillingHandler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		"provider":      body.Provider,
 		"metadata":      body.Metadata,
 		"discount_code": body.DiscountCode,
-	}, &result); err != nil {
+	}, &rpcResult); err != nil {
 		writeBillingErr(w, err)
 		return
 	}
-	if h.payment != nil {
-		enriched, err := h.payment.EnrichDepositResult(ctx, result)
-		if err != nil {
-			writeBillingErr(w, err)
-			return
-		}
-		result = enriched
+
+	// Parse the returned rows — each has {id, data}.
+	// For rows with empty data, fill checkout synchronously via the registry.
+	var rows []struct {
+		ID   int64           `json:"id"`
+		Data json.RawMessage `json:"data"`
 	}
-	writeJSON(w, http.StatusOK, map[string]json.RawMessage{"data": result})
+	if err := json.Unmarshal(rpcResult, &rows); err != nil {
+		// If the result is not an array (e.g. plain scalar), return as-is.
+		writeJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rpcResult})
+		return
+	}
+
+	if h.registry != nil {
+		// When payment_method_id is set, look up the saved card once for the whole loop.
+		// SECURITY: scope the lookup to the caller's user_id (IDOR guard) and assert
+		// the card's provider matches the requested provider.
+		var cardPmRef, cardCustomerRef string
+		if body.PaymentMethodID > 0 {
+			// Resolve caller identity to a numeric user_id first.
+			callerID, err := h.resolveUserID(ctx, email)
+			if err != nil {
+				writeBillingErr(w, err)
+				return
+			}
+
+			var pmRows []pmRow
+			pmq := url.Values{}
+			pmq.Set("select", "id,provider,customer_ref,pm_ref,brand,last4,exp_month,exp_year,is_default")
+			pmq.Set("id", "eq."+strconv.FormatInt(body.PaymentMethodID, 10))
+			pmq.Set("user_id", "eq."+strconv.FormatInt(callerID, 10))
+			pmq.Set("limit", "1")
+			if err := h.pr.SelectService(ctx, "payment_methods", pmq, &pmRows); err != nil {
+				writeBillingErr(w, err)
+				return
+			}
+			if len(pmRows) == 0 {
+				// Card not found OR belongs to a different user — do not leak which.
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "payment_method not found"})
+				return
+			}
+			// Assert the card's provider matches the deposit's requested provider.
+			if strings.ToLower(pmRows[0].Provider) != strings.ToLower(body.Provider) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payment_method provider mismatch"})
+				return
+			}
+			cardPmRef = pmRows[0].PmRef
+			cardCustomerRef = pmRows[0].CustomerRef
+		}
+
+		for i := range rows {
+			if !dataIsEmpty(rows[i].Data) {
+				continue
+			}
+			// Load the full transaction to get all fields needed for checkout.
+			txn, loadErr := h.loadTransaction(ctx, rows[i].ID)
+			if loadErr != nil {
+				writeBillingErr(w, loadErr)
+				return
+			}
+
+			rate := 0.0
+			if h.rates != nil {
+				var rateErr error
+				rate, rateErr = h.rates.Load(ctx, txn.Currency)
+				if rateErr != nil {
+					writeBillingErr(w, rateErr)
+					return
+				}
+			}
+
+			var ch payment.Charge
+			var chErr error
+			if cardPmRef != "" {
+				ch, chErr = h.fillCheckoutCard(ctx, txn, rate, cardPmRef, cardCustomerRef)
+			} else {
+				ch, chErr = h.fillCheckout(ctx, txn, rate)
+			}
+			if chErr != nil {
+				writeBillingErr(w, chErr)
+				return
+			}
+
+			// Build stored data generically; include redirect_url for requires_action/3DS flows.
+			out := map[string]any{"charge_id": ch.ID, "status": string(ch.Status)}
+			if ch.RedirectURL != "" {
+				out["redirect_url"] = ch.RedirectURL
+			}
+			if len(ch.Detail) > 0 {
+				out["detail"] = ch.Detail
+			}
+			dataBytes, err := json.Marshal(out)
+			if err != nil {
+				writeBillingErr(w, err)
+				return
+			}
+			q := url.Values{}
+			q.Set("id", "eq."+strconv.FormatInt(rows[i].ID, 10))
+			if err := h.pr.Update(ctx, "transactions", q, map[string]any{"data": json.RawMessage(dataBytes)}, nil); err != nil {
+				writeBillingErr(w, err)
+				return
+			}
+			rows[i].Data = dataBytes
+		}
+	}
+
+	enriched, err := json.Marshal(rows)
+	if err != nil {
+		writeBillingErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]json.RawMessage{"data": enriched})
 }
 
 func (h *BillingHandler) DepositStatus(w http.ResponseWriter, r *http.Request) {
@@ -317,9 +600,9 @@ func (h *BillingHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args := map[string]any{
-		"email":           email,
-		"plan_name":       body.PlanName,
-		"cluster_domain":  body.ClusterDomain,
+		"email":          email,
+		"plan_name":      body.PlanName,
+		"cluster_domain": body.ClusterDomain,
 	}
 	if body.Template != nil {
 		args["template"] = *body.Template

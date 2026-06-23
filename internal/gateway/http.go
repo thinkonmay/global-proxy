@@ -7,7 +7,9 @@ import (
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/pkg/admingate"
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
+	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	corazawaf "github.com/thinkonmay/global-proxy/api/pkg/waf/coraza"
 )
 
@@ -40,6 +42,8 @@ func newMux(
 	rt http.RoundTripper,
 	coraza *corazawaf.Middleware,
 	gate *admingate.Gate,
+	payReg *registry.Registry,
+	eventBus bus.Client,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -55,6 +59,7 @@ func newMux(
 	nodeProxy.Register(mux)
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)
+	handler.RegisterPaymentWebhooks(mux, payReg, eventBus)
 
 	mux.HandleFunc("GET /sse", hub.Serve)
 

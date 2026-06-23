@@ -102,3 +102,25 @@ tls:
 		t.Fatal("expected validation error for invalid log level")
 	}
 }
+
+func TestSePayEnvBinding(t *testing.T) {
+	t.Setenv("APP_PAYMENT_SEPAY_MERCHANTID", "m_123")
+	t.Setenv("APP_PAYMENT_SEPAY_IPNSECRETKEY", "ipn_secret")
+	cfg := &Config{}
+	mergeEnvSecrets(cfg)
+	if cfg.Payment.SePay.MerchantID != "m_123" {
+		t.Fatalf("MerchantID = %q, want m_123", cfg.Payment.SePay.MerchantID)
+	}
+	if cfg.Payment.SePay.IPNSecretKey != "ipn_secret" {
+		t.Fatalf("IPNSecretKey = %q, want ipn_secret", cfg.Payment.SePay.IPNSecretKey)
+	}
+}
+
+func TestStripeWebhookSecretEnv(t *testing.T) {
+	t.Setenv("APP_PAYMENT_STRIPE_WEBHOOKSECRET", "whsec_test_123")
+	cfg := &Config{}
+	mergeEnvSecrets(cfg)
+	if cfg.Payment.Stripe.WebhookSecret != "whsec_test_123" {
+		t.Fatalf("WebhookSecret = %q, want whsec_test_123", cfg.Payment.Stripe.WebhookSecret)
+	}
+}

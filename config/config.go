@@ -82,8 +82,9 @@ type Persona struct {
 type Payment struct {
 	Enabled   bool   `mapstructure:"enabled"`
 	PollEvery string `mapstructure:"pollEvery"`
-	Stripe          struct {
-		SecretKey string `mapstructure:"secretKey"`
+	Stripe struct {
+		SecretKey     string `mapstructure:"secretKey"`
+		WebhookSecret string `mapstructure:"webhookSecret"`
 	} `mapstructure:"stripe"`
 	PayOS struct {
 		ClientID     string `mapstructure:"clientId"`
@@ -103,6 +104,14 @@ type Payment struct {
 		SecretKey string `mapstructure:"secretKey"`
 		Link      string `mapstructure:"link"`
 	} `mapstructure:"payssion"`
+	SePay struct {
+		MerchantID    string `mapstructure:"merchantId"`
+		SecretKey     string `mapstructure:"secretKey"`
+		IPNSecretKey  string `mapstructure:"ipnSecretKey"`
+		PublicBaseURL string `mapstructure:"publicBaseURL"`
+		ReturnURL     string `mapstructure:"returnURL"`
+		Sandbox       bool   `mapstructure:"sandbox"`
+	} `mapstructure:"sepay"`
 }
 
 type TLS struct {

@@ -31,6 +31,10 @@ ci_gateway_test_packages() {
 ./pkg/metricsagg
 ./pkg/usage
 ./pkg/payment
+./pkg/payment/stripe
+./pkg/payment/payos
+./pkg/payment/payermax
+./pkg/payment/sepay
 ./pkg/cluster
 ./pkg/certmanager
 ./pkg/guard

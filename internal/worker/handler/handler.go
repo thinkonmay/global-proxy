@@ -14,21 +14,31 @@ import (
 )
 
 type Handler struct {
-	idem     *idempotency.Guard
-	eventBus bus.Client
-	ch       driver.Conn
-	pr       *postgrest.Client
-	volumes  *volumeHandler
+	idem        *idempotency.Guard
+	eventBus    bus.Client
+	ch          driver.Conn
+	pr          *postgrest.Client
+	volumes     *volumeHandler
+	settleRPC   func(ctx context.Context, fn string, args map[string]any) error
+	listPending func(ctx context.Context) ([]pendingTxn, error)
+	saveCard    func(ctx context.Context, ev model.PaymentEvent) error
 }
 
 func New(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client, pb *pocketbase.Client) *Handler {
-	return &Handler{
+	h := &Handler{
 		idem:     idem,
 		eventBus: eventBus,
 		ch:       ch,
 		pr:       pr,
 		volumes:  newVolumeHandler(idem, pr, pb),
 	}
+	h.settleRPC = func(ctx context.Context, fn string, args map[string]any) error {
+		return pr.RPC(ctx, fn, args, nil)
+	}
+	h.saveCard = func(ctx context.Context, ev model.PaymentEvent) error {
+		return h.persistCard(ctx, ev)
+	}
+	return h
 }
 
 func (h *Handler) Init() {
@@ -53,5 +63,14 @@ func (h *Handler) Init() {
 		bus.WithConcurrency(1),
 		bus.WithDeliverNew(),
 		bus.WithoutDLQ(),
+	)
+
+	bus.Subscribe(
+		h.eventBus,
+		model.TopicPaymentEvent,
+		"payment-settle",
+		h.handlePaymentEvent,
+		bus.WithConcurrency(8),
+		bus.WithMaxDeliver(5),
 	)
 }

@@ -16,7 +16,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/worker/handler"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
-	"github.com/thinkonmay/global-proxy/api/pkg/payment"
+	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 
@@ -87,11 +87,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("payment.pollEvery: %v", err)
 		}
-		pay := payment.NewService(pr, payment.Config{
-			PollEvery: every,
-			Providers: payment.ConfigFromGateway(cfg.Payment),
-		}, slog.Default())
-		pay.Run(ctx)
+		payReg := registry.NewRegistry(registry.ConfigFromGateway(cfg.Payment))
+		h.StartPaymentPoller(ctx, payReg, every)
 	}
 
 	slog.Info("worker started")
