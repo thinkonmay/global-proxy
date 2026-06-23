@@ -13,7 +13,6 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 
 	"github.com/thinkonmay/global-proxy/api/config"
-	"github.com/thinkonmay/global-proxy/api/internal/worker/handler"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
@@ -73,7 +72,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := handler.New(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, pb)
+	h := NewHandler(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, pb)
 	h.Init()
 	if err := h.StartUsageCollector(ctx, cfg, slog.Default()); err != nil {
 		log.Fatalf("usage collector: %v", err)

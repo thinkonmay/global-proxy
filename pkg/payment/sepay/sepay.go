@@ -193,11 +193,6 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 	return payment.Charge{}, payment.ErrNotSupported
 }
 
-// Refund is unsupported by the SePay provider.
-func (c *Client) Refund(ctx context.Context, args payment.RefundParams) (payment.Refund, error) {
-	return payment.Refund{}, payment.ErrNotSupported
-}
-
 // RegisterRoutes wires the proxy checkout form and the IPN webhook into the mux.
 func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
 	// SePay /v1/checkout/init is POST-only and expects a browser-submitted form
@@ -282,9 +277,10 @@ func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Con
 		}
 
 		event := payment.Event{
-			Kind:   payment.EventCharge,
-			ID:     invoiceNumber,
-			Status: status,
+			Kind:       payment.EventCharge,
+			ProviderID: payload.Transaction.TransactionID,
+			RefID:      invoiceNumber,
+			Status:     status,
 		}
 
 		if err := deliver(r.Context(), event); err != nil {

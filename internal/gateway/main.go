@@ -11,7 +11,22 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/nodeproxy"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
@@ -44,7 +59,7 @@ func Run() error {
 		Transport:  bt,
 	})
 
-	handler.ConfigureAuth(pr, cfg.PocketBase)
+	auth.ConfigureAuth(pr, cfg.PocketBase)
 
 	eventBus, err := connectBus(cfg)
 	if err != nil {
@@ -54,13 +69,12 @@ func Run() error {
 		defer func() { _ = eventBus.Close() }()
 	}
 
-	hub := NewSSEHub()
+	hub := sse.NewHub()
 	if eventBus != nil {
 		bus.Subscribe(eventBus, model.TopicSSE, "gateway-sse", hub.Dispatch)
 	}
 
 	h := handler.NewHandler(eventBus)
-	devJobs := os.Getenv("APP_DEV_JOBS") == "1"
 
 	var usageQ *usage.Querier
 	if chConn, err := usage.OpenCH(cfg.ClickHouse); err != nil {
@@ -75,17 +89,18 @@ func Run() error {
 	payReg := registry.NewRegistry(registry.ConfigFromGateway(cfg.Payment))
 	payRates := payment.NewRateService(pr)
 
-	catalogHTTP := handler.NewCatalogHandler(pr)
-	otaHTTP := handler.NewOTAHandler(pr, cfg.PostgREST.ServiceKey)
-	gamificationHTTP := handler.NewGamificationHandler(pr, bt, usageQ)
-	billingHTTP := handler.NewBillingHandler(pr, bt, payReg, payRates)
-	storeHTTP := handler.NewStoreHandler(pr, bt)
-	grants := handler.NewGrantHandler(*cfg, pr, bt)
-	filesHTTP := handler.NewFilesHandler(*cfg, pr, bt)
-	nodeProxy := handler.NewNodeProxyHandler(bt)
-	personaHTTP := handler.NewPersonaHandler(pr, bt)
-	nodeRuntimeHTTP := handler.NewNodeRuntimeHandler(pr, cfg.PostgREST.ServiceKey)
-	pwa := handler.NewPWAHandler(*cfg, pr, bt, personaHTTP)
+	catalogHTTP := catalog.New(pr)
+	otaHTTP := ota.New(pr, cfg.PostgREST.ServiceKey)
+	gamificationHTTP := gamification.New(pr, bt, usageQ)
+	billingHTTP := billing.New(pr, bt, payReg, payRates)
+	storeHTTP := store.New(pr, bt)
+	grants := grant.New(*cfg, pr, bt)
+	filesHTTP := files.New(*cfg, pr, bt)
+	nodeProxy := nodeproxy.New(bt)
+	personaHTTP := persona.New(pr, bt)
+	nodeRuntimeHTTP := noderuntime.New(pr, cfg.PostgREST.ServiceKey)
+	pwaHTTP := pwa.New(*cfg, pr, bt, personaHTTP)
+	volumeHTTP := volume.New(pr, eventBus)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -95,7 +110,7 @@ func Run() error {
 		return err
 	}
 
-	gate, err := initAdminGate(cfg)
+	gate, err := adminhost.InitGate(cfg)
 	if err != nil {
 		return fmt.Errorf("admin gate: %w", err)
 	}
@@ -103,7 +118,7 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, nodeProxy, personaHTTP, nodeRuntimeHTTP, pwa, devJobs, cfg, bt, coraza, gate, payReg, eventBus)
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, nodeProxy, personaHTTP, nodeRuntimeHTTP, pwaHTTP, volumeHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
 	if err != nil {

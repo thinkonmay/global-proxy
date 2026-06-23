@@ -177,11 +177,6 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 	return payment.Charge{ID: id, Status: status}, nil
 }
 
-// Refund is not supported by this PayerMax integration.
-func (c *Client) Refund(ctx context.Context, args payment.RefundParams) (payment.Refund, error) {
-	return payment.Refund{}, payment.ErrNotSupported
-}
-
 // parseRedirectURL extracts the redirect URL from the orderAndPay response.
 func parseRedirectURL(resp []byte) (string, error) {
 	var parsed struct {

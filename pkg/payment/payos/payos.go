@@ -134,11 +134,6 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 	}, nil
 }
 
-// Refund is not supported by this PayOS integration.
-func (c *Client) Refund(ctx context.Context, args payment.RefundParams) (payment.Refund, error) {
-	return payment.Refund{}, payment.ErrNotSupported
-}
-
 // RegisterRoutes is a no-op; PayOS state is observed by polling, not webhooks.
 func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
 }

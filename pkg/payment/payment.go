@@ -28,11 +28,6 @@ type Money struct {
 	Currency string
 }
 
-// ExchangeRate converts a unit rate between two currencies.
-type ExchangeRate interface {
-	Convert(ctx context.Context, from, to string) (float64, error)
-}
-
 // Charge is the result of a charge operation, keyed by ID.
 type Charge struct {
 	ID          string
@@ -58,12 +53,6 @@ type ChargeParams struct {
 	CustomerRef    string // provider customer id (e.g. Stripe cus_…); required for off-session charges
 }
 
-// RefundParams refunds a charge; zero Money refunds the full amount.
-type RefundParams struct {
-	ChargeID string
-	Money    Money
-}
-
 // EventKind names which resource a webhook Event refers to.
 type EventKind string
 
@@ -75,10 +64,11 @@ const (
 // Event is a normalized webhook callback decoded from a provider payload.
 type Event struct {
 	Kind        EventKind
-	ID          string // our charge or refund handle
+	ProviderID  string // provider's own charge or refund id (e.g. Stripe pi_…)
+	CustomerRef string // provider customer id (e.g. Stripe cus_…)
+	RefID       string // our internal id, echoed back by the provider (txn id)
 	Status      Status
 	Token       string // reusable card handle, if the charge issued one
-	CustomerRef string // provider customer id (e.g. Stripe cus_…)
 	Brand       string // saved-card brand (e.g. "visa")
 	Last4       string // saved-card last 4 digits
 }
@@ -91,8 +81,6 @@ type Client interface {
 	Charge(ctx context.Context, args ChargeParams) (Charge, error)
 	// GetCharge fetches the current state of a charge.
 	GetCharge(ctx context.Context, id string) (Charge, error)
-	// Refund refunds a prior charge.
-	Refund(ctx context.Context, args RefundParams) (Refund, error)
 	// RegisterRoutes wires the provider's HTTP routes and delivers decoded events.
 	RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e Event) error)
 }

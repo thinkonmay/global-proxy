@@ -5,7 +5,24 @@ import (
 	"net/http"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/cors"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/nodeproxy"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/webhook"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/upstream"
 	"github.com/thinkonmay/global-proxy/api/pkg/admingate"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
@@ -25,19 +42,19 @@ var (
 
 func newMux(
 	h *handler.Handler,
-	hub *SSEHub,
-	catalog *handler.CatalogHandler,
-	ota *handler.OTAHandler,
-	gamification *handler.GamificationHandler,
-	billing *handler.BillingHandler,
-	store *handler.StoreHandler,
-	grants *handler.GrantHandler,
-	files *handler.FilesHandler,
-	nodeProxy *handler.NodeProxyHandler,
-	personaHTTP *handler.PersonaHandler,
-	nodeRuntime *handler.NodeRuntimeHandler,
-	pwa *handler.PWAHandler,
-	devJobs bool,
+	hub *sse.Hub,
+	catalogH *catalog.Handler,
+	otaH *ota.Handler,
+	gamificationH *gamification.Handler,
+	billingH *billing.Handler,
+	storeH *store.Handler,
+	grants *grant.Handler,
+	filesH *files.Handler,
+	nodeProxy *nodeproxy.Handler,
+	personaHTTP *persona.Handler,
+	nodeRuntime *noderuntime.Handler,
+	pwaH *pwa.Handler,
+	volumeH *volume.Handler,
 	cfg *config.Config,
 	rt http.RoundTripper,
 	coraza *corazawaf.Middleware,
@@ -47,32 +64,33 @@ func newMux(
 ) http.Handler {
 	mux := http.NewServeMux()
 
-	h.Register(mux, handler.RouteOptions{DevJobs: devJobs})
-	catalog.Register(mux)
-	ota.Register(mux)
-	gamification.Register(mux)
-	billing.Register(mux)
-	store.Register(mux)
-	pwa.Register(mux)
+	h.Register(mux)
+	volumeH.Register(mux)
+	catalogH.Register(mux)
+	otaH.Register(mux)
+	gamificationH.Register(mux)
+	billingH.Register(mux)
+	storeH.Register(mux)
+	pwaH.Register(mux)
 	grants.Register(mux)
-	files.Register(mux)
+	filesH.Register(mux)
 	nodeProxy.Register(mux)
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)
-	handler.RegisterPaymentWebhooks(mux, payReg, eventBus)
+	webhook.RegisterPaymentWebhooks(mux, payReg, eventBus)
 
 	mux.HandleFunc("GET /sse", hub.Serve)
 
-	registerInternalAdminRoutes(mux, gate)
+	adminhost.RegisterInternalRoutes(mux, gate)
 	if gate != nil {
 		gate.RegisterPublicAccessRoutes(mux)
 	}
-	registerRybbitIngestRoutes(mux, cfg, rt)
-	registerKongRoutes(mux, cfg, rt)
+	upstream.RegisterRybbitIngest(mux, cfg, rt)
+	upstream.RegisterKong(mux, cfg, rt)
 
 	chain := []guard.Middleware{
 		guard.Denylist(guard.IPSet(ipBlacklist...)),
-		corsMiddleware(cfg),
+		cors.Middleware(cfg),
 		guard.Allowlist(guard.IPSet(ipWhitelist...)),
 		guard.RateLimit(guard.RateLimitConfig{RPS: rateRPS, Burst: rateBurst}),
 	}
@@ -80,15 +98,15 @@ func newMux(
 		chain = append([]guard.Middleware{coraza.AsGuard()}, chain...)
 	}
 	routes := http.Handler(mux)
-	if website := newProxy(cfg.Upstreams.Website, rt, setForwardedHeaders); website != nil {
-		routes = wrapWebsiteFallback(routes, website)
+	if website := upstream.NewProxy(cfg.Upstreams.Website, rt, upstream.SetForwardedHeaders); website != nil {
+		routes = upstream.WrapWebsiteFallback(routes, website)
 	}
 	public := guard.Chain(routes, chain...)
-	router := wrapHostRouter(public, cfg, gate, rt)
+	router := adminhost.WrapHostRouter(public, cfg, gate, rt)
 	// All virtual hosts (public, analytics, studio, grafana) need CORS — admin hosts
 	// bypass the public middleware chain, and Rybbit ingest is cross-origin until the
 	// PWA loads script.js from the public host (first-party proxy).
-	return corsMiddleware(cfg)(router)
+	return cors.Middleware(cfg)(router)
 }
 
 func initCoraza(cfg config.Coraza) (*corazawaf.Middleware, error) {

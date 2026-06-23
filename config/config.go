@@ -25,7 +25,6 @@ type Config struct {
 	Nats           Nats           `mapstructure:"nats"`
 	ClickHouse     ClickHouse     `mapstructure:"clickhouse"`
 	RPC            RPC            `mapstructure:"rpc"`
-	Relay          Relay          `mapstructure:"relay"`
 	Scheduler      Scheduler      `mapstructure:"scheduler"`
 	Metrics        Metrics        `mapstructure:"metrics"`
 	UsageCollector UsageCollector `mapstructure:"usageCollector"`
@@ -133,11 +132,6 @@ type Storj struct {
 
 type RPC struct {
 	Password1 string `mapstructure:"password1"`
-}
-
-type Relay struct {
-	PollIntervalMs int `mapstructure:"pollIntervalMs"`
-	BatchSize      int `mapstructure:"batchSize"`
 }
 
 // Upstreams are the non-PostgREST targets the gateway reverse-proxies.
@@ -257,12 +251,6 @@ func NewConfig() (*Config, error) {
 	}
 	if cfg.RPC.Password1 == "" {
 		cfg.RPC.Password1 = "thinkmay protect your data"
-	}
-	if cfg.Relay.PollIntervalMs < 1 {
-		cfg.Relay.PollIntervalMs = 500
-	}
-	if cfg.Relay.BatchSize < 1 {
-		cfg.Relay.BatchSize = 50
 	}
 	if hosts := os.Getenv("APP_TLS_HOSTS"); hosts != "" {
 		cfg.TLS.Hosts = splitCommaTrim(hosts)

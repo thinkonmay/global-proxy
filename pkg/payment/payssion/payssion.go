@@ -107,11 +107,6 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 	return payment.Charge{}, payment.ErrNotSupported
 }
 
-// Refund is unsupported by this provider.
-func (c *Client) Refund(ctx context.Context, args payment.RefundParams) (payment.Refund, error) {
-	return payment.Refund{}, payment.ErrNotSupported
-}
-
 // RegisterRoutes is a no-op; Payssion delivers no webhooks here.
 func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
 }

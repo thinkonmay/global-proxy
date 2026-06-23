@@ -10,12 +10,12 @@ import (
 // connected clients.
 var TopicSSE = bus.NewTopic[SSEMsg]("sse")
 
-// SSEType tags the kind of event so clients can switch on it. Add a const here
-// (and a payload type below) for each new kind.
+// SSEType tags the kind of event so clients can switch on it
 type SSEType string
 
 const (
 	SSENotification SSEType = "notification"
+	SSEPayment      SSEType = "payment" // TODO: subscription payment 
 )
 
 // SSEMsg is one event on the bus. Recipient routes it to a single user's

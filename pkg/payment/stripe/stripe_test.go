@@ -94,7 +94,7 @@ func minimalPIFailedEvent(txnID string) []byte {
 }
 
 // TestStripeWebhookEmitsEvent verifies signature-verified webhook ingestion:
-//  1. Valid signed payment_intent.succeeded → Event{ID,Status,Token,CustomerRef}.
+//  1. Valid signed payment_intent.succeeded → Event{ProviderID,RefID,Status,Token,CustomerRef}.
 //  2. Tampered/wrong-secret signature → HTTP 400, no deliver call.
 //  3. Garbage signature header → HTTP 400.
 //  4. payment_intent.payment_failed → Event with StatusFailed.
@@ -130,8 +130,8 @@ func TestStripeWebhookEmitsEvent(t *testing.T) {
 			t.Fatalf("expected 1 event delivered, got %d", len(captured))
 		}
 		e := captured[0]
-		if e.ID != "55" {
-			t.Errorf("ID: want %q, got %q", "55", e.ID)
+		if e.RefID != "55" {
+			t.Errorf("RefID: want %q, got %q", "55", e.RefID)
 		}
 		if e.Status != payment.StatusSuccess {
 			t.Errorf("Status: want %q, got %q", payment.StatusSuccess, e.Status)
@@ -205,8 +205,8 @@ func TestStripeWebhookEmitsEvent(t *testing.T) {
 			t.Fatalf("expected 1 event for payment_failed, got %d", len(captured))
 		}
 		e := captured[0]
-		if e.ID != "88" {
-			t.Errorf("ID: want %q, got %q", "88", e.ID)
+		if e.RefID != "88" {
+			t.Errorf("RefID: want %q, got %q", "88", e.RefID)
 		}
 		if e.Status != payment.StatusFailed {
 			t.Errorf("Status: want %q, got %q", payment.StatusFailed, e.Status)

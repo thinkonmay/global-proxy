@@ -78,12 +78,12 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 	// it is NOT covered by unit tests — verify manually with a Stripe test-mode key.
 	if args.Token != "" {
 		pi, err := c.sc.V1PaymentIntents.Create(ctx, &stripesdk.PaymentIntentCreateParams{
-			Amount:        stripesdk.Int64(args.Money.Amount),
-			Currency:      stripesdk.String(strings.ToLower(args.Money.Currency)),
-			Customer:      stripesdk.String(args.CustomerRef),
-			PaymentMethod: stripesdk.String(args.Token),
-			OffSession:    stripesdk.Bool(true),
-			Confirm:       stripesdk.Bool(true),
+			Amount:        new(args.Money.Amount),
+			Currency:      new(strings.ToLower(args.Money.Currency)),
+			Customer:      new(args.CustomerRef),
+			PaymentMethod: new(args.Token),
+			OffSession:    new(true),
+			Confirm:       new(true),
 			Metadata: map[string]string{
 				"txn_id": args.IdempotencyKey,
 			},
@@ -156,11 +156,6 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 	return payment.Charge{ID: id, Status: status}, nil
 }
 
-// Refund is not supported by this provider.
-func (c *Client) Refund(ctx context.Context, args payment.RefundParams) (payment.Refund, error) {
-	return payment.Refund{}, payment.ErrNotSupported
-}
-
 // RegisterRoutes mounts POST /api/v1/payment/webhook/stripe.
 // It verifies the Stripe-Signature header with the configured webhook secret,
 // then emits normalized payment.Events for payment_intent.succeeded and
@@ -204,7 +199,8 @@ func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Con
 			}
 			if err := deliver(r.Context(), payment.Event{
 				Kind:        payment.EventCharge,
-				ID:          txnID,
+				ProviderID:  pi.ID,
+				RefID:       txnID,
 				Status:      payment.StatusSuccess,
 				Token:       pmID,
 				CustomerRef: cusID,
@@ -225,9 +221,10 @@ func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Con
 				return
 			}
 			if err := deliver(r.Context(), payment.Event{
-				Kind:   payment.EventCharge,
-				ID:     txnID,
-				Status: payment.StatusFailed,
+				Kind:       payment.EventCharge,
+				ProviderID: pi.ID,
+				RefID:      txnID,
+				Status:     payment.StatusFailed,
 			}); err != nil {
 				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
 				return
