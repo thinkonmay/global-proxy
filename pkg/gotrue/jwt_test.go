@@ -2,6 +2,7 @@ package gotrue
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -63,6 +64,25 @@ func TestJWTValidatorRejectsServiceRole(t *testing.T) {
 	_, err = v.Validate(nil, "Bearer "+s)
 	if err == nil {
 		t.Fatal("expected error for service_role token")
+	}
+}
+
+func TestJWTValidatorRejectsExpiredToken(t *testing.T) {
+	const secret = "test-jwt-secret"
+	v := NewJWTValidator(JWTValidatorConfig{Secret: secret})
+	tok := testGoTrueJWT(t, secret, "u1", "user@example.com", time.Now().Add(-time.Hour))
+
+	_, err := v.Validate(context.Background(), "Bearer "+tok)
+	if err == nil {
+		t.Fatal("expected error for expired token")
+	}
+}
+
+func TestJWTValidatorRejectsEmptyBearer(t *testing.T) {
+	v := NewJWTValidator(JWTValidatorConfig{Secret: "secret"})
+	_, err := v.Validate(context.Background(), "Bearer ")
+	if !errors.Is(err, ErrEmptyToken) && !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("err = %v, want ErrEmptyToken or ErrInvalidToken", err)
 	}
 }
 

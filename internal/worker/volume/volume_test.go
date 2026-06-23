@@ -426,3 +426,120 @@ func TestInitSubscribesVolumeTopic(t *testing.T) {
 	}
 	bus.Wait()
 }
+
+func TestVolumeHandlerSkipsDuplicateDelivery(t *testing.T) {
+	var jobInserts int
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/job") {
+			jobInserts++
+			jobInsert(w, r, 200)
+			return
+		}
+		if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer prSrv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
+	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})
+	store := idempotency.NewMemStore()
+	vh := New(idempotency.New(store), pr, pb)
+
+	msg := model.VolumeJobMsg{RequestID: "req-dup", Command: "unknown"}
+	if err := vh.handle(context.Background(), msg); err != nil {
+		t.Fatalf("first handle: %v", err)
+	}
+	if err := vh.handle(context.Background(), msg); err != nil {
+		t.Fatalf("second handle: %v", err)
+	}
+	if jobInserts != 1 {
+		t.Fatalf("job inserts = %d, want 1 (idempotency skip)", jobInserts)
+	}
+}
+
+func TestVolumeHandlerRecoversExistingJobOnRetry(t *testing.T) {
+	var mu sync.Mutex
+	var pbCalls int
+	var jobPosts int
+	var jobPatch map[string]any
+
+	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pbAuthHandler(w, r) {
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
+			mu.Lock()
+			pbCalls++
+			call := pbCalls
+			mu.Unlock()
+			if call == 1 {
+				http.Error(w, "busy", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]string{{"id": "user-1"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/collections/volumes/records":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "vol-1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer pbSrv.Close()
+
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/rpc/get_cluster_secrets":
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"url": pbSrv.URL}})
+		case r.Method == http.MethodPost && r.URL.Path == "/job":
+			jobPosts++
+			if jobPosts == 1 {
+				jobInsert(w, r, 88)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"23505"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/job":
+			if strings.Contains(r.URL.RawQuery, "request_id=eq.req-retry") {
+				_ = json.NewEncoder(w).Encode([]map[string]any{{"id": int64(88)}})
+				return
+			}
+			http.NotFound(w, r)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job"):
+			_ = json.NewDecoder(r.Body).Decode(&jobPatch)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer prSrv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
+	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+
+	msg := model.VolumeJobMsg{
+		RequestID: "req-retry",
+		Command:   "create volume v7",
+		ClusterID: 3,
+		Arguments: rawArgs(t, map[string]any{"email": "u@example.com", "volume_id": "vol-retry"}),
+	}
+	if err := vh.handle(context.Background(), msg); err == nil {
+		t.Fatal("expected retryable error on first PB failure")
+	}
+	if err := vh.handle(context.Background(), msg); err != nil {
+		t.Fatalf("retry handle: %v", err)
+	}
+	if jobPosts != 2 {
+		t.Fatalf("job POSTs = %d, want 2 (insert + conflict recovery)", jobPosts)
+	}
+	if jobPatch == nil || jobPatch["success"] != true {
+		t.Fatalf("job patch after retry: %v", jobPatch)
+	}
+}

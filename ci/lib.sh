@@ -35,6 +35,7 @@ ci_gateway_test_packages() {
 ./pkg/payment/payermax
 ./pkg/payment/sepay
 ./pkg/cluster
+./pkg/gotrue
 ./pkg/certmanager
 ./pkg/guard
 ./pkg/idempotency

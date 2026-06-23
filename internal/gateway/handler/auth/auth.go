@@ -22,11 +22,13 @@ const authTimeout = 5 * time.Second
 var (
 	gotrueUserAuth *gotrue.JWTValidator
 	clusterIssuers *cluster.IssuerRegistry
+	authPR         *postgrest.Client
 )
 
 // ConfigureAuth wires GoTrue JWT validation and the cluster issuer registry.
 // Call once at gateway startup after PostgREST is available.
 func ConfigureAuth(pr *postgrest.Client, pbCfg config.PocketBase, supabaseCfg config.Supabase) {
+	authPR = pr
 	clusterIssuers = cluster.NewIssuerRegistry(pr, cluster.IssuerRegistryConfig{
 		HomeFetch:      pbCfg.URL,
 		HomeIssuerHost: pbCfg.IssuerHost,
@@ -84,12 +86,15 @@ func RequireUser(ctx context.Context, r *http.Request, _ http.RoundTripper) (ema
 	if gotrueUserAuth == nil {
 		return "", false, http.StatusServiceUnavailable, "auth not configured"
 	}
-	recordEmail, err := gotrueUserAuth.UserEmail(authHeader)
+	ctx, cancel := context.WithTimeout(ctx, authTimeout)
+	defer cancel()
+	a, err := gotrueUserAuth.Validate(ctx, authHeader)
 	if err != nil {
 		status, msg = AuthErrFromValidate(err)
 		return "", false, status, msg
 	}
-	return recordEmail, true, 0, ""
+	linkAuthUser(ctx, a.UserID, a.Email)
+	return a.Email, true, 0, ""
 }
 
 // Validate authenticates a GoTrue token and returns email and user id.
@@ -105,7 +110,22 @@ func Validate(ctx context.Context, authHeader string, _ http.RoundTripper) (emai
 		status, msg = AuthErrFromValidate(err)
 		return "", "", status, msg
 	}
+	linkAuthUser(ctx, a.UserID, a.Email)
 	return a.Email, a.UserID, 0, ""
+}
+
+// linkAuthUser upserts identity.app_user for the GoTrue subject (best-effort).
+func linkAuthUser(ctx context.Context, authUserID, email string) {
+	if authPR == nil || authUserID == "" || email == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var appUserID int64
+	_ = authPR.RPC(ctx, "link_auth_user_v1", map[string]any{
+		"auth_user_id": authUserID,
+		"email":        email,
+	}, &appUserID)
 }
 
 // WriteAuthErr renders an auth error as JSON.

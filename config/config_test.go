@@ -45,6 +45,32 @@ tls:
 	}
 }
 
+func TestNewConfigNatsDefault(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	const yaml = `
+log:
+  level: info
+  format: text
+postgrest:
+  url: "http://localhost:3000"
+tls:
+  enabled: false
+`
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.Nats.URL != "nats://nats:4222" {
+		t.Fatalf("nats.url default = %q", cfg.Nats.URL)
+	}
+}
+
 func TestNewConfigPlainHTTPDevMode(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

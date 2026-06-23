@@ -17,6 +17,8 @@ chmod +x ./ci/local.sh
 | Vet | `./ci/local.sh vet` | `go vet` on config, internal, pkg, shared |
 | Build | `./ci/local.sh build` | `gateway`, `worker`, `scheduler` binaries under `artifacts/local/` |
 
+Key unit-test areas (no relay/outbox): GoTrue JWT auth on `/v1/*`, gateway direct publish (`POST /volume`, payment webhooks → NATS), worker idempotency + sole DB writer for jobs.
+
 ## NATS conformance (optional)
 
 Bus conformance tests spin up NATS via testcontainers and need Docker:
