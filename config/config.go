@@ -150,6 +150,7 @@ type Supabase struct {
 	PublishableKey    string `mapstructure:"publishableKey"`
 	ServiceKey        string `mapstructure:"serviceKey"`
 	SecretKey         string `mapstructure:"secretKey"`
+	JWTSecret         string `mapstructure:"jwtSecret"` // GoTrue HS256 signing key (Track C1)
 	DashboardUser     string `mapstructure:"dashboardUser"`
 	DashboardPassword string `mapstructure:"dashboardPassword"`
 }

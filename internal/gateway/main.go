@@ -59,7 +59,7 @@ func Run() error {
 		Transport:  bt,
 	})
 
-	auth.ConfigureAuth(pr, cfg.PocketBase)
+	auth.ConfigureAuth(pr, cfg.PocketBase, cfg.Supabase)
 
 	eventBus, err := connectBus(cfg)
 	if err != nil {

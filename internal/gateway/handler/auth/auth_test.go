@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/security"
 	"github.com/thinkonmay/global-proxy/api/config"
@@ -38,6 +39,34 @@ func testIssuerRegistry(fetchURL, issuerHost string) *cluster.IssuerRegistry {
 		HomeFetch:      fetchURL,
 		HomeIssuerHost: issuerHost,
 	})
+}
+
+func TestRequireUserAcceptsGoTrueTokenWithoutIssuer(t *testing.T) {
+	const secret = "gotrue-test-secret"
+	ConfigureGoTrueAuth(secret)
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":   "550e8400-e29b-41d4-a716-446655440000",
+		"email": "gotrue@example.com",
+		"role":  "authenticated",
+		"aud":   "authenticated",
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	})
+	s, err := tok.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
+	req.Header.Set("Authorization", "Bearer "+s)
+
+	email, ok, status, msg := RequireUser(context.Background(), req, nil)
+	if !ok {
+		t.Fatalf("requireUser failed: status=%d msg=%q", status, msg)
+	}
+	if email != "gotrue@example.com" {
+		t.Fatalf("email = %q", email)
+	}
 }
 
 func TestRequireUserUsesCachedValidator(t *testing.T) {

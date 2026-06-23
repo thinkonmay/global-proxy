@@ -1,7 +1,3 @@
-// Package auth owns gateway request authentication: the PocketBase user-token
-// validator and the cluster issuer allowlist. The validator and registry are
-// package state configured once at startup via ConfigureAuth, then consulted by
-// RequireUser / Validate and by cluster-URL resolution.
 package auth
 
 import (
@@ -14,29 +10,36 @@ import (
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
+	"github.com/thinkonmay/global-proxy/api/pkg/gotrue"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
 const (
-	pbAuthTimeout  = 3 * time.Second
-	pwaAuthTimeout = 5 * time.Second
+	pbAuthTimeout     = 3 * time.Second
+	pwaAuthTimeout    = 5 * time.Second
+	gotrueAuthTimeout = 3 * time.Second
 )
 
 var (
 	pbUserAuth     *pocketbase.UserTokenValidator
+	gotrueUserAuth *gotrue.JWTValidator
 	clusterIssuers *cluster.IssuerRegistry
 )
 
-// ConfigureAuth wires cluster issuer allowlisting and PocketBase user-token validation.
+// ConfigureAuth wires cluster issuer allowlisting and user-token validation.
+// GoTrue JWT validation runs when supabaseCfg.JWTSecret is set (Track C1 parallel period).
 // Call once at gateway startup after PostgREST is available.
-func ConfigureAuth(pr *postgrest.Client, pbCfg config.PocketBase) {
+func ConfigureAuth(pr *postgrest.Client, pbCfg config.PocketBase, supabaseCfg config.Supabase) {
 	clusterIssuers = cluster.NewIssuerRegistry(pr, cluster.IssuerRegistryConfig{
 		HomeFetch:      pbCfg.URL,
 		HomeIssuerHost: pbCfg.IssuerHost,
 	})
 	pbUserAuth = pocketbase.NewUserTokenValidator(pocketbase.UserTokenValidatorConfig{
 		Issuers: clusterIssuers,
+	})
+	gotrueUserAuth = gotrue.NewJWTValidator(gotrue.JWTValidatorConfig{
+		Secret: supabaseCfg.JWTSecret,
 	})
 }
 
@@ -46,6 +49,11 @@ func ConfigurePocketBaseAuth(pbCfg config.PocketBase, issuers *cluster.IssuerReg
 	pbUserAuth = pocketbase.NewUserTokenValidator(pocketbase.UserTokenValidatorConfig{
 		Issuers: issuers,
 	})
+}
+
+// ConfigureGoTrueAuth configures GoTrue JWT validation for tests.
+func ConfigureGoTrueAuth(jwtSecret string) {
+	gotrueUserAuth = gotrue.NewJWTValidator(gotrue.JWTValidatorConfig{Secret: jwtSecret})
 }
 
 // IssuerFromRequest extracts the issuer query parameter.
@@ -74,15 +82,29 @@ func AuthErrFromValidate(err error) (status int, msg string) {
 	if errors.Is(err, pocketbase.ErrUnknownIssuer) {
 		return http.StatusForbidden, "invalid issuer"
 	}
+	if errors.Is(err, gotrue.ErrInvalidToken) || errors.Is(err, gotrue.ErrEmptyToken) {
+		return http.StatusUnauthorized, "auth failed"
+	}
 	return http.StatusUnauthorized, "pocketbase auth failed"
 }
 
-// RequireUser validates the PocketBase token against the issuer node and returns the record email.
+// RequireUser validates a GoTrue or PocketBase token and returns the record email.
+// GoTrue tokens do not require ?issuer=; PocketBase tokens still do during the parallel period.
 func RequireUser(ctx context.Context, r *http.Request, rt http.RoundTripper) (email string, ok bool, status int, msg string) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	if authHeader == "" {
 		return "", false, http.StatusUnauthorized, "authorization required"
 	}
+
+	if gotrueUserAuth != nil {
+		ctxGT, cancel := context.WithTimeout(ctx, gotrueAuthTimeout)
+		defer cancel()
+		_ = ctxGT // reserved for future PostgREST email lookup by sub
+		if recordEmail, err := gotrueUserAuth.UserEmail(authHeader); err == nil {
+			return recordEmail, true, 0, ""
+		}
+	}
+
 	issuer := IssuerFromRequest(r)
 	if issuer == "" {
 		return "", false, http.StatusBadRequest, "issuer query required"
@@ -101,6 +123,12 @@ func RequireUser(ctx context.Context, r *http.Request, rt http.RoundTripper) (em
 // email and user id. It performs no header/issuer presence checks — callers
 // that need bespoke messages should validate those first. status 0 == ok.
 func Validate(ctx context.Context, issuer, authHeader string, rt http.RoundTripper) (email, userID string, status int, msg string) {
+	if gotrueUserAuth != nil && strings.TrimSpace(issuer) == "" {
+		if a, err := gotrueUserAuth.Validate(ctx, authHeader); err == nil {
+			return a.Email, a.UserID, 0, ""
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, pwaAuthTimeout)
 	defer cancel()
 	a, err := pbUserAuth.Validate(ctx, issuer, authHeader, rt)

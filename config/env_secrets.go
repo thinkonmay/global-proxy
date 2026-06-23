@@ -10,6 +10,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.PostgREST.ServiceKey, "APP_POSTGREST_SERVICEKEY")
 	setEnvString(&cfg.Supabase.AnonKey, "APP_SUPABASE_ANONKEY")
 	setEnvString(&cfg.Supabase.ServiceKey, "APP_SUPABASE_SERVICEKEY")
+	setEnvString(&cfg.Supabase.JWTSecret, "APP_SUPABASE_JWTSECRET")
 	setEnvString(&cfg.Supabase.DashboardUser, "APP_SUPABASE_DASHBOARDUSER")
 	setEnvString(&cfg.Supabase.DashboardPassword, "APP_SUPABASE_DASHBOARDPASSWORD")
 	setEnvString(&cfg.Admin.SigningSecret, "APP_ADMIN_SIGNINGSECRET")
