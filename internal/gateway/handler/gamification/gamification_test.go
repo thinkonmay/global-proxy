@@ -50,7 +50,7 @@ func TestGamificationMissionsRequireAuth(t *testing.T) {
 	}
 }
 
-func TestGamificationClaimRequiresIssuer(t *testing.T) {
+func TestGamificationClaimRequiresAuth(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"})
 	h := New(pr, nil, nil)
 	mux := http.NewServeMux()
@@ -61,7 +61,7 @@ func TestGamificationClaimRequiresIssuer(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 missing issuer, got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 auth not configured, got %d", rec.Code)
 	}
 }

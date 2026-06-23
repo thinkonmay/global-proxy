@@ -25,7 +25,7 @@ func (h *Handler) IsSuperuser(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "Missing email or issuer")
 		return
 	}
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r, req.Issuer)
+	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
 	if code != 0 {
 		httpx.WriteError(w, code, msg)
 		return
@@ -56,7 +56,7 @@ func (h *Handler) UpdateCodeName(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "Missing app_id, code_name, or issuer")
 		return
 	}
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r, req.Issuer)
+	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
 	if code != 0 {
 		httpx.WriteError(w, code, msg)
 		return

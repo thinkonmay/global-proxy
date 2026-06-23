@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/testsupport"
 )
@@ -40,7 +39,7 @@ func TestNodeProxyForwardSnapshots(t *testing.T) {
 	defer upstream.Close()
 
 	host := upstream.URL
-	auth.ConfigurePocketBaseAuth(config.PocketBase{}, testsupport.TestIssuerRegistry(host, host))
+	auth.ConfigureClusterRegistry(testsupport.TestIssuerRegistry(host, host))
 	h := New(nil)
 	mux := http.NewServeMux()
 	h.Register(mux)

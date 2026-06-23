@@ -17,9 +17,6 @@ postgrest:
   url: "http://localhost:3000"
 nats:
   url: "nats://127.0.0.1:4222"
-relay:
-  pollIntervalMs: 250
-  batchSize: 10
 tls:
   enabled: true
   httpPort: "80"

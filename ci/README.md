@@ -15,7 +15,7 @@ chmod +x ./ci/local.sh
 | Full | `./ci/local.sh all` | Default + `go vet` + optional NATS conformance |
 | Tests only | `./ci/local.sh test` | Unit tests + test-file gate |
 | Vet | `./ci/local.sh vet` | `go vet` on config, internal, pkg, shared |
-| Build | `./ci/local.sh build` | `gateway`, `worker`, `relay` binaries under `artifacts/local/` |
+| Build | `./ci/local.sh build` | `gateway`, `worker`, `scheduler` binaries under `artifacts/local/` |
 
 ## NATS conformance (optional)
 

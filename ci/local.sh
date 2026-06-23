@@ -5,7 +5,7 @@
 #   ./ci/local.sh              # default: mod + unit tests + build
 #   ./ci/local.sh test         # unit tests only
 #   ./ci/local.sh vet          # go vet
-#   ./ci/local.sh build        # compile gateway/worker/relay
+#   ./ci/local.sh build        # compile gateway/worker/scheduler
 #   ./ci/local.sh all          # tests + vet + build + test-file gate
 #
 # Options (env):
@@ -63,8 +63,6 @@ step_build() {
   go build -trimpath -o "${ROOT}/artifacts/local/gateway" ./internal/gateway
   ci_log "build worker"
   go build -trimpath -o "${ROOT}/artifacts/local/worker" ./internal/worker
-  ci_log "build relay"
-  go build -trimpath -o "${ROOT}/artifacts/local/relay" ./internal/relay
   ci_log "build scheduler"
   go build -trimpath -o "${ROOT}/artifacts/local/scheduler" ./internal/scheduler
 }

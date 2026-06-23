@@ -12,19 +12,14 @@ type PWAUserAuth struct {
 	UserID string
 }
 
-// PWAAuthFromRequest validates the request's Authorization header against the
-// given issuer and returns the resolved identity. status 0 == ok. It produces
-// PWA-specific messages for missing header/issuer.
-func PWAAuthFromRequest(ctx context.Context, rt http.RoundTripper, r *http.Request, issuer string) (PWAUserAuth, int, string) {
+// PWAAuthFromRequest validates the request's Authorization header (GoTrue JWT)
+// and returns the resolved identity. status 0 == ok.
+func PWAAuthFromRequest(ctx context.Context, rt http.RoundTripper, r *http.Request) (PWAUserAuth, int, string) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	if authHeader == "" {
 		return PWAUserAuth{}, http.StatusUnauthorized, "Unauthorized: No auth header"
 	}
-	issuer = strings.TrimSpace(issuer)
-	if issuer == "" {
-		return PWAUserAuth{}, http.StatusBadRequest, "Missing issuer"
-	}
-	email, userID, status, msg := Validate(ctx, issuer, authHeader, rt)
+	email, userID, status, msg := Validate(ctx, authHeader, rt)
 	if status != 0 {
 		return PWAUserAuth{}, status, msg
 	}

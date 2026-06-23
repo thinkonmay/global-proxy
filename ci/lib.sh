@@ -20,7 +20,6 @@ ci_gateway_test_packages() {
 ./config
 ./internal/gateway
 ./internal/gateway/handler
-./internal/outbox
 ./internal/worker/handler
 ./pkg/bus
 ./pkg/bus/memory

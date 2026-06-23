@@ -33,7 +33,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request) {
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r, r.URL.Query().Get("issuer"))
+	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
 	if code != 0 {
 		httpx.WriteError(w, code, msg)
 		return
@@ -55,7 +55,7 @@ func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetRecommendations(w http.ResponseWriter, r *http.Request) {
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r, r.URL.Query().Get("issuer"))
+	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
 	if code != 0 {
 		httpx.WriteError(w, code, msg)
 		return

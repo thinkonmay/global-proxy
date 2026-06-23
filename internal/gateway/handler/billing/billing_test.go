@@ -36,9 +36,8 @@ func TestFillCheckoutReturnsURL(t *testing.T) {
 // TestCreateDepositRowLoopDataShape verifies that fillCheckout + the data-shape assembly
 // in CreateDeposit produce the expected JSON keys (redirect_url, charge_id, and detail when
 // non-empty). The CreateDeposit handler itself cannot be driven end-to-end in a unit test
-// without auth: requireUser relies on the package-level pbUserAuth global which requires the
-// PocketBase + cluster issuer registry to be configured. End-to-end coverage of the full
-// row-loop (RPC → loadTransaction → rates.Load → fillCheckout → Update) is left for the
+// without auth: RequireUser needs ConfigureGoTrueAuth / APP_SUPABASE_JWTSECRET.
+// End-to-end coverage of the full row-loop (RPC → loadTransaction → rates.Load → fillCheckout → Update) is left for the
 // live-DB integration suite (WITH_INTEGRATION=1).
 func TestCreateDepositRowLoopDataShape(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})

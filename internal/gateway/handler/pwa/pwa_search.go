@@ -62,7 +62,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r, req.Issuer)
+	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
 	if code != 0 {
 		httpx.WriteError(w, code, msg)
 		return
@@ -89,7 +89,7 @@ func (h *Handler) fetchPersonaProfile(ctx context.Context, issuer, authHeader, u
 	if h.pr != nil && issuer != "" && authHeader != "" {
 		usr, _, _ := auth.PWAAuthFromRequest(ctx, h.transport, &http.Request{
 			Header: http.Header{"Authorization": []string{authHeader}},
-		}, issuer)
+		})
 		if usr.Email != "" {
 			profile, err := persona.FetchProfile(ctx, h.pr, strings.ToLower(usr.Email))
 			if err == nil && profile != nil {

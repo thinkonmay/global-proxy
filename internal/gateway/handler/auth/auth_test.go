@@ -8,46 +8,13 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/security"
-	"github.com/thinkonmay/global-proxy/api/config"
-	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
 )
 
-func testUserJWT(t *testing.T, userID string) string {
+func testGoTrueJWT(t *testing.T, secret, userID, email string) string {
 	t.Helper()
-	tok, err := security.NewJWT(map[string]any{
-		core.TokenClaimId:           userID,
-		core.TokenClaimCollectionId: "_pb_users_auth_",
-		core.TokenClaimType:         "auth",
-		core.TokenClaimRefreshable:  true,
-	}, "test-secret", time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tok
-}
-
-func testIssuerRegistry(fetchURL, issuerHost string) *cluster.IssuerRegistry {
-	host := issuerHost
-	if host == "" {
-		host = fetchURL
-	}
-	return cluster.NewStaticIssuerRegistry(map[string]string{
-		host: fetchURL,
-	}, cluster.IssuerRegistryConfig{
-		HomeFetch:      fetchURL,
-		HomeIssuerHost: issuerHost,
-	})
-}
-
-func TestRequireUserAcceptsGoTrueTokenWithoutIssuer(t *testing.T) {
-	const secret = "gotrue-test-secret"
-	ConfigureGoTrueAuth(secret)
-
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   "550e8400-e29b-41d4-a716-446655440000",
-		"email": "gotrue@example.com",
+		"sub":   userID,
+		"email": email,
 		"role":  "authenticated",
 		"aud":   "authenticated",
 		"exp":   time.Now().Add(time.Hour).Unix(),
@@ -56,9 +23,15 @@ func TestRequireUserAcceptsGoTrueTokenWithoutIssuer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return s
+}
+
+func TestRequireUserAcceptsGoTrueToken(t *testing.T) {
+	const secret = "gotrue-test-secret"
+	ConfigureGoTrueAuth(secret)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
-	req.Header.Set("Authorization", "Bearer "+s)
+	req.Header.Set("Authorization", "Bearer "+testGoTrueJWT(t, secret, "550e8400-e29b-41d4-a716-446655440000", "gotrue@example.com"))
 
 	email, ok, status, msg := RequireUser(context.Background(), req, nil)
 	if !ok {
@@ -69,119 +42,59 @@ func TestRequireUserAcceptsGoTrueTokenWithoutIssuer(t *testing.T) {
 	}
 }
 
-func TestRequireUserUsesCachedValidator(t *testing.T) {
-	const userID = "u1"
-	token := testUserJWT(t, userID)
-	pb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/collections/users/records/"+userID {
-			t.Fatalf("path = %s", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":"u1","email":"user@example.com"}`))
-	}))
-	t.Cleanup(pb.Close)
-
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry(pb.URL, "https://haiphong.thinkmay.net"))
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer=https://haiphong.thinkmay.net", nil)
-	req.Header.Set("Authorization", token)
-
-	email, ok, status, msg := RequireUser(context.Background(), req, nil)
-	if !ok {
-		t.Fatalf("requireUser failed: status=%d msg=%q", status, msg)
-	}
-	if email != "user@example.com" {
-		t.Fatalf("email = %q", email)
-	}
-}
-
-func TestRequireUserRejectsUnknownIssuer(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer=https://evil.example.com", nil)
-	req.Header.Set("Authorization", testUserJWT(t, "u1"))
-	_, ok, status, msg := RequireUser(context.Background(), req, nil)
-	if ok || status != http.StatusForbidden || msg != "invalid issuer" {
-		t.Fatalf("ok=%v status=%d msg=%q", ok, status, msg)
-	}
-}
-
 func TestRequireUserMissingAuth(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
+	ConfigureGoTrueAuth("secret")
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer=https://haiphong.thinkmay.net", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
 	_, ok, status, msg := RequireUser(context.Background(), req, nil)
 	if ok || status != http.StatusUnauthorized || msg != "authorization required" {
 		t.Fatalf("ok=%v status=%d msg=%q", ok, status, msg)
 	}
 }
 
-func TestRequireUserMissingIssuer(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
+func TestRequireUserRejectsInvalidToken(t *testing.T) {
+	ConfigureGoTrueAuth("right-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
+	req.Header.Set("Authorization", "Bearer "+testGoTrueJWT(t, "wrong-secret", "u1", "user@example.com"))
+	_, ok, status, msg := RequireUser(context.Background(), req, nil)
+	if ok || status != http.StatusUnauthorized || msg != "auth failed" {
+		t.Fatalf("ok=%v status=%d msg=%q", ok, status, msg)
+	}
+}
+
+func TestRequireUserAuthNotConfigured(t *testing.T) {
+	gotrueUserAuth = nil
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	_, ok, status, msg := RequireUser(context.Background(), req, nil)
-	if ok || status != http.StatusBadRequest || msg != "issuer query required" {
+	if ok || status != http.StatusServiceUnavailable || msg != "auth not configured" {
 		t.Fatalf("ok=%v status=%d msg=%q", ok, status, msg)
 	}
 }
 
-func TestRequireUserAuthFailure(t *testing.T) {
-	token := testUserJWT(t, "u1")
-	pb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	t.Cleanup(pb.Close)
-
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry(pb.URL, pb.URL))
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/test?issuer="+pb.URL, nil)
-	req.Header.Set("Authorization", token)
-	_, ok, status, msg := RequireUser(context.Background(), req, nil)
-	if ok || status != http.StatusUnauthorized || msg != "pocketbase auth failed" {
-		t.Fatalf("ok=%v status=%d msg=%q", ok, status, msg)
-	}
-}
-
-func TestPWAAuthFromRequestUsesValidator(t *testing.T) {
-	token := testUserJWT(t, "u1")
-	pb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":"u1","email":"thinkmay@dev.net"}`))
-	}))
-	t.Cleanup(pb.Close)
-
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry(pb.URL, pb.URL))
+func TestPWAAuthFromRequestUsesGoTrue(t *testing.T) {
+	const secret = "gotrue-test-secret"
+	ConfigureGoTrueAuth(secret)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/pwa/persona/recommendations", nil)
-	req.Header.Set("Authorization", token)
+	req.Header.Set("Authorization", "Bearer "+testGoTrueJWT(t, secret, "u1", "thinkmay@dev.net"))
 
-	auth, status, msg := PWAAuthFromRequest(context.Background(), nil, req, pb.URL)
+	usr, status, msg := PWAAuthFromRequest(context.Background(), nil, req)
 	if status != 0 || msg != "" {
 		t.Fatalf("status=%d msg=%q", status, msg)
 	}
-	if auth.Email != "thinkmay@dev.net" || auth.UserID != "u1" {
-		t.Fatalf("auth = %+v", auth)
-	}
-}
-
-func TestPWAAuthFromRequestMissingIssuer(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/pwa/persona/recommendations", nil)
-	req.Header.Set("Authorization", "tok")
-	_, status, msg := PWAAuthFromRequest(context.Background(), nil, req, "")
-	if status != http.StatusBadRequest || msg != "Missing issuer" {
-		t.Fatalf("status=%d msg=%q", status, msg)
+	if usr.Email != "thinkmay@dev.net" || usr.UserID != "u1" {
+		t.Fatalf("usr = %+v", usr)
 	}
 }
 
 func TestPWAAuthFromRequestMissingAuthHeader(t *testing.T) {
-	ConfigurePocketBaseAuth(config.PocketBase{}, testIssuerRegistry("https://haiphong.thinkmay.net", "https://haiphong.thinkmay.net"))
+	ConfigureGoTrueAuth("secret")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/pwa/persona/recommendations", nil)
-	_, status, msg := PWAAuthFromRequest(context.Background(), nil, req, "https://haiphong.thinkmay.net")
+	_, status, msg := PWAAuthFromRequest(context.Background(), nil, req)
 	if status != http.StatusUnauthorized || msg != "Unauthorized: No auth header" {
 		t.Fatalf("status=%d msg=%q", status, msg)
 	}
