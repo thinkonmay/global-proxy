@@ -24,6 +24,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
@@ -96,7 +97,8 @@ func Run() error {
 	storeHTTP := store.New(pr, bt)
 	grants := grant.New(*cfg, pr, bt)
 	filesHTTP := files.New(*cfg, pr, bt)
-	nodeProxy := nodeproxy.New(bt)
+	nodeProxy := nodeproxy.New(cfg.Runtime.ClusterSecret, bt)
+	runtimeHTTP := runtime.New(cfg.Runtime.ClusterSecret, bt)
 	personaHTTP := persona.New(pr, bt)
 	nodeRuntimeHTTP := noderuntime.New(pr, cfg.PostgREST.ServiceKey)
 	pwaHTTP := pwa.New(*cfg, pr, bt, personaHTTP)
@@ -118,7 +120,7 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, nodeProxy, personaHTTP, nodeRuntimeHTTP, pwaHTTP, volumeHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, nodeProxy, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, pwaHTTP, volumeHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
 	if err != nil {

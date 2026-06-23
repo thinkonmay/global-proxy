@@ -26,6 +26,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.LLM.BaseURL, "APP_LLM_BASEURL")
 	setEnvString(&cfg.LLM.APIKey, "APP_LLM_APIKEY")
 	setEnvString(&cfg.Storj.AccessGrant, "APP_STORJ_ACCESSGRANT")
+	setEnvString(&cfg.Runtime.ClusterSecret, "APP_RUNTIME_CLUSTER_SECRET")
 	setEnvString(&cfg.Metrics.IngestSecret, "APP_METRICS_INGESTSECRET")
 	setEnvString(&cfg.ClickHouse.Addr, "APP_CLICKHOUSE_ADDR")
 	setEnvString(&cfg.ClickHouse.Database, "APP_CLICKHOUSE_DATABASE")

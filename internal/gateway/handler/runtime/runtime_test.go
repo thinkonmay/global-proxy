@@ -1,4 +1,4 @@
-package nodeproxy
+package runtime
 
 import (
 	"encoding/json"
@@ -31,48 +31,56 @@ func testGoTrueJWT(t *testing.T, secret, userID, email string) string {
 	return s
 }
 
-func TestNodeProxyMissingCluster(t *testing.T) {
-	h := New("", nil)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/volumes/snapshots?cluster=", nil)
-	req.Header.Set("Authorization", "Bearer test")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-}
-
-func TestNodeProxyForwardSnapshots(t *testing.T) {
+func TestRuntimeForwardInfo(t *testing.T) {
+	const secret = "test-p2p-secret"
 	const jwtSecret = "gotrue-test-secret"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(clusterproxy.InternalHeader) != "1" {
 			t.Fatalf("missing internal header")
 		}
-		if r.URL.Path != "/snapshots" {
+		if r.Header.Get(clusterproxy.SecretHeader) != secret {
+			t.Fatalf("missing secret")
+		}
+		if r.Header.Get(clusterproxy.UserEmailHeader) != "user@test.net" {
+			t.Fatalf("email: %q", r.Header.Get(clusterproxy.UserEmailHeader))
+		}
+		if r.URL.Path != "/info" {
 			t.Fatalf("path: %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode([]any{})
+		_ = json.NewEncoder(w).Encode(map[string]string{"Hostname": "node1"})
 	}))
 	defer upstream.Close()
 
 	host := upstream.URL
 	auth.ConfigureClusterRegistry(testsupport.TestIssuerRegistry(host, host))
 	auth.ConfigureGoTrueAuth(jwtSecret)
-	h := New("", nil)
+
+	h := New(secret, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/volumes/snapshots?cluster="+url.QueryEscape(host), nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info?cluster="+url.QueryEscape(host), nil)
 	req.Header.Set("Authorization", "Bearer "+testGoTrueJWT(t, jwtSecret, "sub-1", "user@test.net"))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRuntimeMissingCluster(t *testing.T) {
+	h := New("", nil)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info?cluster=", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
 	}
 }

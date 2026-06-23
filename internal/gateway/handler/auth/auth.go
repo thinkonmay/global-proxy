@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
@@ -23,6 +24,10 @@ var (
 	gotrueUserAuth *gotrue.JWTValidator
 	clusterIssuers *cluster.IssuerRegistry
 	authPR         *postgrest.Client
+
+	// linkedAuthUsers memoizes auth_user_id values already linked to app_user
+	// this process, so link_auth_user_v1 runs at most once per user (link_cost).
+	linkedAuthUsers sync.Map
 )
 
 // ConfigureAuth wires GoTrue JWT validation and the cluster issuer registry.
@@ -115,17 +120,25 @@ func Validate(ctx context.Context, authHeader string, _ http.RoundTripper) (emai
 }
 
 // linkAuthUser upserts identity.app_user for the GoTrue subject (best-effort).
+// The link is stable, so it is performed at most once per auth_user_id per
+// process (link_cost = cache); subsequent requests skip the RPC entirely.
 func linkAuthUser(ctx context.Context, authUserID, email string) {
 	if authPR == nil || authUserID == "" || email == "" {
+		return
+	}
+	if _, done := linkedAuthUsers.Load(authUserID); done {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var appUserID int64
-	_ = authPR.RPC(ctx, "link_auth_user_v1", map[string]any{
+	if err := authPR.RPC(ctx, "link_auth_user_v1", map[string]any{
 		"auth_user_id": authUserID,
 		"email":        email,
-	}, &appUserID)
+	}, &appUserID); err != nil {
+		return // leave uncached so a later request retries the link
+	}
+	linkedAuthUsers.Store(authUserID, struct{}{})
 }
 
 // WriteAuthErr renders an auth error as JSON.

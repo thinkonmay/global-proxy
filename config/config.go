@@ -31,6 +31,7 @@ type Config struct {
 	Persona        Persona        `mapstructure:"persona"`
 	Payment        Payment        `mapstructure:"payment"`
 	Gateway        Gateway        `mapstructure:"gateway"`
+	Runtime        Runtime        `mapstructure:"runtime"`
 	Storj          Storj          `mapstructure:"storj"`
 	LLM            LLM            `mapstructure:"llm"`
 	TLS            TLS            `mapstructure:"tls"`
@@ -123,6 +124,12 @@ type TLS struct {
 
 type Gateway struct {
 	PublicURL string `mapstructure:"publicURL"`
+}
+
+// Runtime configures gateway→cluster runtime proxy (Track C3 transitional HTTP shim).
+type Runtime struct {
+	// ClusterSecret must match cluster.yaml p2pcred on worker nodes.
+	ClusterSecret string `mapstructure:"clusterSecret"`
 }
 
 // Storj configures the global uplink access grant for user bucket file APIs.

@@ -18,6 +18,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/webhook"
@@ -51,6 +52,7 @@ func newMux(
 	grants *grant.Handler,
 	filesH *files.Handler,
 	nodeProxy *nodeproxy.Handler,
+	runtimeH *runtime.Handler,
 	personaHTTP *persona.Handler,
 	nodeRuntime *noderuntime.Handler,
 	pwaH *pwa.Handler,
@@ -75,6 +77,7 @@ func newMux(
 	grants.Register(mux)
 	filesH.Register(mux)
 	nodeProxy.Register(mux)
+	runtimeH.Register(mux)
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)
 	webhook.RegisterPaymentWebhooks(mux, payReg, eventBus)
