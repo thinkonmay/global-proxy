@@ -4,6 +4,15 @@
 _format_version: "3.0"
 
 services:
+  - name: auth-v1
+    url: http://auth:9999/
+    routes:
+      - name: auth-v1-all
+        paths: ["/auth/v1/"]
+        strip_path: true
+    plugins:
+      - name: cors
+
   - name: rest-v1
     url: http://rest:3000
     routes:
@@ -65,9 +74,9 @@ services:
       - name: basic-auth
 
 # Not deployed in slim stack (gateway returns 404):
-#   auth-v1 (/auth/v1), realtime-v1 (/realtime/v1), functions-v1 (/functions/v1), analytics-v1 (/analytics/v1)
+#   realtime-v1 (/realtime/v1), functions-v1 (/functions/v1), analytics-v1 (/analytics/v1)
 # Blocked: POST/GET /api/mcp → 403
-# Auth plane: use PocketBase — do not proxy /auth/v1 to GoTrue.
+# auth-v1: GoTrue at http://auth:9999 — internal Kong + public gateway proxy (D28 / Track C1).
 
 # WAF (globalproxy parity): catalog read paths restricted to waf.allowedIPs in config.yaml.
 # Default paths: config/waf_defaults.go (mirrors globalproxy -waf-paths in planning.md).

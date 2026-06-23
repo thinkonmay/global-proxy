@@ -16,7 +16,7 @@ const (
 	kongTestService = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.service"
 )
 
-func kongTestCfg(restURL, storageURL, metaURL, studioURL string) *config.Config {
+func kongTestCfg(restURL, storageURL, metaURL, studioURL, kongURL string) *config.Config {
 	return &config.Config{
 		PostgREST: config.PostgREST{URL: restURL},
 		Supabase: config.Supabase{
@@ -29,6 +29,7 @@ func kongTestCfg(restURL, storageURL, metaURL, studioURL string) *config.Config 
 			Storage: storageURL,
 			Meta:    metaURL,
 			Studio:  studioURL,
+			Kong:    kongURL,
 		},
 		WAF: config.WAF{
 			AllowedIPs:      []string{"203.0.113.10"},
@@ -44,7 +45,7 @@ func TestKongRestRejectsInvalidAPIKey(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/plans", nil)
 	req.Header.Set("apikey", "invalid-key")
@@ -64,7 +65,7 @@ func TestKongRestProxiesWithServiceRoleKey(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/plans", nil)
 	req.Header.Set("apikey", kongTestService)
@@ -84,7 +85,7 @@ func TestKongGraphQLSetsContentProfile(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodPost, "/graphql/v1", strings.NewReader(`{"query":"{}"}`))
 	req.Header.Set("apikey", kongTestAnon)
@@ -102,7 +103,7 @@ func TestKongRestRequiresAPIKey(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rest/v1/users", nil))
@@ -121,7 +122,7 @@ func TestKongRestProxiesWithAnonKey(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/stores?id=eq.1", nil)
 	req.Header.Set("apikey", kongTestAnon)
@@ -143,7 +144,7 @@ func TestKongRestWAFAllowsCatalogPOSTFromUnknownIP(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodPost, "/rest/v1/stores", nil)
 	req.Header.Set("apikey", kongTestAnon)
@@ -162,7 +163,7 @@ func TestKongRestWAFBlocksCatalogFromUnknownIP(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/stores", nil)
 	req.Header.Set("apikey", kongTestAnon)
@@ -183,7 +184,7 @@ func TestKongGraphQLRewritesPath(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodPost, "/graphql/v1", strings.NewReader(`{"query":"{}"}`))
 	req.Header.Set("apikey", kongTestAnon)
@@ -203,7 +204,7 @@ func TestKongMetaRequiresServiceRole(t *testing.T) {
 	defer meta.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg("", "", meta.URL, ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg("", "", meta.URL, "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodGet, "/pg/tables", nil)
 	req.Header.Set("apikey", kongTestAnon)
@@ -223,7 +224,7 @@ func TestKongStorageStripsEmptyAuthorization(t *testing.T) {
 	defer storage.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg("", storage.URL, "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg("", storage.URL, "", "", ""), http.DefaultTransport)
 
 	req := httptest.NewRequest(http.MethodGet, "/storage/v1/object/public/bucket/x", nil)
 	req.Header.Set("Authorization", "")
@@ -236,7 +237,7 @@ func TestKongStorageStripsEmptyAuthorization(t *testing.T) {
 
 func TestKongRemovedRoutesReturn404(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg("", "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg("", "", "", "", ""), http.DefaultTransport)
 
 	for _, path := range []string{"/auth/v1/token", "/realtime/v1/websocket", "/functions/v1/hello"} {
 		rec := httptest.NewRecorder()
@@ -247,9 +248,47 @@ func TestKongRemovedRoutesReturn404(t *testing.T) {
 	}
 }
 
+func TestKongGoTrueProxiesViaKong(t *testing.T) {
+	var upstreamPath string
+	kong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer kong.Close()
+
+	mux := http.NewServeMux()
+	RegisterKong(mux, kongTestCfg("", "", "", "", kong.URL), http.DefaultTransport)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/v1/token", strings.NewReader(`{"grant_type":"password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamPath != "/auth/v1/token" {
+		t.Fatalf("expected upstream /auth/v1/token (via Kong), got %q", upstreamPath)
+	}
+}
+
+func TestKongGoTrueRejectsDirectAuthUpstream(t *testing.T) {
+	mux := http.NewServeMux()
+	cfg := kongTestCfg("", "", "", "", "")
+	cfg.Upstreams.Kong = "http://auth:9999"
+	RegisterKong(mux, cfg, http.DefaultTransport)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/v1/health", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when upstream is direct GoTrue, got %d", rec.Code)
+	}
+}
+
 func TestKongMCPBlocked(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg("", "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg("", "", "", "", ""), http.DefaultTransport)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/mcp", nil))
@@ -265,7 +304,7 @@ func TestKongPublicRPCRemoved(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), http.DefaultTransport)
 
 	for _, path := range []string{"/v1/rpc", "/rest/v1/rpc/get_all_rank_rewards"} {
 		rec := httptest.NewRecorder()
@@ -284,7 +323,7 @@ func TestKongRestBreakerRejection(t *testing.T) {
 	defer backend.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(backend.URL, "", "", ""), bt)
+	RegisterKong(mux, kongTestCfg(backend.URL, "", "", "", ""), bt)
 
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/other", nil)
 	req.Header.Set("apikey", kongTestAnon)

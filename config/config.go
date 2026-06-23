@@ -140,6 +140,8 @@ type Upstreams struct {
 	Studio  string `mapstructure:"studio"`
 	Storage string `mapstructure:"storage"`
 	Website string `mapstructure:"website"`
+	Kong    string `mapstructure:"kong"`   // internal Supabase edge (D21) — auth proxy target
+	GoTrue  string `mapstructure:"gotrue"` // deprecated alias for kong; must not point at auth:9999
 }
 
 // Supabase holds Kong consumer keys and Studio basic-auth credentials.
@@ -299,10 +301,21 @@ func mergeSupabaseKeys(cfg *Config) {
 		cfg.WAF.PublicReadPaths = defaultPublicReadPaths()
 	}
 	mergeCorazaDefaults(&cfg.WAF.Coraza)
+	mergeUpstreamDefaults(&cfg.Upstreams)
+}
+
+func mergeUpstreamDefaults(u *Upstreams) {
+	if u.Kong == "" {
+		u.Kong = strings.TrimSpace(u.GoTrue)
+	}
+	if u.GoTrue == "" {
+		u.GoTrue = strings.TrimSpace(u.Kong)
+	}
 }
 
 func defaultCorazaSkipPaths() []string {
 	return []string{
+		"/auth/v1/",
 		"/storage/v1/",
 		"/api/track",
 		"/api/identify",

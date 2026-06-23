@@ -50,6 +50,12 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Payment.SePay.IPNSecretKey, "APP_PAYMENT_SEPAY_IPNSECRETKEY")
 	setEnvString(&cfg.Payment.SePay.PublicBaseURL, "APP_PAYMENT_SEPAY_PUBLICBASEURL")
 	setEnvString(&cfg.Payment.SePay.ReturnURL, "APP_PAYMENT_SEPAY_RETURNURL")
+	setEnvString(&cfg.Upstreams.Meta, "APP_UPSTREAMS_META")
+	setEnvString(&cfg.Upstreams.Studio, "APP_UPSTREAMS_STUDIO")
+	setEnvString(&cfg.Upstreams.Storage, "APP_UPSTREAMS_STORAGE")
+	setEnvString(&cfg.Upstreams.Website, "APP_UPSTREAMS_WEBSITE")
+	setEnvString(&cfg.Upstreams.Kong, "APP_UPSTREAMS_KONG")
+	setEnvString(&cfg.Upstreams.GoTrue, "APP_UPSTREAMS_GOTRUE")
 }
 
 func setEnvString(dst *string, key string) {
