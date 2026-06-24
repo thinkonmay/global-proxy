@@ -15,6 +15,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Supabase.DashboardPassword, "APP_SUPABASE_DASHBOARDPASSWORD")
 	setEnvString(&cfg.Admin.SigningSecret, "APP_ADMIN_SIGNINGSECRET")
 	setEnvString(&cfg.Admin.Resend.APIKey, "APP_ADMIN_RESEND_APIKEY")
+	setEnvString(&cfg.Admin.Resend.From, "APP_ADMIN_RESEND_FROM")
 	setEnvString(&cfg.PocketBase.URL, "APP_POCKETBASE_URL")
 	setEnvString(&cfg.PocketBase.IssuerHost, "APP_POCKETBASE_ISSUERHOST")
 	// When issuer host is unset, default to the public PB_URL workers/clients use.
