@@ -74,16 +74,16 @@ func WrapWebsiteFallback(primary http.Handler, website http.Handler) http.Handle
 		return primary
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		normalized := stripLocalePrefix(r.URL.Path)
-		if normalized != r.URL.Path {
+		path := r.URL.Path
+		if !isGatewayAPIPath(path) {
+			website.ServeHTTP(w, r)
+			return
+		}
+		if normalized := stripLocalePrefix(path); normalized != path {
 			r2 := r.Clone(r.Context())
 			r2.URL.Path = normalized
 			r = r2
 		}
-		if isGatewayAPIPath(r.URL.Path) {
-			primary.ServeHTTP(w, r)
-			return
-		}
-		website.ServeHTTP(w, r)
+		primary.ServeHTTP(w, r)
 	})
 }
