@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/testsupport"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
@@ -35,9 +37,8 @@ func TestFillCheckoutReturnsURL(t *testing.T) {
 // TestCreateDepositRowLoopDataShape verifies that fillCheckout + the data-shape assembly
 // in CreateDeposit produce the expected JSON keys (redirect_url, charge_id, and detail when
 // non-empty). The CreateDeposit handler itself cannot be driven end-to-end in a unit test
-// without auth: requireUser relies on the package-level pbUserAuth global which requires the
-// PocketBase + cluster issuer registry to be configured. End-to-end coverage of the full
-// row-loop (RPC → loadTransaction → rates.Load → fillCheckout → Update) is left for the
+// without auth: RequireUser needs ConfigureGoTrueAuth / APP_SUPABASE_JWTSECRET.
+// End-to-end coverage of the full row-loop (RPC → loadTransaction → rates.Load → fillCheckout → Update) is left for the
 // live-DB integration suite (WITH_INTEGRATION=1).
 func TestCreateDepositRowLoopDataShape(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
@@ -147,12 +148,41 @@ func TestBillingListActiveAddonsPublicRPC(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	// Without auth — only tests route registration; full auth tested in integration.
 	req := httptest.NewRequest(http.MethodGet, "/v1/billing/addons", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without token, got %d", rec.Code)
+	}
+}
+
+func TestBillingListActiveAddonsWithGoTrueToken(t *testing.T) {
+	const secret = "gotrue-test-secret"
+	auth.ConfigureGoTrueAuth(secret)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rpc/get_active_addons" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"type": "llm", "units": 2},
+		})
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	h := New(pr, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/billing/addons", nil)
+	req.Header.Set("Authorization", "Bearer "+testsupport.GoTrueJWT(t, secret, "u1", "subscriber@example.com"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body: %s", rec.Code, rec.Body.String())
 	}
 }
 

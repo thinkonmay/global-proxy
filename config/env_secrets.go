@@ -10,10 +10,12 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.PostgREST.ServiceKey, "APP_POSTGREST_SERVICEKEY")
 	setEnvString(&cfg.Supabase.AnonKey, "APP_SUPABASE_ANONKEY")
 	setEnvString(&cfg.Supabase.ServiceKey, "APP_SUPABASE_SERVICEKEY")
+	setEnvString(&cfg.Supabase.JWTSecret, "APP_SUPABASE_JWTSECRET")
 	setEnvString(&cfg.Supabase.DashboardUser, "APP_SUPABASE_DASHBOARDUSER")
 	setEnvString(&cfg.Supabase.DashboardPassword, "APP_SUPABASE_DASHBOARDPASSWORD")
 	setEnvString(&cfg.Admin.SigningSecret, "APP_ADMIN_SIGNINGSECRET")
 	setEnvString(&cfg.Admin.Resend.APIKey, "APP_ADMIN_RESEND_APIKEY")
+	setEnvString(&cfg.Admin.Resend.From, "APP_ADMIN_RESEND_FROM")
 	setEnvString(&cfg.PocketBase.URL, "APP_POCKETBASE_URL")
 	setEnvString(&cfg.PocketBase.IssuerHost, "APP_POCKETBASE_ISSUERHOST")
 	// When issuer host is unset, default to the public PB_URL workers/clients use.
@@ -25,6 +27,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.LLM.BaseURL, "APP_LLM_BASEURL")
 	setEnvString(&cfg.LLM.APIKey, "APP_LLM_APIKEY")
 	setEnvString(&cfg.Storj.AccessGrant, "APP_STORJ_ACCESSGRANT")
+	setEnvString(&cfg.Runtime.ClusterSecret, "APP_RUNTIME_CLUSTER_SECRET")
 	setEnvString(&cfg.Metrics.IngestSecret, "APP_METRICS_INGESTSECRET")
 	setEnvString(&cfg.ClickHouse.Addr, "APP_CLICKHOUSE_ADDR")
 	setEnvString(&cfg.ClickHouse.Database, "APP_CLICKHOUSE_DATABASE")
@@ -45,6 +48,12 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Payment.Payssion.PMID, "APP_PAYMENT_PAYSSION_PMID")
 	setEnvString(&cfg.Payment.Payssion.SecretKey, "APP_PAYMENT_PAYSSION_SECRETKEY")
 	setEnvString(&cfg.Payment.Payssion.Link, "APP_PAYMENT_PAYSSION_LINK")
+	setEnvString(&cfg.Upstreams.Meta, "APP_UPSTREAMS_META")
+	setEnvString(&cfg.Upstreams.Studio, "APP_UPSTREAMS_STUDIO")
+	setEnvString(&cfg.Upstreams.Storage, "APP_UPSTREAMS_STORAGE")
+	setEnvString(&cfg.Upstreams.Website, "APP_UPSTREAMS_WEBSITE")
+	setEnvString(&cfg.Upstreams.Kong, "APP_UPSTREAMS_KONG")
+	setEnvString(&cfg.Upstreams.GoTrue, "APP_UPSTREAMS_GOTRUE")
 }
 
 func setEnvString(dst *string, key string) {

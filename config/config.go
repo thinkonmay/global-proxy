@@ -31,6 +31,7 @@ type Config struct {
 	Persona        Persona        `mapstructure:"persona"`
 	Payment        Payment        `mapstructure:"payment"`
 	Gateway        Gateway        `mapstructure:"gateway"`
+	Runtime        Runtime        `mapstructure:"runtime"`
 	Storj          Storj          `mapstructure:"storj"`
 	LLM            LLM            `mapstructure:"llm"`
 	TLS            TLS            `mapstructure:"tls"`
@@ -117,6 +118,12 @@ type Gateway struct {
 	PublicURL string `mapstructure:"publicURL"`
 }
 
+// Runtime configures gateway→cluster runtime proxy (Track C3 transitional HTTP shim).
+type Runtime struct {
+	// ClusterSecret must match cluster.yaml p2pcred on worker nodes.
+	ClusterSecret string `mapstructure:"clusterSecret"`
+}
+
 // Storj configures the global uplink access grant for user bucket file APIs.
 type Storj struct {
 	AccessGrant string `mapstructure:"accessGrant"`
@@ -132,6 +139,8 @@ type Upstreams struct {
 	Studio  string `mapstructure:"studio"`
 	Storage string `mapstructure:"storage"`
 	Website string `mapstructure:"website"`
+	Kong    string `mapstructure:"kong"`   // internal Supabase edge (D21) — auth proxy target
+	GoTrue  string `mapstructure:"gotrue"` // deprecated alias for kong; must not point at auth:9999
 }
 
 // Supabase holds Kong consumer keys and Studio basic-auth credentials.
@@ -140,6 +149,7 @@ type Supabase struct {
 	PublishableKey    string `mapstructure:"publishableKey"`
 	ServiceKey        string `mapstructure:"serviceKey"`
 	SecretKey         string `mapstructure:"secretKey"`
+	JWTSecret         string `mapstructure:"jwtSecret"` // GoTrue HS256 signing key (Track C1)
 	DashboardUser     string `mapstructure:"dashboardUser"`
 	DashboardPassword string `mapstructure:"dashboardPassword"`
 }
@@ -204,8 +214,7 @@ func NewConfig() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 	v.SetDefault("rpc.password1", "thinkmay protect your data")
-	v.SetDefault("relay.pollIntervalMs", 500)
-	v.SetDefault("relay.batchSize", 50)
+	v.SetDefault("nats.url", "nats://nats:4222")
 	v.SetDefault("clickhouse.database", "platform")
 	v.SetDefault("tls.enabled", true)
 	v.SetDefault("tls.httpPort", "80")
@@ -291,10 +300,21 @@ func mergeSupabaseKeys(cfg *Config) {
 		cfg.WAF.PublicReadPaths = defaultPublicReadPaths()
 	}
 	mergeCorazaDefaults(&cfg.WAF.Coraza)
+	mergeUpstreamDefaults(&cfg.Upstreams)
+}
+
+func mergeUpstreamDefaults(u *Upstreams) {
+	if u.Kong == "" {
+		u.Kong = strings.TrimSpace(u.GoTrue)
+	}
+	if u.GoTrue == "" {
+		u.GoTrue = strings.TrimSpace(u.Kong)
+	}
 }
 
 func defaultCorazaSkipPaths() []string {
 	return []string{
+		"/auth/v1/",
 		"/storage/v1/",
 		"/api/track",
 		"/api/identify",

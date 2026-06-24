@@ -37,7 +37,8 @@ func RegisterKong(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper) 
 		PublicReadPaths: cfg.WAF.PublicReadPaths,
 	})
 
-	registerRemovedRoutes(mux)
+	gotrueEnabled := registerGoTrueRoute(mux, cfg, rt)
+	registerRemovedRoutes(mux, gotrueEnabled)
 
 	if rest := NewProxy(cfg.PostgREST.URL, rt, func(req *http.Request) {
 		req.URL.Path = strings.TrimPrefix(req.URL.Path, restPrefix)
@@ -91,13 +92,16 @@ func servePublicRPCRemoved(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(removedPublicRPCMsg)
 }
 
-func registerRemovedRoutes(mux *http.ServeMux) {
-	for _, prefix := range []string{
-		"/auth/v1/",
+func registerRemovedRoutes(mux *http.ServeMux, gotrueEnabled bool) {
+	removed := []string{
 		"/realtime/v1/",
 		"/functions/v1/",
 		"/analytics/v1/",
-	} {
+	}
+	if !gotrueEnabled {
+		removed = append([]string{"/auth/v1/"}, removed...)
+	}
+	for _, prefix := range removed {
 		mux.Handle(prefix, http.HandlerFunc(serveRemovedStack))
 	}
 }

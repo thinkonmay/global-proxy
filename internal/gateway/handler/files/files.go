@@ -157,7 +157,7 @@ func (h *Handler) resolveBucket(r *http.Request) (string, int, string) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), grantTimeout)
 	defer cancel()
-	email, _, status, msg := auth.Validate(ctx, cluster, authHeader, h.transport)
+	email, _, status, msg := auth.Validate(ctx, authHeader, h.transport)
 	if status != 0 {
 		if msg == "invalid issuer" {
 			msg = "invalid cluster"

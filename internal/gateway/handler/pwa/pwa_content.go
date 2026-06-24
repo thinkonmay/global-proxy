@@ -172,7 +172,7 @@ func (h *Handler) Referrals(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "Missing email or issuer")
 		return
 	}
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r, req.Issuer)
+	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
 	if code != 0 {
 		httpx.WriteError(w, code, msg)
 		return

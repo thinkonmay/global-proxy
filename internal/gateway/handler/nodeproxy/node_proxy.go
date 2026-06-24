@@ -1,38 +1,22 @@
 package nodeproxy
 
 import (
-	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterproxy"
 )
 
-const (
-	gatewayInternalHeader = "X-Thinkmay-Gateway-Internal"
-	nodeProxyTimeout      = 120 * time.Second
-)
-
-// Handler forwards snapshot operations to node PocketBase internal routes.
+// Handler forwards snapshot operations to node PocketBase routes.
 type Handler struct {
-	httpClient *http.Client
+	clusterSecret string
+	transport     http.RoundTripper
 }
 
-func New(rt http.RoundTripper) *Handler {
-	if rt == nil {
-		rt = http.DefaultTransport
-	}
+func New(clusterSecret string, rt http.RoundTripper) *Handler {
 	return &Handler{
-		httpClient: &http.Client{
-			Timeout:   nodeProxyTimeout,
-			Transport: rt,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		clusterSecret: clusterSecret,
+		transport:     rt,
 	}
 }
 
@@ -45,65 +29,19 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 func (h *Handler) proxySnapshots(w http.ResponseWriter, r *http.Request) {
-	h.forward(w, r, "/internal/snapshots")
+	h.forward(w, r, "/snapshots")
 }
 
 func (h *Handler) proxySnapshotsRestore(w http.ResponseWriter, r *http.Request) {
-	h.forward(w, r, "/internal/snapshots/restore")
+	h.forward(w, r, "/snapshots/restore")
 }
 
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, pbPath string) {
-	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
-	if cluster == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "cluster query required")
-		return
-	}
-	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-	if authHeader == "" {
-		httpx.WriteError(w, http.StatusUnauthorized, "authorization required")
-		return
-	}
-
-	base, code, msg := auth.ResolveClusterURL(r.Context(), cluster)
-	if code != 0 {
-		httpx.WriteError(w, code, msg)
-		return
-	}
-	target, err := url.Parse(base + pbPath)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid cluster")
-		return
-	}
-	target.RawQuery = r.URL.RawQuery
-
-	ctx, cancel := httpx.ContextWithTimeout(r.Context(), nodeProxyTimeout)
-	defer cancel()
-
-	var body io.Reader
-	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
-		body = r.Body
-	}
-	req, err := http.NewRequestWithContext(ctx, r.Method, target.String(), body)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "build request failed")
-		return
-	}
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set(gatewayInternalHeader, "1")
-	for _, k := range []string{"Content-Type", "Accept", "Range"} {
-		if v := r.Header.Get(k); v != "" {
-			req.Header.Set(k, v)
-		}
-	}
-
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadGateway, "cluster unreachable")
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	httpx.CopyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	clusterproxy.Forward(w, r, clusterproxy.ForwardOpts{
+		UpstreamPath:  pbPath,
+		RequireUser:   true,
+		ClusterSecret: h.clusterSecret,
+		Timeout:       clusterproxy.DefaultTimeout * time.Second,
+		Transport:     h.transport,
+	})
 }

@@ -20,7 +20,6 @@ ci_gateway_test_packages() {
 ./config
 ./internal/gateway
 ./internal/gateway/handler
-./internal/outbox
 ./internal/worker/handler
 ./pkg/bus
 ./pkg/bus/memory
@@ -36,6 +35,7 @@ ci_gateway_test_packages() {
 ./pkg/payment/payermax
 ./pkg/payment/sepay
 ./pkg/cluster
+./pkg/gotrue
 ./pkg/certmanager
 ./pkg/guard
 ./pkg/idempotency
