@@ -23,6 +23,15 @@ func (fakeWebhookProvider) Charge(context.Context, payment.ChargeParams) (paymen
 func (fakeWebhookProvider) GetCharge(context.Context, string) (payment.Charge, error) {
 	return payment.Charge{}, payment.ErrNotSupported
 }
+func (fakeWebhookProvider) Subscribe(context.Context, payment.SubscribeParams) (payment.Subscription, error) {
+	return payment.Subscription{}, payment.ErrNotSupported
+}
+func (fakeWebhookProvider) GetSubscription(context.Context, string) (payment.Subscription, error) {
+	return payment.Subscription{}, payment.ErrNotSupported
+}
+func (fakeWebhookProvider) CancelSubscription(context.Context, string) error {
+	return payment.ErrNotSupported
+}
 func (fakeWebhookProvider) RegisterRoutes(mux *http.ServeMux, deliver func(context.Context, payment.Event) error) {
 	mux.HandleFunc("POST /api/v1/payment/webhook/testpay", func(w http.ResponseWriter, r *http.Request) {
 		if err := deliver(r.Context(), payment.Event{
