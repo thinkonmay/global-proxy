@@ -28,7 +28,23 @@ var gatewayAPIExactPaths = []string{
 	"/sse",
 }
 
+func stripLocalePrefix(path string) string {
+	if path == "" {
+		return path
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	for _, loc := range []string{"/en/", "/vi/", "/id/"} {
+		if strings.HasPrefix(path, loc) {
+			return "/" + strings.TrimPrefix(path, loc)
+		}
+	}
+	return path
+}
+
 func isGatewayAPIPath(path string) bool {
+	path = stripLocalePrefix(path)
 	if path == "" {
 		return false
 	}
@@ -58,6 +74,12 @@ func WrapWebsiteFallback(primary http.Handler, website http.Handler) http.Handle
 		return primary
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		normalized := stripLocalePrefix(r.URL.Path)
+		if normalized != r.URL.Path {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = normalized
+			r = r2
+		}
 		if isGatewayAPIPath(r.URL.Path) {
 			primary.ServeHTTP(w, r)
 			return
