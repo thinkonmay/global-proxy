@@ -20,7 +20,7 @@ ci_gateway_test_packages() {
 ./config
 ./internal/gateway
 ./internal/gateway/handler
-./internal/worker/handler
+./internal/worker
 ./pkg/bus
 ./pkg/bus/memory
 ./pkg/bus/nats
@@ -33,7 +33,7 @@ ci_gateway_test_packages() {
 ./pkg/payment/stripe
 ./pkg/payment/payos
 ./pkg/payment/payermax
-./pkg/payment/sepay
+./pkg/payment/payssion
 ./pkg/cluster
 ./pkg/gotrue
 ./pkg/certmanager
