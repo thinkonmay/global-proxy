@@ -75,7 +75,8 @@ func returnURLForMetadata(raw json.RawMessage) string {
 }
 
 // fillCheckout converts the amount, calls the provider, and returns the Charge.
-func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, rate float64) (payment.Charge, error) {
+// method optionally pre-selects a provider payment channel (e.g. PayerMax "OVO"/"DANA").
+func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, rate float64, method string) (payment.Charge, error) {
 	if h.registry == nil {
 		return payment.Charge{}, fmt.Errorf("payment registry not configured")
 	}
@@ -83,33 +84,16 @@ func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, rate float64) (p
 	if !ok {
 		return payment.Charge{}, fmt.Errorf("unsupported provider %q", txn.Provider)
 	}
-	money := payment.ToMoney(txn.Amount, txn.Currency, rate)
+	money, err := payment.ToMoney(txn.Amount, txn.Currency, rate)
+	if err != nil {
+		return payment.Charge{}, err
+	}
 	return client.Charge(ctx, payment.ChargeParams{
 		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
 		Money:          money,
 		Description:    txn.Email,
 		ReturnURL:      returnURLForMetadata(txn.Metadata),
-	})
-}
-
-// fillCheckoutCard is like fillCheckout but charges a saved card off-session.
-// token is the provider card handle (pm_ref) and customerRef is the
-// provider customer id (customer_ref). Both are required for off-session charges.
-func (h *Handler) fillCheckoutCard(ctx context.Context, txn txnRow, rate float64, token, customerRef string) (payment.Charge, error) {
-	if h.registry == nil {
-		return payment.Charge{}, fmt.Errorf("payment registry not configured")
-	}
-	client, ok := h.registry.Get(txn.Provider)
-	if !ok {
-		return payment.Charge{}, fmt.Errorf("unsupported provider %q", txn.Provider)
-	}
-	money := payment.ToMoney(txn.Amount, txn.Currency, rate)
-	return client.Charge(ctx, payment.ChargeParams{
-		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
-		Money:          money,
-		Description:    txn.Email,
-		Token:          token,
-		CustomerRef:    customerRef,
+		Method:         method,
 	})
 }
 
@@ -125,7 +109,7 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		Provider     string         `json:"provider"`
 		Metadata     map[string]any `json:"metadata"`
 		DiscountCode string         `json:"discount_code"`
-		CardID       int64          `json:"card_id"`
+		Method       string         `json:"method"` // optional provider channel (e.g. "OVO"/"DANA")
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -172,42 +156,6 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.registry != nil {
-		// When payment_method_id is set, look up the saved card once for the whole loop.
-		// SECURITY: scope the lookup to the caller's user_id (IDOR guard) and assert
-		// the card's provider matches the requested provider.
-		var cardPmRef, cardCustomerRef string
-		if body.CardID > 0 {
-			// Resolve caller identity to a numeric user_id first.
-			callerID, err := h.resolveUserID(ctx, email)
-			if err != nil {
-				httpx.WriteUpstreamErr(w, err)
-				return
-			}
-
-			var pmRows []pmRow
-			pmq := url.Values{}
-			pmq.Set("select", "id,provider,customer_ref,pm_ref,brand,last4,exp_month,exp_year,is_default")
-			pmq.Set("id", "eq."+strconv.FormatInt(body.CardID, 10))
-			pmq.Set("user_id", "eq."+strconv.FormatInt(callerID, 10))
-			pmq.Set("limit", "1")
-			if err := h.pr.SelectService(ctx, "card", pmq, &pmRows); err != nil {
-				httpx.WriteUpstreamErr(w, err)
-				return
-			}
-			if len(pmRows) == 0 {
-				// Card not found OR belongs to a different user — do not leak which.
-				httpx.WriteError(w, http.StatusNotFound, "payment_method not found")
-				return
-			}
-			// Assert the card's provider matches the deposit's requested provider.
-			if strings.ToLower(pmRows[0].Provider) != strings.ToLower(body.Provider) {
-				httpx.WriteError(w, http.StatusBadRequest, "payment_method provider mismatch")
-				return
-			}
-			cardPmRef = pmRows[0].PmRef
-			cardCustomerRef = pmRows[0].CustomerRef
-		}
-
 		for i := range rows {
 			if !dataIsEmpty(rows[i].Data) {
 				continue
@@ -229,13 +177,7 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			var ch payment.Charge
-			var chErr error
-			if cardPmRef != "" {
-				ch, chErr = h.fillCheckoutCard(ctx, txn, rate, cardPmRef, cardCustomerRef)
-			} else {
-				ch, chErr = h.fillCheckout(ctx, txn, rate)
-			}
+			ch, chErr := h.fillCheckout(ctx, txn, rate, body.Method)
 			if chErr != nil {
 				httpx.WriteUpstreamErr(w, chErr)
 				return

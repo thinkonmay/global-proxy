@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -79,15 +78,25 @@ func (c *Client) sdkClient() (*payermaxsdk.Client, error) {
 	)
 }
 
-// majorAmount converts a minor-unit amount to the major-unit string PayerMax expects.
-// PayerMax totalAmount is in major units. USD has 2 decimal places, so Money.Amount
-// (cents) is divided by 100 and formatted with 2 decimals. IDR has no minor unit, so
-// the integer minor amount is sent as-is.
-func majorAmount(amount int64, currency string) string {
-	if strings.EqualFold(currency, "USD") {
-		return strconv.FormatFloat(float64(amount)/100, 'f', 2, 64)
+// orderFields builds the orderAndPay request fields for a charge. When args.Method is set
+// it adds targetOrg to pre-select a specific e-wallet (e.g. "OVO"/"DANA"); otherwise the
+// hosted checkout page lets the user choose.
+func orderFields(args payment.ChargeParams, cur, outTradeNo string) map[string]string {
+	fields := map[string]string{
+		"userId":           "U10001",
+		"integrate":        "Hosted_Checkout",
+		"outTradeNo":       outTradeNo,
+		"totalAmount":      args.Money.Major(),
+		"currency":         cur,
+		"country":          country(cur),
+		"subject":          "Thinkmay Service",
+		"body":             "Order # " + args.IdempotencyKey,
+		"frontCallbackUrl": args.ReturnURL,
 	}
-	return strconv.FormatInt(amount, 10)
+	if m := strings.ToUpper(strings.TrimSpace(args.Method)); m != "" {
+		fields["targetOrg"] = m
+	}
+	return fields
 }
 
 // Charge initiates a hosted-checkout charge via PayerMax orderAndPay.
@@ -102,17 +111,7 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 	}
 
 	outTradeNo := "P" + args.IdempotencyKey
-	payload, err := json.Marshal(map[string]string{
-		"userId":           "U10001",
-		"integrate":        "Hosted_Checkout",
-		"outTradeNo":       outTradeNo,
-		"totalAmount":      majorAmount(args.Money.Amount, cur),
-		"currency":         cur,
-		"country":          country(cur),
-		"subject":          "Thinkmay Service",
-		"body":             "Order # " + args.IdempotencyKey,
-		"frontCallbackUrl": args.ReturnURL,
-	})
+	payload, err := json.Marshal(orderFields(args, cur, outTradeNo))
 	if err != nil {
 		return payment.Charge{}, err
 	}
@@ -195,6 +194,21 @@ func parseRedirectURL(resp []byte) (string, error) {
 		return "", fmt.Errorf("payermax: empty redirectUrl in %s", resp)
 	}
 	return parsed.Data.RedirectURL, nil
+}
+
+// Subscribe is unsupported: PayerMax recurring billing is not wired here.
+func (c *Client) Subscribe(ctx context.Context, args payment.SubscribeParams) (payment.Subscription, error) {
+	return payment.Subscription{}, payment.ErrNotSupported
+}
+
+// GetSubscription is unsupported for PayerMax.
+func (c *Client) GetSubscription(ctx context.Context, id string) (payment.Subscription, error) {
+	return payment.Subscription{}, payment.ErrNotSupported
+}
+
+// CancelSubscription is unsupported for PayerMax.
+func (c *Client) CancelSubscription(ctx context.Context, id string) error {
+	return payment.ErrNotSupported
 }
 
 // RegisterRoutes is a no-op; PayerMax events are not wired through HTTP routes here.

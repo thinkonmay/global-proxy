@@ -1,16 +1,15 @@
-// Package payment settles payment transactions off the bus and via a polling
-// fallback, and persists saved cards. Settlement is idempotent so redeliveries
-// and poll/event races dedup on (provider, txn, status).
+// Package payment settles payment transactions and subscription lifecycle events off the
+// bus and via a polling fallback. Settlement is idempotent so redeliveries and poll/event
+// races dedup — charges on (provider, txn, status), subscriptions on (sub id, status, period).
 package payment
 
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"net/url"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
@@ -20,16 +19,12 @@ type Handler struct {
 	pr          *postgrest.Client
 	settleRPC   func(ctx context.Context, fn string, args map[string]any) error
 	listPending func(ctx context.Context) ([]pendingTxn, error)
-	saveCard    func(ctx context.Context, ev model.PaymentMsg) error
 }
 
 func New(idem *idempotency.Guard, pr *postgrest.Client) *Handler {
 	h := &Handler{idem: idem, pr: pr}
 	h.settleRPC = func(ctx context.Context, fn string, args map[string]any) error {
 		return pr.RPC(ctx, fn, args, nil)
-	}
-	h.saveCard = func(ctx context.Context, ev model.PaymentMsg) error {
-		return h.persistCard(ctx, ev)
 	}
 	return h
 }
@@ -46,63 +41,49 @@ func (h *Handler) Init(eventBus bus.Client) {
 	)
 }
 
-// handlePaymentEvent settles a transaction idempotently and, for successful
-// card-token events, persists the saved card. Both side-effects run inside the
-// same idempotency guard so a redelivery dedups both. Card-save errors are
-// logged and suppressed — they must not nak the settle.
-// Dedup key is provider + txn id + status.
+// handlePaymentEvent routes an event to the charge or subscription settle path by Kind.
 func (h *Handler) handlePaymentEvent(ctx context.Context, ev model.PaymentMsg) error {
+	switch ev.Kind {
+	case payment.EventSubActivated, payment.EventSubRenewed, payment.EventSubCanceled:
+		return h.settleSubscription(ctx, ev)
+	default:
+		return h.settleCharge(ctx, ev)
+	}
+}
+
+// settleCharge settles a one-time transaction idempotently. The idempotency guard
+// dedups redeliveries and poll/event races on provider + txn id + status.
+func (h *Handler) settleCharge(ctx context.Context, ev model.PaymentMsg) error {
 	if ev.RefID == "" {
 		return fmt.Errorf("payment event missing txn id (charge %s)", ev.ProviderID)
 	}
 	key := fmt.Sprintf("settle:%s:%s:%s", ev.Provider, ev.RefID, ev.Status)
 	return h.idem.Run(ctx, key, func(ctx context.Context) error {
-		if err := h.settleRPC(ctx, "settle_transaction", map[string]any{
+		return h.settleRPC(ctx, "settle_transaction", map[string]any{
 			"p_id":     ev.RefID,
 			"p_status": ev.Status,
-		}); err != nil {
-			return err
-		}
-		if ev.Status == "success" && ev.Token != "" {
-			if err := h.saveCard(ctx, ev); err != nil {
-				slog.Warn("payment: save card failed (best-effort)", "txn", ev.RefID, "err", err)
-			}
-		}
-		return nil
+		})
 	})
 }
 
-// persistCard looks up the transaction's user_id and upserts a card
-// row. A duplicate-key (conflict) error is treated as success — the card is
-// already stored. A user_id lookup miss inserts with a null user_id.
-func (h *Handler) persistCard(ctx context.Context, ev model.PaymentMsg) error {
-	// Look up user_id for this transaction.
-	var rows []struct {
-		UserID int64 `json:"user_id"`
+// settleSubscription applies a subscription lifecycle event idempotently. Activation carries
+// RefID (local subscription-intent id) to link the provider subscription; renewals and cancels
+// are keyed by provider subscription id. Dedup includes period end so each cycle settles once.
+func (h *Handler) settleSubscription(ctx context.Context, ev model.PaymentMsg) error {
+	if ev.ProviderSubID == "" {
+		return fmt.Errorf("subscription event missing provider subscription id (ref %q)", ev.RefID)
 	}
-	q := url.Values{}
-	q.Set("select", "user_id")
-	q.Set("id", fmt.Sprintf("eq.%s", ev.RefID))
-	q.Set("limit", "1")
-	_ = h.pr.SelectService(ctx, "transactions", q, &rows) // lookup miss → proceed with null user_id
-
-	body := map[string]any{
-		"provider":     ev.Provider,
-		"customer_ref": ev.CustomerRef,
-		"pm_ref":       ev.Token,
-		"brand":        ev.Brand,
-		"last4":        ev.Last4,
-	}
-	if len(rows) > 0 && rows[0].UserID != 0 {
-		body["user_id"] = rows[0].UserID
-	}
-
-	if err := h.pr.Insert(ctx, "card", body, nil); err != nil {
-		if postgrest.IsConflict(err) {
-			slog.Debug("payment: card already stored, skipping duplicate insert", "txn", ev.RefID)
-			return nil
+	key := fmt.Sprintf("settle_sub:%s:%s:%s:%d", ev.Provider, ev.ProviderSubID, ev.Status, ev.PeriodEnd)
+	return h.idem.Run(ctx, key, func(ctx context.Context) error {
+		args := map[string]any{
+			"p_provider":        ev.Provider,
+			"p_provider_sub_id": ev.ProviderSubID,
+			"p_status":          ev.Status,
+			"p_period_end":      ev.PeriodEnd,
 		}
-		return fmt.Errorf("persist card for txn %s: %w", ev.RefID, err)
-	}
-	return nil
+		if ev.RefID != "" {
+			args["p_ref_id"] = ev.RefID
+		}
+		return h.settleRPC(ctx, "settle_subscription", args)
+	})
 }

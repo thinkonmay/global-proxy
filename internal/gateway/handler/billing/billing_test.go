@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
@@ -24,7 +23,7 @@ func (fakeCharger) Charge(_ context.Context, a payment.ChargeParams) (payment.Ch
 func TestFillCheckoutReturnsURL(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
 	h := &Handler{registry: reg}
-	ch, err := h.fillCheckout(context.Background(), txnRow{ID: 7, Provider: "payos", Currency: "VND", Amount: 100}, 0.004)
+	ch, err := h.fillCheckout(context.Background(), txnRow{ID: 7, Provider: "payos", Currency: "VND", Amount: 100}, 0.004, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +44,7 @@ func TestCreateDepositRowLoopDataShape(t *testing.T) {
 	h := &Handler{registry: reg}
 
 	txn := txnRow{ID: 42, Provider: "payos", Currency: "VND", Amount: 200}
-	ch, err := h.fillCheckout(context.Background(), txn, 0.004)
+	ch, err := h.fillCheckout(context.Background(), txn, 0.004, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +72,46 @@ func TestCreateDepositRowLoopDataShape(t *testing.T) {
 	// fakeCharger returns no Detail, so the key must be absent.
 	if _, ok := parsed["detail"]; ok {
 		t.Fatalf("detail should be absent for provider with nil Detail, got: %v", parsed["detail"])
+	}
+}
+
+func TestPlanChargeMoneyResolvesServerSide(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// PostgREST table read for plans, selecting price->USD.
+		if r.URL.Path != "/plans" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"USD": map[string]any{"amount": 12, "tag": "USD"}},
+		})
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	h := New(pr, nil, nil, nil)
+
+	m, err := h.planChargeMoney(context.Background(), "pro", "usd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// $12 major -> 1200 minor; client-supplied amount is irrelevant.
+	if m.Currency != "USD" || m.Amount != 1200 {
+		t.Fatalf("planChargeMoney = %+v, want {1200 USD}", m)
+	}
+}
+
+func TestPlanChargeMoneyMissingPrice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{{}}) // row exists, no USD key
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	h := New(pr, nil, nil, nil)
+
+	if _, err := h.planChargeMoney(context.Background(), "pro", "USD"); err == nil {
+		t.Fatal("expected error when plan has no price for currency")
 	}
 }
 
@@ -152,37 +191,6 @@ func TestBillingDomainsPublic(t *testing.T) {
 	}
 }
 
-// chargeSpy is a payment.Client that records charge params and returns success.
-type chargeSpy struct {
-	payment.Client
-	fn func(payment.ChargeParams)
-}
-
-func (chargeSpy) Name() string { return "stripe" }
-func (s chargeSpy) Charge(_ context.Context, a payment.ChargeParams) (payment.Charge, error) {
-	if s.fn != nil {
-		s.fn(a)
-	}
-	return payment.Charge{Status: payment.StatusSuccess}, nil
-}
-
-func TestFillCheckoutOffSession(t *testing.T) {
-	var gotToken, gotCustomer string
-	reg := registry.NewRegistryWith(map[string]payment.Client{"stripe": chargeSpy{
-		fn: func(a payment.ChargeParams) { gotToken = a.Token; gotCustomer = a.CustomerRef },
-	}})
-	h := &Handler{registry: reg}
-	_, err := h.fillCheckoutCard(context.Background(),
-		txnRow{ID: 7, Provider: "stripe", Currency: "USD", Amount: 252}, 12.6,
-		"pm_1", "cus_1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotToken != "pm_1" || gotCustomer != "cus_1" {
-		t.Fatalf("token=%q customer=%q", gotToken, gotCustomer)
-	}
-}
-
 func TestBillingUnsubscribeInvalidAddonID(t *testing.T) {
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"})
 	h := New(pr, nil, nil, nil)
@@ -195,38 +203,5 @@ func TestBillingUnsubscribeInvalidAddonID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d body: %s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestResolveUserIDQueryIncludesEmail verifies that resolveUserID issues a SelectService
-// call whose query string contains both the "users" table and an email equality filter.
-// This confirms Fix 1's email→id lookup uses the correct filter before the user_id-scoped
-// card lookup — the full IDOR guard (user_id + provider filters) requires the live DB and
-// is covered by the integration suite (WITH_INTEGRATION=1).
-func TestResolveUserIDQueryIncludesEmail(t *testing.T) {
-	var capturedPath, capturedQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
-		capturedQuery = r.URL.RawQuery
-		// Simulate no user found — resolveUserID must return an error.
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("[]"))
-	}))
-	defer srv.Close()
-
-	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
-	h := &Handler{pr: pr}
-	_, err := h.resolveUserID(context.Background(), "alice@example.com")
-	if err == nil {
-		t.Fatal("expected error when user not found")
-	}
-
-	if capturedPath != "/users" {
-		t.Fatalf("path = %q, want /users", capturedPath)
-	}
-	if !strings.Contains(capturedQuery, "email=eq.alice%40example.com") &&
-		!strings.Contains(capturedQuery, "email=eq.alice@example.com") {
-		t.Fatalf("query %q missing email filter", capturedQuery)
 	}
 }

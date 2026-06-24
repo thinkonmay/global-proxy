@@ -49,53 +49,13 @@ func New(cfg Config) payment.Client {
 // Name identifies the provider for registry lookup.
 func (c *Client) Name() string { return "stripe" }
 
-// mapPI maps a Stripe PaymentIntent status string to a normalized payment.Status.
-// "succeeded" → StatusSuccess; "canceled" → StatusCanceled; everything else → StatusPending.
-func mapPI(status string) payment.Status {
-	switch status {
-	case "succeeded":
-		return payment.StatusSuccess
-	case "canceled":
-		return payment.StatusCanceled
-	default:
-		return payment.StatusPending
-	}
-}
-
-// Charge charges a saved card off-session when args.Token is set, or starts a
-// hosted Stripe Checkout session and returns its redirect URL otherwise.
+// Charge starts a hosted Stripe Checkout session and returns its redirect URL.
 func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment.Charge, error) {
 	if c.secretKey == "" {
 		return payment.Charge{}, fmt.Errorf("stripe secret not configured")
 	}
 	if strings.ToUpper(args.Money.Currency) != "USD" {
 		return payment.Charge{}, fmt.Errorf("stripe only supports USD")
-	}
-	// Off-session branch: charge a saved card without user interaction.
-	// Token holds the provider payment-method handle (e.g. pm_…) from the vault layer.
-	// CustomerRef must be set to the Stripe Customer ID (cus_…) that owns the payment method.
-	// NOTE: The PaymentIntents.Create call here requires live Stripe credentials;
-	// it is NOT covered by unit tests — verify manually with a Stripe test-mode key.
-	if args.Token != "" {
-		pi, err := c.sc.V1PaymentIntents.Create(ctx, &stripesdk.PaymentIntentCreateParams{
-			Amount:        new(args.Money.Amount),
-			Currency:      new(strings.ToLower(args.Money.Currency)),
-			Customer:      new(args.CustomerRef),
-			PaymentMethod: new(args.Token),
-			OffSession:    new(true),
-			Confirm:       new(true),
-			Metadata: map[string]string{
-				"txn_id": args.IdempotencyKey,
-			},
-		})
-		if err != nil {
-			return payment.Charge{}, err
-		}
-		ch := payment.Charge{ID: pi.ID, Status: mapPI(string(pi.Status))}
-		if pi.NextAction != nil && pi.NextAction.RedirectToURL != nil {
-			ch.RedirectURL = pi.NextAction.RedirectToURL.URL
-		}
-		return ch, nil
 	}
 
 	returnURL := strings.TrimSpace(args.ReturnURL)
@@ -104,14 +64,11 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 	}
 	// Hosted checkout: no UIMode/RedirectOnCompletion; Stripe drives success/cancel via URLs.
 	// ClientReferenceID lets us correlate the session to our txn via webhook metadata.
-	// CustomerCreation="always" ensures a Stripe Customer is created so the card can be saved.
-	// PaymentIntentData.SetupFutureUsage="off_session" attaches the PM to the Customer.
 	sess, err := c.sc.V1CheckoutSessions.Create(ctx, &stripesdk.CheckoutSessionCreateParams{
 		Mode:               stripesdk.String(string(stripesdk.CheckoutSessionModePayment)),
 		SuccessURL:         stripesdk.String(returnURL),
 		CancelURL:          stripesdk.String(returnURL),
 		ClientReferenceID:  stripesdk.String(args.IdempotencyKey),
-		CustomerCreation:   stripesdk.String("always"),
 		PaymentMethodTypes: []*string{stripesdk.String("card")},
 		LineItems: []*stripesdk.CheckoutSessionCreateLineItemParams{{
 			Quantity: stripesdk.Int64(1),
@@ -124,7 +81,6 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 			},
 		}},
 		PaymentIntentData: &stripesdk.CheckoutSessionCreatePaymentIntentDataParams{
-			SetupFutureUsage: stripesdk.String("off_session"),
 			Metadata: map[string]string{
 				"txn_id": args.IdempotencyKey,
 			},
@@ -156,10 +112,135 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 	return payment.Charge{ID: id, Status: status}, nil
 }
 
+// Subscribe starts a recurring Stripe Checkout session (Mode=subscription) and returns its
+// redirect URL. The provider subscription id is unknown until checkout completes; it arrives
+// via the checkout.session.completed webhook. SubscribeParams.IdempotencyKey is echoed as
+// client_reference_id + subscription metadata so the webhook can correlate back to our row.
+func (c *Client) Subscribe(ctx context.Context, args payment.SubscribeParams) (payment.Subscription, error) {
+	if c.secretKey == "" {
+		return payment.Subscription{}, fmt.Errorf("stripe secret not configured")
+	}
+	if strings.ToUpper(args.Money.Currency) != "USD" {
+		return payment.Subscription{}, fmt.Errorf("stripe only supports USD")
+	}
+	interval := strings.ToLower(strings.TrimSpace(args.Interval))
+	if interval == "" {
+		interval = "month"
+	}
+	returnURL := strings.TrimSpace(args.ReturnURL)
+	if returnURL == "" {
+		returnURL = defaultReturnURL
+	}
+	sess, err := c.sc.V1CheckoutSessions.Create(ctx, &stripesdk.CheckoutSessionCreateParams{
+		Mode:              stripesdk.String(string(stripesdk.CheckoutSessionModeSubscription)),
+		SuccessURL:        stripesdk.String(returnURL),
+		CancelURL:         stripesdk.String(returnURL),
+		ClientReferenceID: stripesdk.String(args.IdempotencyKey),
+		CustomerEmail:     optString(args.CustomerEmail),
+		LineItems: []*stripesdk.CheckoutSessionCreateLineItemParams{{
+			Quantity: stripesdk.Int64(1),
+			PriceData: &stripesdk.CheckoutSessionCreateLineItemPriceDataParams{
+				Currency:   stripesdk.String(strings.ToLower(args.Money.Currency)),
+				UnitAmount: stripesdk.Int64(args.Money.Amount),
+				Recurring: &stripesdk.CheckoutSessionCreateLineItemPriceDataRecurringParams{
+					Interval: stripesdk.String(interval),
+				},
+				ProductData: &stripesdk.CheckoutSessionCreateLineItemPriceDataProductDataParams{
+					Name: stripesdk.String("thinkmay"),
+				},
+			},
+		}},
+		SubscriptionData: &stripesdk.CheckoutSessionCreateSubscriptionDataParams{
+			Metadata: map[string]string{
+				"sub_intent": args.IdempotencyKey,
+				"plan":       args.PlanRef,
+			},
+		},
+	})
+	if err != nil {
+		return payment.Subscription{}, err
+	}
+	return payment.Subscription{Status: payment.StatusPending, RedirectURL: sess.URL}, nil
+}
+
+// GetSubscription retrieves a subscription and maps its status + current period end.
+func (c *Client) GetSubscription(ctx context.Context, id string) (payment.Subscription, error) {
+	if c.secretKey == "" {
+		return payment.Subscription{}, fmt.Errorf("stripe secret not configured")
+	}
+	sub, err := c.sc.V1Subscriptions.Retrieve(ctx, id, nil)
+	if err != nil {
+		return payment.Subscription{}, err
+	}
+	return payment.Subscription{
+		ID:        sub.ID,
+		Status:    subStatus(sub.Status),
+		PeriodEnd: subPeriodEnd(sub),
+	}, nil
+}
+
+// CancelSubscription cancels a Stripe subscription immediately.
+func (c *Client) CancelSubscription(ctx context.Context, id string) error {
+	if c.secretKey == "" {
+		return fmt.Errorf("stripe secret not configured")
+	}
+	_, err := c.sc.V1Subscriptions.Cancel(ctx, id, nil)
+	return err
+}
+
+// subStatus maps a Stripe subscription status to a normalized payment.Status.
+func subStatus(s stripesdk.SubscriptionStatus) payment.Status {
+	switch s {
+	case stripesdk.SubscriptionStatusActive, stripesdk.SubscriptionStatusTrialing:
+		return payment.StatusActive
+	case stripesdk.SubscriptionStatusCanceled:
+		return payment.StatusCanceled
+	case stripesdk.SubscriptionStatusPastDue, stripesdk.SubscriptionStatusUnpaid:
+		return payment.StatusPastDue
+	default:
+		return payment.StatusPending
+	}
+}
+
+// subPeriodEnd reads the current period end (unix seconds) from the first subscription item.
+// In Stripe API 2025-08+, current_period_end lives on items, not the subscription object.
+func subPeriodEnd(sub *stripesdk.Subscription) int64 {
+	if sub != nil && sub.Items != nil && len(sub.Items.Data) > 0 {
+		return sub.Items.Data[0].CurrentPeriodEnd
+	}
+	return 0
+}
+
+// optString returns nil for an empty string (Stripe rejects empty optional fields).
+func optString(s string) *string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return &s
+}
+
+// invoiceSubID extracts the provider subscription id from an invoice's parent details.
+func invoiceSubID(inv *stripesdk.Invoice) string {
+	if inv.Parent != nil && inv.Parent.SubscriptionDetails != nil && inv.Parent.SubscriptionDetails.Subscription != nil {
+		return inv.Parent.SubscriptionDetails.Subscription.ID
+	}
+	return ""
+}
+
+// invoicePeriodEnd reads the period end (unix seconds) from the first invoice line.
+func invoicePeriodEnd(inv *stripesdk.Invoice) int64 {
+	if inv.Lines != nil && len(inv.Lines.Data) > 0 && inv.Lines.Data[0].Period != nil {
+		return inv.Lines.Data[0].Period.End
+	}
+	return 0
+}
+
 // RegisterRoutes mounts POST /api/v1/payment/webhook/stripe.
-// It verifies the Stripe-Signature header with the configured webhook secret,
-// then emits normalized payment.Events for payment_intent.succeeded and
-// payment_intent.payment_failed. Unknown event types are acknowledged silently.
+// It verifies the Stripe-Signature header with the configured webhook secret, then emits
+// normalized payment.Events: one-time charges via payment_intent.succeeded/_failed, and
+// subscription lifecycle via checkout.session.completed (activation), invoice.payment_succeeded
+// (renewal cycles), customer.subscription.deleted + invoice.payment_failed (cancel/past_due).
+// Unknown event types are acknowledged silently.
 func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
 	mux.HandleFunc("POST /api/v1/payment/webhook/stripe", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -189,21 +270,11 @@ func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Con
 				http.Error(w, "missing txn_id in metadata", http.StatusBadRequest)
 				return
 			}
-			pmID := ""
-			if pi.PaymentMethod != nil {
-				pmID = pi.PaymentMethod.ID
-			}
-			cusID := ""
-			if pi.Customer != nil {
-				cusID = pi.Customer.ID
-			}
 			if err := deliver(r.Context(), payment.Event{
-				Kind:        payment.EventCharge,
-				ProviderID:  pi.ID,
-				RefID:       txnID,
-				Status:      payment.StatusSuccess,
-				Token:       pmID,
-				CustomerRef: cusID,
+				Kind:       payment.EventCharge,
+				ProviderID: pi.ID,
+				RefID:      txnID,
+				Status:     payment.StatusSuccess,
 			}); err != nil {
 				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
 				return
@@ -225,6 +296,107 @@ func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Con
 				ProviderID: pi.ID,
 				RefID:      txnID,
 				Status:     payment.StatusFailed,
+			}); err != nil {
+				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
+				return
+			}
+
+		case "checkout.session.completed":
+			var sess stripesdk.CheckoutSession
+			if err := json.Unmarshal(stripeEvt.Data.Raw, &sess); err != nil {
+				http.Error(w, "cannot parse checkout_session", http.StatusBadRequest)
+				return
+			}
+			// Only subscription-mode sessions activate a subscription; one-time payment
+			// sessions settle via payment_intent.succeeded above.
+			if sess.Mode != stripesdk.CheckoutSessionModeSubscription {
+				break
+			}
+			subID := ""
+			if sess.Subscription != nil {
+				subID = sess.Subscription.ID
+			}
+			if subID == "" || sess.ClientReferenceID == "" {
+				http.Error(w, "missing subscription or client_reference_id", http.StatusBadRequest)
+				return
+			}
+			// Fetch the subscription to learn the current period end; best-effort (the first
+			// invoice.payment_succeeded will also carry it). Skipped without a secret key.
+			var periodEnd int64
+			if c.secretKey != "" {
+				if sub, e := c.sc.V1Subscriptions.Retrieve(r.Context(), subID, nil); e == nil {
+					periodEnd = subPeriodEnd(sub)
+				}
+			}
+			if err := deliver(r.Context(), payment.Event{
+				Kind:          payment.EventSubActivated,
+				RefID:         sess.ClientReferenceID,
+				ProviderSubID: subID,
+				Status:        payment.StatusActive,
+				PeriodEnd:     periodEnd,
+			}); err != nil {
+				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
+				return
+			}
+
+		case "invoice.payment_succeeded":
+			var inv stripesdk.Invoice
+			if err := json.Unmarshal(stripeEvt.Data.Raw, &inv); err != nil {
+				http.Error(w, "cannot parse invoice", http.StatusBadRequest)
+				return
+			}
+			// Initial-cycle invoices are handled by checkout.session.completed; only renewals here.
+			if inv.BillingReason != stripesdk.InvoiceBillingReasonSubscriptionCycle {
+				break
+			}
+			subID := invoiceSubID(&inv)
+			if subID == "" {
+				http.Error(w, "missing subscription on invoice", http.StatusBadRequest)
+				return
+			}
+			if err := deliver(r.Context(), payment.Event{
+				Kind:          payment.EventSubRenewed,
+				ProviderSubID: subID,
+				Status:        payment.StatusActive,
+				PeriodEnd:     invoicePeriodEnd(&inv),
+			}); err != nil {
+				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
+				return
+			}
+
+		case "customer.subscription.deleted":
+			var sub stripesdk.Subscription
+			if err := json.Unmarshal(stripeEvt.Data.Raw, &sub); err != nil {
+				http.Error(w, "cannot parse subscription", http.StatusBadRequest)
+				return
+			}
+			if sub.ID == "" {
+				http.Error(w, "missing subscription id", http.StatusBadRequest)
+				return
+			}
+			if err := deliver(r.Context(), payment.Event{
+				Kind:          payment.EventSubCanceled,
+				ProviderSubID: sub.ID,
+				Status:        payment.StatusCanceled,
+			}); err != nil {
+				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
+				return
+			}
+
+		case "invoice.payment_failed":
+			var inv stripesdk.Invoice
+			if err := json.Unmarshal(stripeEvt.Data.Raw, &inv); err != nil {
+				http.Error(w, "cannot parse invoice", http.StatusBadRequest)
+				return
+			}
+			subID := invoiceSubID(&inv)
+			if subID == "" {
+				break // not a subscription invoice
+			}
+			if err := deliver(r.Context(), payment.Event{
+				Kind:          payment.EventSubCanceled,
+				ProviderSubID: subID,
+				Status:        payment.StatusPastDue,
 			}); err != nil {
 				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
 				return

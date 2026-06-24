@@ -26,8 +26,8 @@ func TestRegistryGetCaseInsensitive(t *testing.T) {
 func TestRegistryAllReturnsCopy(t *testing.T) {
 	r := registry.NewRegistry(registry.Config{})
 	all := r.All()
-	if len(all) != 5 {
-		t.Fatalf("All() len = %d, want 5", len(all))
+	if len(all) != 4 {
+		t.Fatalf("All() len = %d, want 4", len(all))
 	}
 	delete(all, "stripe")
 	if _, ok := r.Get("stripe"); !ok {

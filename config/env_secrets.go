@@ -45,11 +45,6 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Payment.Payssion.PMID, "APP_PAYMENT_PAYSSION_PMID")
 	setEnvString(&cfg.Payment.Payssion.SecretKey, "APP_PAYMENT_PAYSSION_SECRETKEY")
 	setEnvString(&cfg.Payment.Payssion.Link, "APP_PAYMENT_PAYSSION_LINK")
-	setEnvString(&cfg.Payment.SePay.MerchantID, "APP_PAYMENT_SEPAY_MERCHANTID")
-	setEnvString(&cfg.Payment.SePay.SecretKey, "APP_PAYMENT_SEPAY_SECRETKEY")
-	setEnvString(&cfg.Payment.SePay.IPNSecretKey, "APP_PAYMENT_SEPAY_IPNSECRETKEY")
-	setEnvString(&cfg.Payment.SePay.PublicBaseURL, "APP_PAYMENT_SEPAY_PUBLICBASEURL")
-	setEnvString(&cfg.Payment.SePay.ReturnURL, "APP_PAYMENT_SEPAY_RETURNURL")
 }
 
 func setEnvString(dst *string, key string) {

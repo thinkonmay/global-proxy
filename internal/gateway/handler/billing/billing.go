@@ -46,9 +46,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		{http.MethodGet, "/v1/billing/deposits/{transactionId}", h.DepositStatus},
 		{http.MethodDelete, "/v1/billing/deposits/{transactionId}", h.CancelDeposit},
 		{http.MethodPost, "/v1/billing/payments", h.CreatePayment},
+		{http.MethodPost, "/v1/billing/subscriptions", h.CreateSubscription},
+		{http.MethodDelete, "/v1/billing/subscriptions", h.CancelSubscription},
 		{http.MethodPost, "/v1/billing/addon-charges/pay", h.PayAddonCharges},
 		{http.MethodPost, "/v1/billing/discount-codes/validate", h.ValidateDiscount},
-		{http.MethodGet, "/v1/billing/cards", h.Cards},
 	}
 	for _, route := range routes {
 		mux.HandleFunc(route.method+" "+route.path, route.fn)

@@ -134,6 +134,21 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 	}, nil
 }
 
+// Subscribe is unsupported: PayOS has no recurring billing here.
+func (c *Client) Subscribe(ctx context.Context, args payment.SubscribeParams) (payment.Subscription, error) {
+	return payment.Subscription{}, payment.ErrNotSupported
+}
+
+// GetSubscription is unsupported for PayOS.
+func (c *Client) GetSubscription(ctx context.Context, id string) (payment.Subscription, error) {
+	return payment.Subscription{}, payment.ErrNotSupported
+}
+
+// CancelSubscription is unsupported for PayOS.
+func (c *Client) CancelSubscription(ctx context.Context, id string) error {
+	return payment.ErrNotSupported
+}
+
 // RegisterRoutes is a no-op; PayOS state is observed by polling, not webhooks.
 func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
 }

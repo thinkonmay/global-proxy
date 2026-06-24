@@ -12,32 +12,106 @@ import (
 	"testing"
 	"time"
 
+	stripesdk "github.com/stripe/stripe-go/v82"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 )
 
-// TestMapPaymentIntentStatus verifies the mapPI status mapping function.
-// The off-session PaymentIntents.Create call requires live Stripe credentials
-// and is NOT covered here; only the pure mapping logic is unit-tested.
-func TestMapPaymentIntentStatus(t *testing.T) {
-	cases := []struct {
-		input string
-		want  payment.Status
-	}{
-		{"succeeded", payment.StatusSuccess},
-		{"canceled", payment.StatusCanceled},
-		{"requires_action", payment.StatusPending},
-		{"processing", payment.StatusPending},
-		{"requires_confirmation", payment.StatusPending},
-		{"requires_payment_method", payment.StatusPending},
-		{"unknown_status", payment.StatusPending},
-		{"", payment.StatusPending},
+func nowUnix() int64 { return time.Now().Unix() }
+
+func TestSubStatusMapping(t *testing.T) {
+	cases := map[stripesdk.SubscriptionStatus]payment.Status{
+		stripesdk.SubscriptionStatusActive:   payment.StatusActive,
+		stripesdk.SubscriptionStatusTrialing: payment.StatusActive,
+		stripesdk.SubscriptionStatusCanceled: payment.StatusCanceled,
+		stripesdk.SubscriptionStatusPastDue:  payment.StatusPastDue,
+		stripesdk.SubscriptionStatusUnpaid:   payment.StatusPastDue,
+		stripesdk.SubscriptionStatusIncomplete: payment.StatusPending,
 	}
-	for _, tc := range cases {
-		got := mapPI(tc.input)
-		if got != tc.want {
-			t.Errorf("mapPI(%q) = %q, want %q", tc.input, got, tc.want)
+	for in, want := range cases {
+		if got := subStatus(in); got != want {
+			t.Errorf("subStatus(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// TestStripeWebhookSubscriptionEvents verifies subscription lifecycle webhooks map to the
+// normalized EventSub* kinds with the provider subscription id (and ref id on activation).
+func TestStripeWebhookSubscriptionEvents(t *testing.T) {
+	const whsec = "whsec_test"
+	c := New(Config{WebhookSecret: whsec}).(*Client) // no secret key → activation skips the API retrieve
+	mux := http.NewServeMux()
+	var captured []payment.Event
+	c.RegisterRoutes(mux, func(_ context.Context, e payment.Event) error {
+		captured = append(captured, e)
+		return nil
+	})
+
+	post := func(t *testing.T, raw []byte) {
+		t.Helper()
+		body, header := buildSignedPayload(t, raw, whsec)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/webhook/stripe", bytes.NewReader(body))
+		req.Header.Set("Stripe-Signature", header)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+		}
+	}
+
+	t.Run("checkout.session.completed → activated", func(t *testing.T) {
+		captured = nil
+		post(t, []byte(fmt.Sprintf(`{"id":"evt_1","object":"event","api_version":"2025-08-27.basil","type":"checkout.session.completed","created":%d,
+			"data":{"object":{"id":"cs_1","object":"checkout.session","mode":"subscription","subscription":"sub_1","client_reference_id":"42"}}}`, nowUnix())))
+		if len(captured) != 1 || captured[0].Kind != payment.EventSubActivated {
+			t.Fatalf("got %+v", captured)
+		}
+		if captured[0].ProviderSubID != "sub_1" || captured[0].RefID != "42" {
+			t.Fatalf("sub/ref mismatch: %+v", captured[0])
+		}
+	})
+
+	t.Run("payment-mode session ignored", func(t *testing.T) {
+		captured = nil
+		post(t, []byte(fmt.Sprintf(`{"id":"evt_2","object":"event","api_version":"2025-08-27.basil","type":"checkout.session.completed","created":%d,
+			"data":{"object":{"id":"cs_2","object":"checkout.session","mode":"payment","client_reference_id":"7"}}}`, nowUnix())))
+		if len(captured) != 0 {
+			t.Fatalf("payment-mode session must not emit, got %+v", captured)
+		}
+	})
+
+	t.Run("invoice.payment_succeeded cycle → renewed", func(t *testing.T) {
+		captured = nil
+		post(t, []byte(fmt.Sprintf(`{"id":"evt_3","object":"event","api_version":"2025-08-27.basil","type":"invoice.payment_succeeded","created":%d,
+			"data":{"object":{"id":"in_1","object":"invoice","billing_reason":"subscription_cycle",
+			"parent":{"type":"subscription_details","subscription_details":{"subscription":"sub_1"}},
+			"lines":{"object":"list","data":[{"object":"line_item","period":{"start":1,"end":999}}]}}}}`, nowUnix())))
+		if len(captured) != 1 || captured[0].Kind != payment.EventSubRenewed {
+			t.Fatalf("got %+v", captured)
+		}
+		if captured[0].ProviderSubID != "sub_1" || captured[0].PeriodEnd != 999 {
+			t.Fatalf("renew mismatch: %+v", captured[0])
+		}
+	})
+
+	t.Run("invoice.payment_succeeded create ignored", func(t *testing.T) {
+		captured = nil
+		post(t, []byte(fmt.Sprintf(`{"id":"evt_4","object":"event","api_version":"2025-08-27.basil","type":"invoice.payment_succeeded","created":%d,
+			"data":{"object":{"id":"in_2","object":"invoice","billing_reason":"subscription_create",
+			"parent":{"type":"subscription_details","subscription_details":{"subscription":"sub_1"}},
+			"lines":{"object":"list","data":[{"object":"line_item","period":{"start":1,"end":50}}]}}}}`, nowUnix())))
+		if len(captured) != 0 {
+			t.Fatalf("subscription_create must be ignored (handled by checkout.session.completed), got %+v", captured)
+		}
+	})
+
+	t.Run("customer.subscription.deleted → canceled", func(t *testing.T) {
+		captured = nil
+		post(t, []byte(fmt.Sprintf(`{"id":"evt_5","object":"event","api_version":"2025-08-27.basil","type":"customer.subscription.deleted","created":%d,
+			"data":{"object":{"id":"sub_1","object":"subscription","status":"canceled"}}}`, nowUnix())))
+		if len(captured) != 1 || captured[0].Kind != payment.EventSubCanceled || captured[0].Status != payment.StatusCanceled {
+			t.Fatalf("got %+v", captured)
+		}
+	})
 }
 
 // buildSignedPayload computes a Stripe-Signature header for body using secret.
@@ -94,7 +168,7 @@ func minimalPIFailedEvent(txnID string) []byte {
 }
 
 // TestStripeWebhookEmitsEvent verifies signature-verified webhook ingestion:
-//  1. Valid signed payment_intent.succeeded → Event{ProviderID,RefID,Status,Token,CustomerRef}.
+//  1. Valid signed payment_intent.succeeded → Event{ProviderID,RefID,Status}.
 //  2. Tampered/wrong-secret signature → HTTP 400, no deliver call.
 //  3. Garbage signature header → HTTP 400.
 //  4. payment_intent.payment_failed → Event with StatusFailed.
@@ -135,12 +209,6 @@ func TestStripeWebhookEmitsEvent(t *testing.T) {
 		}
 		if e.Status != payment.StatusSuccess {
 			t.Errorf("Status: want %q, got %q", payment.StatusSuccess, e.Status)
-		}
-		if e.Token != "pm_x" {
-			t.Errorf("Token: want %q, got %q", "pm_x", e.Token)
-		}
-		if e.CustomerRef != "cus_x" {
-			t.Errorf("CustomerRef: want %q, got %q", "cus_x", e.CustomerRef)
 		}
 		if e.Kind != payment.EventCharge {
 			t.Errorf("Kind: want %q, got %q", payment.EventCharge, e.Kind)
