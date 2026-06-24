@@ -1,0 +1,37 @@
+name: thinkmay-api
+
+services:
+  postgres:
+    container_name: thinkmay-postgres
+    image: supabase/postgres:17.6.1.136
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: thinkmay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-peakthinkmaypassword}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thinkmay -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    container_name: thinkmay-redis
+    image: redis:8
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
