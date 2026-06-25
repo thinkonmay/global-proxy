@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/cors"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
@@ -82,7 +84,20 @@ func newMux(
 	nodeRuntime.Register(mux)
 	webhook.RegisterPaymentWebhooks(mux, payReg, eventBus)
 
-	mux.HandleFunc("GET /sse", hub.Serve)
+	// SSE stream: recipient is the authenticated user, derived server-side — never
+	// the client-supplied value. EventSource cannot set headers, so the bearer
+	// token is accepted via ?token= and promoted to Authorization before auth.
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		if tok := strings.TrimSpace(r.URL.Query().Get("token")); tok != "" && r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+strings.TrimPrefix(tok, "Bearer "))
+		}
+		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
+		if !ok {
+			auth.WriteAuthErr(w, status, msg)
+			return
+		}
+		hub.ServeFor(w, r, email)
+	})
 
 	adminhost.RegisterInternalRoutes(mux, gate)
 	if gate != nil {

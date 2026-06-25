@@ -21,7 +21,7 @@ const (
 // sseClient is one connected SSE stream: a queue drained by its own Serve loop.
 type sseClient struct {
 	recipient string
-	ch        chan model.SSEMsg
+	ch        chan model.SSERaw
 }
 
 // Hub routes events to connected clients by recipient. Live, best-effort: a
@@ -40,7 +40,7 @@ func NewHub() *Hub {
 // (recipient targets one user's streams; empty broadcasts to all). The send is
 // non-blocking — a client whose buffer is full drops the event rather than
 // stalling the bus.
-func (h *Hub) Dispatch(_ context.Context, e model.SSEMsg) error {
+func (h *Hub) Dispatch(_ context.Context, e model.SSERaw) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.clients {
@@ -55,15 +55,16 @@ func (h *Hub) Dispatch(_ context.Context, e model.SSEMsg) error {
 	return nil
 }
 
-// Serve holds the connection open and streams events for the requesting user
-// until the client disconnects.
-func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
+// ServeFor holds the connection open and streams events for recipient until the
+// client disconnects. The caller derives recipient (e.g. from authentication) —
+// the hub stays a generic transport and does not inspect the request identity.
+func (h *Hub) ServeFor(w http.ResponseWriter, r *http.Request, recipient string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	c := h.add(r.URL.Query().Get("user")) // TODO: derive recipient from auth, not the client
+	c := h.add(recipient)
 	defer h.remove(c)
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -92,7 +93,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 // writeMsg renders one message in the SSE wire format (tdd §2.4.1):
 //
 //	id:{seq}\n data:{json}\n \n
-func (h *Hub) writeMsg(w io.Writer, e model.SSEMsg) {
+func (h *Hub) writeMsg(w io.Writer, e model.SSERaw) {
 	data, err := json.Marshal(e)
 	if err != nil {
 		return
@@ -101,7 +102,7 @@ func (h *Hub) writeMsg(w io.Writer, e model.SSEMsg) {
 }
 
 func (h *Hub) add(recipient string) *sseClient {
-	c := &sseClient{recipient: recipient, ch: make(chan model.SSEMsg, sseClientBuffer)}
+	c := &sseClient{recipient: recipient, ch: make(chan model.SSERaw, sseClientBuffer)}
 	h.mu.Lock()
 	h.clients[c] = struct{}{}
 	h.mu.Unlock()

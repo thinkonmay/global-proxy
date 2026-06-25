@@ -29,19 +29,10 @@ func TestTopicNames(t *testing.T) {
 	}
 }
 
-func TestSSETypeConstants(t *testing.T) {
-	if SSENotification != "notification" {
-		t.Errorf("SSENotification = %q, want notification", SSENotification)
-	}
-	if SSEPayment != "payment" {
-		t.Errorf("SSEPayment = %q, want payment", SSEPayment)
-	}
-}
-
 // Empty Recipient/Data must drop from the wire (omitempty) so a broadcast and a
 // targeted message are distinguishable downstream.
 func TestSSEMsgOmitsEmptyFields(t *testing.T) {
-	b, err := json.Marshal(SSEMsg{Type: SSENotification})
+	b, err := json.Marshal(SSERaw{Type: "notification"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -57,8 +48,8 @@ func TestSSEMsgOmitsEmptyFields(t *testing.T) {
 }
 
 func TestSSEMsgRoundTrip(t *testing.T) {
-	in := SSEMsg{
-		Type:      SSEPayment,
+	in := SSERaw{
+		Type:      "payment",
 		Recipient: "user@example.com",
 		Data:      json.RawMessage(`{"k":"v"}`),
 	}
@@ -66,7 +57,7 @@ func TestSSEMsgRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out SSEMsg
+	var out SSERaw
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -75,27 +66,6 @@ func TestSSEMsgRoundTrip(t *testing.T) {
 	}
 	if string(out.Data) != string(in.Data) {
 		t.Errorf("Data = %s, want %s", out.Data, in.Data)
-	}
-}
-
-func TestNotificationRoundTrip(t *testing.T) {
-	in := Notification{Title: "hi", Body: "world", Level: "warn"}
-	b, err := json.Marshal(in)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var out Notification
-	if err := json.Unmarshal(b, &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out != in {
-		t.Errorf("round-trip mismatch: got %+v want %+v", out, in)
-	}
-
-	// Level is optional.
-	b, _ = json.Marshal(Notification{Title: "t", Body: "b"})
-	if strings.Contains(string(b), "level") {
-		t.Errorf("empty Level must be omitted, got %s", b)
 	}
 }
 

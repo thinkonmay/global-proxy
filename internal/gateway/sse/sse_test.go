@@ -14,7 +14,7 @@ func TestSSEHubDispatchRoutesByRecipient(t *testing.T) {
 	c1 := hub.add("alice")
 	c2 := hub.add("bob")
 
-	msg := model.SSEMsg{Type: model.SSENotification, Recipient: "alice", Data: json.RawMessage(`{"title":"hi"}`)}
+	msg := model.SSERaw{Type: "notification", Recipient: "alice", Data: json.RawMessage(`{"title":"hi"}`)}
 	if err := hub.Dispatch(nil, msg); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestSSEHubDispatchRoutesByRecipient(t *testing.T) {
 func TestSSEHubWriteMsgFormat(t *testing.T) {
 	hub := NewHub()
 	var buf bytes.Buffer
-	hub.writeMsg(&buf, model.SSEMsg{Type: model.SSENotification, Data: json.RawMessage(`{"title":"t"}`)})
+	hub.writeMsg(&buf, model.SSERaw{Type: "notification", Data: json.RawMessage(`{"title":"t"}`)})
 	out := buf.String()
 	if !strings.HasPrefix(out, "id:1\n") || !strings.Contains(out, "data:") {
 		t.Fatalf("sse format: %q", out)
