@@ -53,25 +53,61 @@ func (h *Handler) loadTransaction(ctx context.Context, id int64) (txnRow, error)
 	return rows[0], nil
 }
 
-// returnURLForMetadata builds a return URL from transaction metadata (e.g. a frontend callback URL).
-func returnURLForMetadata(raw json.RawMessage) string {
-	const base = "https://thinkmay.net"
-	if len(raw) == 0 {
-		return base
+// Metadata keys consumed as redirect targets — never echoed back as query params.
+const (
+	metaReturnURL = "return_url"
+	metaCancelURL = "cancel_url"
+)
+
+// buildRedirectURL builds a provider redirect URL from transaction metadata.
+//
+// The frontend may pass an absolute URL under baseKey ("return_url" /
+// "cancel_url") — used as the base, path preserved — otherwise a default base is
+// used. When idKey is set, idVal is appended under that key so the landing page
+// can verify settlement; this matters for Stripe hosted checkout, where the
+// full-page redirect loses SPA state. Remaining metadata keys are appended as
+// query params (legacy PayerMax callback behavior); the reserved redirect keys
+// are stripped so they never leak into the query.
+func buildRedirectURL(raw json.RawMessage, baseKey, idKey, idVal string) string {
+	base := "https://thinkmay.net"
+	m := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &m)
 	}
-	var m map[string]any
-	if json.Unmarshal(raw, &m) != nil || len(m) == 0 {
-		return base
+	if v, ok := m[baseKey].(string); ok {
+		if strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "http://") {
+			base = v
+		}
 	}
+	delete(m, metaReturnURL)
+	delete(m, metaCancelURL)
 	vals := url.Values{}
 	for k, v := range m {
 		vals.Set(k, fmt.Sprint(v))
 	}
-	q := vals.Encode()
-	if q == "" {
+	if idKey != "" {
+		vals.Set(idKey, idVal)
+	}
+	enc := vals.Encode()
+	if enc == "" {
 		return base
 	}
-	return base + "?" + q
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	return base + sep + enc
+}
+
+// returnURLForTxn builds the deposit success URL, tagging it with the txn id.
+func returnURLForTxn(txn txnRow) string {
+	return buildRedirectURL(txn.Metadata, metaReturnURL, "transaction_id", strconv.FormatInt(txn.ID, 10))
+}
+
+// cancelURLForTxn builds the deposit cancel URL. No txn id is appended — a
+// cancelled checkout has nothing to verify; the user just returns to the picker.
+func cancelURLForTxn(txn txnRow) string {
+	return buildRedirectURL(txn.Metadata, metaCancelURL, "", "")
 }
 
 // fillCheckout converts the amount, calls the provider, and returns the Charge.
@@ -92,7 +128,8 @@ func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, rate float64, me
 		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
 		Money:          money,
 		Description:    txn.Email,
-		ReturnURL:      returnURLForMetadata(txn.Metadata),
+		ReturnURL:      returnURLForTxn(txn),
+		CancelURL:      cancelURLForTxn(txn),
 		Method:         method,
 	})
 }

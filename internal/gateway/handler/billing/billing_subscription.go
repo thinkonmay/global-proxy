@@ -90,7 +90,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		PlanRef:        body.PlanName,
 		CustomerEmail:  email,
 		Description:    body.PlanName,
-		ReturnURL:      returnURLForMetadata(rawJSON(body.Metadata)),
+		ReturnURL:      buildRedirectURL(rawJSON(body.Metadata), metaReturnURL, "subscription_id", strconv.FormatInt(subID, 10)),
 	})
 	if err != nil {
 		if errors.Is(err, payment.ErrNotSupported) {
@@ -195,7 +195,7 @@ func (h *Handler) planChargeMoney(ctx context.Context, planName, currency string
 	return payment.FromMajor(val.Amount, currency), nil
 }
 
-// rawJSON marshals a metadata map for returnURLForMetadata; nil/empty → nil.
+// rawJSON marshals a metadata map for buildRedirectURL; nil/empty → nil.
 func rawJSON(m map[string]any) json.RawMessage {
 	if len(m) == 0 {
 		return nil

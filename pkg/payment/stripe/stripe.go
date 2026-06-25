@@ -62,12 +62,16 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 	if returnURL == "" {
 		returnURL = defaultReturnURL
 	}
+	cancelURL := strings.TrimSpace(args.CancelURL)
+	if cancelURL == "" {
+		cancelURL = returnURL
+	}
 	// Hosted checkout: no UIMode/RedirectOnCompletion; Stripe drives success/cancel via URLs.
 	// ClientReferenceID lets us correlate the session to our txn via webhook metadata.
 	sess, err := c.sc.V1CheckoutSessions.Create(ctx, &stripesdk.CheckoutSessionCreateParams{
 		Mode:               stripesdk.String(string(stripesdk.CheckoutSessionModePayment)),
 		SuccessURL:         stripesdk.String(returnURL),
-		CancelURL:          stripesdk.String(returnURL),
+		CancelURL:          stripesdk.String(cancelURL),
 		ClientReferenceID:  stripesdk.String(args.IdempotencyKey),
 		PaymentMethodTypes: []*string{stripesdk.String("card")},
 		LineItems: []*stripesdk.CheckoutSessionCreateLineItemParams{{

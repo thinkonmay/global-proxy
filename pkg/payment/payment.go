@@ -44,6 +44,7 @@ type ChargeParams struct {
 	Money          Money
 	Description    string
 	ReturnURL      string
+	CancelURL      string // where the provider sends the user on cancel; empty → ReturnURL (Stripe only)
 	Method         string // optional provider payment-method/channel code to pre-select (e.g. PayerMax "OVO"/"DANA"); empty → provider/hosted page decides
 }
 
