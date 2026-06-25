@@ -78,7 +78,9 @@ func TestRegisterPaymentWebhooksPublishesToBus(t *testing.T) {
 	}
 }
 
-func TestRegisterPaymentWebhooksDisabledWithoutBus(t *testing.T) {
+// With no bus the route is still mounted; deliver errors so the provider gets a
+// retryable 5xx rather than a permanent 404 that silently drops the settlement.
+func TestRegisterPaymentWebhooksMountedWithoutBus(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{
 		"testpay": fakeWebhookProvider{},
 	})
@@ -89,7 +91,10 @@ func TestRegisterPaymentWebhooksDisabledWithoutBus(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when bus nil, got %d", rec.Code)
+	if rec.Code == http.StatusNotFound {
+		t.Fatalf("route should be mounted even without a bus, got 404")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 (retryable) when bus nil, got %d", rec.Code)
 	}
 }

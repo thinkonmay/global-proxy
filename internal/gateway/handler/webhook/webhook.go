@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
@@ -11,13 +12,15 @@ import (
 )
 
 // RegisterPaymentWebhooks mounts every provider's webhook routes on the mux.
-// Returns early if eventBus is nil (dev mode, no bus).
+// Routes are always mounted: if eventBus is nil the deliver callback errors, so
+// the provider gets a 5xx and retries — instead of a permanent 404 that silently
+// drops the settlement (the poll fallback does not cover subscription events).
 func RegisterPaymentWebhooks(mux *http.ServeMux, reg *registry.Registry, eventBus bus.Client) {
-	if eventBus == nil {
-		return // no bus (dev) -> webhooks disabled; poll fallback still settles
-	}
 	for name, client := range reg.All() {
 		client.RegisterRoutes(mux, func(ctx context.Context, e payment.Event) error {
+			if eventBus == nil {
+				return fmt.Errorf("payment webhook %q: event bus not configured", name)
+			}
 			return bus.Publish(ctx, eventBus, model.TopicPayment, model.PaymentMsg{
 				Event:    e,
 				Provider: name,
