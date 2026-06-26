@@ -19,6 +19,7 @@ var gatewayAPIPrefixes = []string{
 	"/v1/",
 	"/sse",
 	"/admin/",
+	"/vault/v1/",
 }
 
 // gatewayAPIExactPaths are non-prefix gateway routes.
