@@ -9,6 +9,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 )
 
@@ -31,8 +32,9 @@ func New(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper) *Handler
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/storage/grant", h.StorageGrant)
-	mux.HandleFunc("GET /v1/app-access/claim", h.AppAccessClaim)
+	v1 := router.V1(mux)
+	v1.GET("/storage/grant", h.StorageGrant)
+	v1.GET("/app-access/claim", h.AppAccessClaim)
 }
 
 func (h *Handler) StorageGrant(w http.ResponseWriter, r *http.Request) {

@@ -14,12 +14,12 @@ import (
 
 // ForwardOpts configures an authenticated cluster HTTP forward.
 type ForwardOpts struct {
-	UpstreamPath   string
-	RequireUser    bool
-	ClusterSecret  string
-	UserEmail      string
-	Timeout        time.Duration
-	Transport      http.RoundTripper
+	UpstreamPath  string
+	RequireUser   bool
+	ClusterSecret string
+	UserEmail     string
+	Timeout       time.Duration
+	Transport     http.RoundTripper
 }
 
 // Forward resolves cluster=, optionally validates GoTrue JWT, and proxies to the node PocketBase route.

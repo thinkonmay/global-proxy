@@ -33,7 +33,6 @@ ci_gateway_test_packages() {
 ./pkg/payment/stripe
 ./pkg/payment/payos
 ./pkg/payment/payermax
-./pkg/payment/payssion
 ./pkg/cluster
 ./pkg/gotrue
 ./pkg/certmanager

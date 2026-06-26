@@ -10,6 +10,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 const otaQueryTimeout = 10 * time.Second
@@ -25,9 +26,9 @@ func New(pr *postgrest.Client, serviceKey string) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/ota/manifest", h.Manifest)
-	mux.HandleFunc("POST /v1/ota/releases", h.PublishRelease)
-	mux.HandleFunc("POST /v1/ota/releases/", h.PublishRelease)
+	v1 := router.V1(mux)
+	v1.GET("/ota/manifest", h.Manifest)
+	v1.POST("/ota/releases", h.PublishRelease)
 }
 
 func (h *Handler) requireServiceKey(r *http.Request) bool {

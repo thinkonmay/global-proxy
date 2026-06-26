@@ -9,6 +9,7 @@ import (
 	personah "github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
 	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 const pwaQueryTimeout = 5 * time.Second
@@ -59,12 +60,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		{http.MethodPost, "/search", h.Search},
 		{http.MethodGet, "/persona/recommendations", h.persona.GetRecommendations},
 	}
+	// Canonical /api/pwa/* plus legacy /api/* aliases.
+	pwaGroup := router.New(mux, "/api/pwa")
+	legacyGroup := router.New(mux, "/api")
 	for _, route := range routes {
-		pwaPath := "/api/pwa" + route.path
-		legacyPath := "/api" + route.path
-		mux.HandleFunc(route.method+" "+pwaPath, route.fn)
-		mux.HandleFunc(route.method+" "+pwaPath+"/", route.fn)
-		mux.HandleFunc(route.method+" "+legacyPath, route.fn)
-		mux.HandleFunc(route.method+" "+legacyPath+"/", route.fn)
+		pwaGroup.Handle(route.method, route.path, route.fn)
+		legacyGroup.Handle(route.method, route.path, route.fn)
 	}
 }

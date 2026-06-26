@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterproxy"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 // Handler proxies node runtime REST (PocketBase /info, /new, …) with GoTrue auth at the gateway edge.
@@ -21,35 +22,36 @@ func New(clusterSecret string, rt http.RoundTripper) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	v1 := router.V1(mux)
 	routes := []struct {
-		method       string
-		path         string
-		upstream     string
-		requireUser  bool
-		sse          bool
+		method      string
+		path        string
+		upstream    string
+		requireUser bool
+		sse         bool
 	}{
-		{http.MethodGet, "/v1/runtime/info", "/info", true, false},
-		{http.MethodPost, "/v1/runtime/new", "/new", true, false},
-		{http.MethodGet, "/v1/runtime/new/sse", "/new/sse", false, true},
-		{http.MethodDelete, "/v1/runtime/close", "/close", true, false},
-		{http.MethodPost, "/v1/runtime/restart", "/restart", true, false},
-		{http.MethodPost, "/v1/runtime/reallocate", "/reallocate", true, false},
-		{http.MethodGet, "/v1/runtime/reallocate/sse", "/reallocate/sse", false, true},
-		{http.MethodPost, "/v1/runtime/template", "/template", true, false},
-		{http.MethodGet, "/v1/runtime/template/sse", "/template/sse", false, true},
-		{http.MethodPost, "/v1/runtime/resize", "/resize", true, false},
-		{http.MethodPost, "/v1/runtime/assistant", "/assistant", true, false},
-		{http.MethodPost, "/v1/runtime/snapshots", "/snapshots", true, false},
-		{http.MethodDelete, "/v1/runtime/resource", "/resource", true, false},
-		{http.MethodGet, "/v1/runtime/log", "/log", true, false},
-		{http.MethodGet, "/v1/runtime/analytics", "/analytics", true, false},
+		{http.MethodGet, "/runtime/info", "/info", true, false},
+		{http.MethodPost, "/runtime/new", "/new", true, false},
+		{http.MethodGet, "/runtime/new/sse", "/new/sse", false, true},
+		{http.MethodDelete, "/runtime/close", "/close", true, false},
+		{http.MethodPost, "/runtime/restart", "/restart", true, false},
+		{http.MethodPost, "/runtime/reallocate", "/reallocate", true, false},
+		{http.MethodGet, "/runtime/reallocate/sse", "/reallocate/sse", false, true},
+		{http.MethodPost, "/runtime/template", "/template", true, false},
+		{http.MethodGet, "/runtime/template/sse", "/template/sse", false, true},
+		{http.MethodPost, "/runtime/resize", "/resize", true, false},
+		{http.MethodPost, "/runtime/assistant", "/assistant", true, false},
+		{http.MethodPost, "/runtime/snapshots", "/snapshots", true, false},
+		{http.MethodDelete, "/runtime/resource", "/resource", true, false},
+		{http.MethodGet, "/runtime/log", "/log", true, false},
+		{http.MethodGet, "/runtime/analytics", "/analytics", true, false},
 	}
 	for _, route := range routes {
-		h.register(mux, route.method, route.path, route.upstream, route.requireUser, route.sse)
+		h.register(v1, route.method, route.path, route.upstream, route.requireUser, route.sse)
 	}
 }
 
-func (h *Handler) register(mux *http.ServeMux, method, path, upstream string, requireUser, sse bool) {
+func (h *Handler) register(g *router.Group, method, path, upstream string, requireUser, sse bool) {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		timeout := clusterproxy.DefaultTimeout * time.Second
 		if sse {
@@ -63,5 +65,5 @@ func (h *Handler) register(mux *http.ServeMux, method, path, upstream string, re
 			Transport:     h.transport,
 		})
 	}
-	mux.HandleFunc(method+" "+path, fn)
+	g.Handle(method, path, fn)
 }

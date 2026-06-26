@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	payossdk "github.com/payOSHQ/payos-lib-golang/v2"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 // returnURL and cancelURL are the default redirect targets, ported from legacy.
@@ -149,15 +152,63 @@ func (c *Client) CancelSubscription(ctx context.Context, id string) error {
 	return payment.ErrNotSupported
 }
 
-// RegisterRoutes is a no-op; PayOS state is observed by polling, not webhooks.
-func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
+// RegisterRoutes mounts the PayOS webhook. PayOS only posts settled payments;
+// the poll fallback still covers cancel/expire, which are not delivered here.
+func (c *Client) RegisterRoutes(g *router.Group, deliver func(ctx context.Context, e payment.Event) error) {
+	g.POST("/payos", func(w http.ResponseWriter, r *http.Request) {
+		client, err := c.sdk()
+		if err != nil {
+			http.Error(w, "payos not configured", http.StatusInternalServerError)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "cannot read body", http.StatusBadRequest)
+			return
+		}
+
+		// VerifyData recomputes the HMAC signature over the data object; it needs the raw map.
+		var raw map[string]any
+		if err := json.Unmarshal(body, &raw); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		if _, err := client.Webhooks.VerifyData(r.Context(), raw); err != nil {
+			http.Error(w, "invalid signature", http.StatusBadRequest)
+			return
+		}
+
+		var hook payossdk.Webhook
+		if err := json.Unmarshal(body, &hook); err != nil || hook.Data == nil {
+			http.Error(w, "invalid webhook data", http.StatusBadRequest)
+			return
+		}
+		// data.code "00" is paid; ack anything else without crediting.
+		if hook.Data.Code != "00" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		ref := strconv.FormatInt(hook.Data.OrderCode, 10)
+		if err := deliver(r.Context(), payment.Event{
+			Kind:       payment.EventCharge,
+			ProviderID: ref,
+			RefID:      ref,
+			Status:     payment.StatusSuccess,
+		}); err != nil {
+			slog.Warn("payos webhook: deliver", "order_code", ref, "err", err)
+			http.Error(w, "failed to deliver event", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 }
 
 // payosDescription derives a short PayOS description prefix, ported from legacy.
 func payosDescription(email string, amount int64) string {
 	prefix := email
-	if i := strings.Index(email, "@"); i >= 0 {
-		prefix = email[:i]
+	if before, _, ok := strings.Cut(email, "@"); ok {
+		prefix = before
 	}
 	if len(prefix) > 15 {
 		prefix = prefix[:15]

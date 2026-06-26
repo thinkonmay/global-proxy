@@ -4,11 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
+
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 // ErrNotSupported is returned for an operation a provider does not implement.
 var ErrNotSupported = errors.New("payment: operation not supported by provider")
+
+// WebhookPathPrefix is the shared route prefix for provider webhook callbacks
+// (full URL: WebhookPathPrefix + "/<provider>"); changing it breaks the URLs
+// registered in each provider's dashboard.
+const WebhookPathPrefix = "/api/v1/payment/webhook"
 
 // Status is the normalized lifecycle state of a charge or subscription.
 type Status string
@@ -101,6 +107,7 @@ type Client interface {
 	GetSubscription(ctx context.Context, id string) (Subscription, error)
 	// CancelSubscription cancels a subscription; ErrNotSupported if unsupported.
 	CancelSubscription(ctx context.Context, id string) error
-	// RegisterRoutes wires the provider's HTTP routes and delivers decoded events.
-	RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e Event) error)
+	// RegisterRoutes mounts the webhook handler on g (scoped to WebhookPathPrefix);
+	// the provider adds only its own subpath, e.g. "/stripe".
+	RegisterRoutes(g *router.Group, deliver func(ctx context.Context, e Event) error)
 }

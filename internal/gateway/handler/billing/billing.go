@@ -7,6 +7,7 @@ import (
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 const (
@@ -30,29 +31,20 @@ func New(pr *postgrest.Client, rt http.RoundTripper, reg *registry.Registry, rat
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	routes := []struct {
-		method string
-		path   string
-		fn     http.HandlerFunc
-	}{
-		{http.MethodGet, "/v1/billing/wallet", h.Wallet},
-		{http.MethodGet, "/v1/billing/subscription", h.Subscription},
-		{http.MethodGet, "/v1/billing/addon-charges", h.AddonCharges},
-		{http.MethodGet, "/v1/billing/addons", h.ListActiveAddons},
-		{http.MethodPost, "/v1/billing/addons", h.SubscribeAddon},
-		{http.MethodDelete, "/v1/billing/addons/{addonId}", h.UnsubscribeAddon},
-		{http.MethodGet, "/v1/billing/domains", h.Domains},
-		{http.MethodPost, "/v1/billing/deposits", h.CreateDeposit},
-		{http.MethodGet, "/v1/billing/deposits/{transactionId}", h.DepositStatus},
-		{http.MethodDelete, "/v1/billing/deposits/{transactionId}", h.CancelDeposit},
-		{http.MethodPost, "/v1/billing/payments", h.CreatePayment},
-		{http.MethodPost, "/v1/billing/subscriptions", h.CreateSubscription},
-		{http.MethodDelete, "/v1/billing/subscriptions", h.CancelSubscription},
-		{http.MethodPost, "/v1/billing/addon-charges/pay", h.PayAddonCharges},
-		{http.MethodPost, "/v1/billing/discount-codes/validate", h.ValidateDiscount},
-	}
-	for _, route := range routes {
-		mux.HandleFunc(route.method+" "+route.path, route.fn)
-		mux.HandleFunc(route.method+" "+route.path+"/", route.fn)
-	}
+	v1 := router.V1(mux)
+	v1.GET("/billing/wallet", h.Wallet)
+	v1.GET("/billing/subscription", h.Subscription)
+	v1.GET("/billing/addon-charges", h.AddonCharges)
+	v1.GET("/billing/addons", h.ListActiveAddons)
+	v1.POST("/billing/addons", h.SubscribeAddon)
+	v1.DELETE("/billing/addons/{addonId}", h.UnsubscribeAddon)
+	v1.GET("/billing/domains", h.Domains)
+	v1.POST("/billing/deposits", h.CreateDeposit)
+	v1.GET("/billing/deposits/{transactionId}", h.DepositStatus)
+	v1.DELETE("/billing/deposits/{transactionId}", h.CancelDeposit)
+	v1.POST("/billing/payments", h.CreatePayment)
+	v1.POST("/billing/subscriptions", h.CreateSubscription)
+	v1.DELETE("/billing/subscriptions", h.CancelSubscription)
+	v1.POST("/billing/addon-charges/pay", h.PayAddonCharges)
+	v1.POST("/billing/discount-codes/validate", h.ValidateDiscount)
 }

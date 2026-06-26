@@ -14,17 +14,18 @@ import (
 
 	stripesdk "github.com/stripe/stripe-go/v82"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 func nowUnix() int64 { return time.Now().Unix() }
 
 func TestSubStatusMapping(t *testing.T) {
 	cases := map[stripesdk.SubscriptionStatus]payment.Status{
-		stripesdk.SubscriptionStatusActive:   payment.StatusActive,
-		stripesdk.SubscriptionStatusTrialing: payment.StatusActive,
-		stripesdk.SubscriptionStatusCanceled: payment.StatusCanceled,
-		stripesdk.SubscriptionStatusPastDue:  payment.StatusPastDue,
-		stripesdk.SubscriptionStatusUnpaid:   payment.StatusPastDue,
+		stripesdk.SubscriptionStatusActive:     payment.StatusActive,
+		stripesdk.SubscriptionStatusTrialing:   payment.StatusActive,
+		stripesdk.SubscriptionStatusCanceled:   payment.StatusCanceled,
+		stripesdk.SubscriptionStatusPastDue:    payment.StatusPastDue,
+		stripesdk.SubscriptionStatusUnpaid:     payment.StatusPastDue,
 		stripesdk.SubscriptionStatusIncomplete: payment.StatusPending,
 	}
 	for in, want := range cases {
@@ -41,7 +42,7 @@ func TestStripeWebhookSubscriptionEvents(t *testing.T) {
 	c := New(Config{WebhookSecret: whsec}).(*Client) // no secret key → activation skips the API retrieve
 	mux := http.NewServeMux()
 	var captured []payment.Event
-	c.RegisterRoutes(mux, func(_ context.Context, e payment.Event) error {
+	c.RegisterRoutes(router.New(mux, payment.WebhookPathPrefix), func(_ context.Context, e payment.Event) error {
 		captured = append(captured, e)
 		return nil
 	})
@@ -184,7 +185,7 @@ func TestStripeWebhookEmitsEvent(t *testing.T) {
 		captured = append(captured, e)
 		return nil
 	}
-	c.RegisterRoutes(mux, deliver)
+	c.RegisterRoutes(router.New(mux, payment.WebhookPathPrefix), deliver)
 
 	t.Run("valid_signature_emits_event", func(t *testing.T) {
 		captured = nil

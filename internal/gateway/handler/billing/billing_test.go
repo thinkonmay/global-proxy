@@ -25,7 +25,7 @@ func (fakeCharger) Charge(_ context.Context, a payment.ChargeParams) (payment.Ch
 func TestFillCheckoutReturnsURL(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
 	h := &Handler{registry: reg}
-	ch, err := h.fillCheckout(context.Background(), txnRow{ID: 7, Provider: "payos", Currency: "VND", Amount: 100}, 0.004, "")
+	ch, err := h.fillCheckout(context.Background(), txnRow{ID: 7, Provider: "payos", Currency: "VND", Amount: 100}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,14 +38,14 @@ func TestFillCheckoutReturnsURL(t *testing.T) {
 // in CreateDeposit produce the expected JSON keys (redirect_url, charge_id, and detail when
 // non-empty). The CreateDeposit handler itself cannot be driven end-to-end in a unit test
 // without auth: RequireUser needs ConfigureGoTrueAuth / APP_SUPABASE_JWTSECRET.
-// End-to-end coverage of the full row-loop (RPC → loadTransaction → rates.Load → fillCheckout → Update) is left for the
+// End-to-end coverage of the full row-loop (RPC → loadTransaction → fillCheckout → Update) is left for the
 // live-DB integration suite (WITH_INTEGRATION=1).
 func TestCreateDepositRowLoopDataShape(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
 	h := &Handler{registry: reg}
 
 	txn := txnRow{ID: 42, Provider: "payos", Currency: "VND", Amount: 200}
-	ch, err := h.fillCheckout(context.Background(), txn, 0.004, "")
+	ch, err := h.fillCheckout(context.Background(), txn, "")
 	if err != nil {
 		t.Fatal(err)
 	}

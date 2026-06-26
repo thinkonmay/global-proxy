@@ -19,10 +19,10 @@ import (
 // errBus is a bus.Client that always fails Publish (simulates JetStream unavailable).
 type errBus struct{ err error }
 
-func (e *errBus) Publish(context.Context, string, []byte) error { return e.err }
+func (e *errBus) Publish(context.Context, string, []byte) error               { return e.err }
 func (e *errBus) Subscribe(string, string, bus.Handler, bus.SubscribeOptions) {}
-func (e *errBus) Ping() error                                                     { return nil }
-func (e *errBus) Close() error                                                    { return nil }
+func (e *errBus) Ping() error                                                 { return nil }
+func (e *errBus) Close() error                                                { return nil }
 
 var _ bus.Client = (*errBus)(nil)
 

@@ -112,7 +112,7 @@ func cancelURLForTxn(txn txnRow) string {
 
 // fillCheckout converts the amount, calls the provider, and returns the Charge.
 // method optionally pre-selects a provider payment channel (e.g. PayerMax "OVO"/"DANA").
-func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, rate float64, method string) (payment.Charge, error) {
+func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, method string) (payment.Charge, error) {
 	if h.registry == nil {
 		return payment.Charge{}, fmt.Errorf("payment registry not configured")
 	}
@@ -120,10 +120,8 @@ func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, rate float64, me
 	if !ok {
 		return payment.Charge{}, fmt.Errorf("unsupported provider %q", txn.Provider)
 	}
-	money, err := payment.ToMoney(txn.Amount, txn.Currency, rate)
-	if err != nil {
-		return payment.Charge{}, err
-	}
+	// transactions.amount_minor is already the fiat charge in provider minor units.
+	money := payment.Money{Amount: int64(txn.Amount), Currency: strings.ToUpper(txn.Currency)}
 	return client.Charge(ctx, payment.ChargeParams{
 		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
 		Money:          money,
@@ -147,6 +145,7 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		Metadata     map[string]any `json:"metadata"`
 		DiscountCode string         `json:"discount_code"`
 		Method       string         `json:"method"` // optional provider channel (e.g. "OVO"/"DANA")
+		Credit       *int64         `json:"credit"` // fixed CREDIT to grant (plan purchase); nil = legacy amount*rate top-up
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -167,15 +166,22 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Call the RPC to create the deposit rows.
-	var rpcResult json.RawMessage
-	if err := h.pr.RPC(ctx, "create_pocket_deposit_v4", map[string]any{
+	// Website/catalog amounts are MAJOR units; convert to provider minor once here
+	// (single boundary) so transactions.amount_minor stays canonical minor everywhere.
+	amountMinor := payment.FromMajor(body.Amount, body.Currency).Minor()
+	depositArgs := map[string]any{
 		"email":         email,
-		"amount":        body.Amount,
+		"amount":        amountMinor,
 		"currency":      body.Currency,
 		"provider":      body.Provider,
 		"metadata":      body.Metadata,
 		"discount_code": body.DiscountCode,
-	}, &rpcResult); err != nil {
+	}
+	if body.Credit != nil {
+		depositArgs["credit_grant"] = *body.Credit
+	}
+	var rpcResult json.RawMessage
+	if err := h.pr.RPC(ctx, "create_pocket_deposit_v4", depositArgs, &rpcResult); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
@@ -204,17 +210,7 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			rate := 0.0
-			if h.rates != nil {
-				var rateErr error
-				rate, rateErr = h.rates.Load(ctx, txn.Currency)
-				if rateErr != nil {
-					httpx.WriteUpstreamErr(w, rateErr)
-					return
-				}
-			}
-
-			ch, chErr := h.fillCheckout(ctx, txn, rate, body.Method)
+			ch, chErr := h.fillCheckout(ctx, txn, body.Method)
 			if chErr != nil {
 				httpx.WriteUpstreamErr(w, chErr)
 				return

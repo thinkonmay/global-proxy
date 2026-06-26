@@ -224,7 +224,7 @@ func (h *Handler) Referrals(w http.ResponseWriter, r *http.Request) {
 			User string `json:"user"`
 		} `json:"subscription"`
 	}
-	_ = h.pr.Select(ctx, "payment_request", payQ, &payments)
+	_ = h.pr.Select(ctx, "entitlements", payQ, &payments)
 	for _, p := range payments {
 		if p.Subscription.User != "" {
 			paid[p.Subscription.User] = struct{}{}

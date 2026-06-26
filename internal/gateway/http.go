@@ -30,6 +30,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	corazawaf "github.com/thinkonmay/global-proxy/api/pkg/waf/coraza"
 )
 
@@ -87,7 +88,7 @@ func newMux(
 	// SSE stream: recipient is the authenticated user, derived server-side — never
 	// the client-supplied value. EventSource cannot set headers, so the bearer
 	// token is accepted via ?token= and promoted to Authorization before auth.
-	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+	sseHandler := func(w http.ResponseWriter, r *http.Request) {
 		if tok := strings.TrimSpace(r.URL.Query().Get("token")); tok != "" && r.Header.Get("Authorization") == "" {
 			r.Header.Set("Authorization", "Bearer "+strings.TrimPrefix(tok, "Bearer "))
 		}
@@ -97,7 +98,9 @@ func newMux(
 			return
 		}
 		hub.ServeFor(w, r, email)
-	})
+	}
+	router.V1(mux).GET("/sse", sseHandler) // canonical /v1/sse
+	mux.HandleFunc("GET /sse", sseHandler) // legacy alias for pre-/v1 clients
 
 	adminhost.RegisterInternalRoutes(mux, gate)
 	if gate != nil {
@@ -120,11 +123,11 @@ func newMux(
 		routes = upstream.WrapWebsiteFallback(routes, website)
 	}
 	public := guard.Chain(routes, chain...)
-	router := adminhost.WrapHostRouter(public, cfg, gate, rt)
+	hostRouter := adminhost.WrapHostRouter(public, cfg, gate, rt)
 	// All virtual hosts (public, analytics, studio, grafana) need CORS — admin hosts
 	// bypass the public middleware chain, and Rybbit ingest is cross-origin until the
 	// PWA loads script.js from the public host (first-party proxy).
-	return cors.Middleware(cfg)(router)
+	return cors.Middleware(cfg)(hostRouter)
 }
 
 func initCoraza(cfg config.Coraza) (*corazawaf.Middleware, error) {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterproxy"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 // Handler forwards snapshot operations to node PocketBase routes.
@@ -21,11 +22,12 @@ func New(clusterSecret string, rt http.RoundTripper) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/pb-proxy/snapshots", h.proxySnapshots)
-	mux.HandleFunc("POST /v1/pb-proxy/snapshots/restore", h.proxySnapshotsRestore)
+	v1 := router.V1(mux)
+	v1.GET("/pb-proxy/snapshots", h.proxySnapshots)
+	v1.POST("/pb-proxy/snapshots/restore", h.proxySnapshotsRestore)
 
-	mux.HandleFunc("GET /v1/volumes/snapshots", h.proxySnapshots)
-	mux.HandleFunc("POST /v1/volumes/snapshots/restore", h.proxySnapshotsRestore)
+	v1.GET("/volumes/snapshots", h.proxySnapshots)
+	v1.POST("/volumes/snapshots/restore", h.proxySnapshotsRestore)
 }
 
 func (h *Handler) proxySnapshots(w http.ResponseWriter, r *http.Request) {

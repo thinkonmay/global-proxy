@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 const catalogQueryTimeout = 5 * time.Second
@@ -19,23 +20,23 @@ func New(pr *postgrest.Client) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/catalog/plans", h.ListPlans)
-	mux.HandleFunc("GET /v1/catalog/plans/{planName}", h.GetPlan)
-	mux.HandleFunc("GET /v1/catalog/stores", h.ListStores)
-	mux.HandleFunc("GET /v1/catalog/stores/{storeID}/depot-keys", h.GetStoreDepotKeys)
-	mux.HandleFunc("GET /v1/catalog/stores/{storeID}", h.GetStore)
-	mux.HandleFunc("GET /v1/catalog/banners", h.ListBanners)
-	mux.HandleFunc("GET /v1/catalog/discounts", h.ListDiscounts)
-	mux.HandleFunc("GET /v1/catalog/currency-rates", h.ListCurrencyRates)
-	mux.HandleFunc("GET /v1/catalog/app-info", h.AppInfo)
-	mux.HandleFunc("GET /v1/catalog/genres", h.ListGenres)
-	mux.HandleFunc("GET /v1/catalog/addons", h.ListAddons)
-	mux.HandleFunc("GET /v1/catalog/blog", h.ListBlog)
-	mux.HandleFunc("GET /v1/catalog/constants", h.ListConstants)
-	mux.HandleFunc("GET /v1/catalog/resources", h.ListResources)
-	mux.HandleFunc("GET /v1/catalog/binary-releases", h.ListBinaryReleases)
-	mux.HandleFunc("GET /v1/catalog/promo-banners", h.ListPromoBanners)
-	mux.HandleFunc("GET /v1/search/stores", h.SearchStores)
-	mux.HandleFunc("POST /v1/search/stores", h.SearchStoresBatch)
-	mux.HandleFunc("POST /v1/search/stores/", h.SearchStoresBatch)
+	v1 := router.V1(mux)
+	v1.GET("/catalog/plans", h.ListPlans)
+	v1.GET("/catalog/plans/{planName}", h.GetPlan)
+	v1.GET("/catalog/stores", h.ListStores)
+	v1.GET("/catalog/stores/{storeID}/depot-keys", h.GetStoreDepotKeys)
+	v1.GET("/catalog/stores/{storeID}", h.GetStore)
+	v1.GET("/catalog/banners", h.ListBanners)
+	v1.GET("/catalog/discounts", h.ListDiscounts)
+	v1.GET("/catalog/currency-rates", h.ListCurrencyRates)
+	v1.GET("/catalog/app-info", h.AppInfo)
+	v1.GET("/catalog/genres", h.ListGenres)
+	v1.GET("/catalog/addons", h.ListAddons)
+	v1.GET("/catalog/blog", h.ListBlog)
+	v1.GET("/catalog/constants", h.ListConstants)
+	v1.GET("/catalog/resources", h.ListResources)
+	v1.GET("/catalog/binary-releases", h.ListBinaryReleases)
+	v1.GET("/catalog/promo-banners", h.ListPromoBanners)
+	v1.GET("/search/stores", h.SearchStores)
+	v1.POST("/search/stores", h.SearchStoresBatch)
 }

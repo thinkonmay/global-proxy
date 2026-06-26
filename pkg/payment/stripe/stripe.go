@@ -12,6 +12,7 @@ import (
 
 	stripesdk "github.com/stripe/stripe-go/v82"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 // defaultReturnURL is used for hosted checkout when args.ReturnURL is empty.
@@ -239,14 +240,10 @@ func invoicePeriodEnd(inv *stripesdk.Invoice) int64 {
 	return 0
 }
 
-// RegisterRoutes mounts POST /api/v1/payment/webhook/stripe.
-// It verifies the Stripe-Signature header with the configured webhook secret, then emits
-// normalized payment.Events: one-time charges via payment_intent.succeeded/_failed, and
-// subscription lifecycle via checkout.session.completed (activation), invoice.payment_succeeded
-// (renewal cycles), customer.subscription.deleted + invoice.payment_failed (cancel/past_due).
-// Unknown event types are acknowledged silently.
-func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
-	mux.HandleFunc("POST /api/v1/payment/webhook/stripe", func(w http.ResponseWriter, r *http.Request) {
+// RegisterRoutes mounts the Stripe webhook: verifies Stripe-Signature, then emits
+// normalized payment.Events (charges + subscription lifecycle); unknown types are acked.
+func (c *Client) RegisterRoutes(g *router.Group, deliver func(ctx context.Context, e payment.Event) error) {
+	g.POST("/stripe", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "cannot read body", http.StatusBadRequest)

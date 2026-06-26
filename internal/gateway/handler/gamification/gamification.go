@@ -11,6 +11,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 )
 
@@ -31,22 +32,13 @@ func New(pr *postgrest.Client, rt http.RoundTripper, usageQ *usage.Querier) *Han
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	routes := []struct {
-		method string
-		path   string
-		fn     http.HandlerFunc
-	}{
-		{http.MethodGet, "/v1/gamification/missions", h.ListMissions},
-		{http.MethodPost, "/v1/gamification/missions/{code}/claim", h.ClaimMission},
-		{http.MethodGet, "/v1/gamification/stars", h.StarBalance},
-		{http.MethodGet, "/v1/gamification/heatmap", h.Heatmap},
-		{http.MethodGet, "/v1/gamification/stars/leaderboard", h.Leaderboard},
-		{http.MethodGet, "/v1/gamification/rank-rewards", h.RankRewards},
-	}
-	for _, route := range routes {
-		mux.HandleFunc(route.method+" "+route.path, route.fn)
-		mux.HandleFunc(route.method+" "+route.path+"/", route.fn)
-	}
+	v1 := router.V1(mux)
+	v1.GET("/gamification/missions", h.ListMissions)
+	v1.POST("/gamification/missions/{code}/claim", h.ClaimMission)
+	v1.GET("/gamification/stars", h.StarBalance)
+	v1.GET("/gamification/heatmap", h.Heatmap)
+	v1.GET("/gamification/stars/leaderboard", h.Leaderboard)
+	v1.GET("/gamification/rank-rewards", h.RankRewards)
 }
 
 func (h *Handler) ListMissions(w http.ResponseWriter, r *http.Request) {

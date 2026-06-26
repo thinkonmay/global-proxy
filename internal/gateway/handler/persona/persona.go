@@ -11,6 +11,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/persona"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 const personaReadTimeout = 5 * time.Second
@@ -28,8 +29,9 @@ func New(pr *postgrest.Client, rt http.RoundTripper) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/persona", h.GetPersona)
-	mux.HandleFunc("GET /v1/persona/recommendations", h.GetRecommendations)
+	v1 := router.V1(mux)
+	v1.GET("/persona", h.GetPersona)
+	v1.GET("/persona/recommendations", h.GetRecommendations)
 }
 
 func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request) {

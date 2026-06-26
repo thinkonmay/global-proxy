@@ -10,6 +10,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 )
 
@@ -38,17 +39,18 @@ func New(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper) *Handler
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/files/list/{path...}", h.listFiles)
-	mux.HandleFunc("GET /v1/files/{path...}", h.downloadFile)
-	mux.HandleFunc("PUT /v1/files/{path...}", h.uploadFile)
+	v1 := router.V1(mux)
+	v1.GET("/files/list/{path...}", h.listFiles)
+	v1.GET("/files/{path...}", h.downloadFile)
+	v1.PUT("/files/{path...}", h.uploadFile)
 
 	// Legacy pb-proxy aliases (files only; snapshots stay on node proxy).
-	mux.HandleFunc("GET /v1/pb-proxy/files/v1/{path...}", h.listFilesLegacy)
-	mux.HandleFunc("GET /v1/pb-proxy/file/v1/{path...}", h.downloadFileLegacy)
-	mux.HandleFunc("GET /v1/internal/sync-bucket-size", h.SyncBucketSize)
-	mux.HandleFunc("POST /v1/internal/increment-app-access-usage", h.IncrementAppAccessUsage)
-	mux.HandleFunc("POST /v1/internal/increment-llm-usage", h.IncrementLLMUsage)
-	mux.HandleFunc("GET /v1/internal/lookup-app-access", h.LookupAppAccess)
+	v1.GET("/pb-proxy/files/v1/{path...}", h.listFilesLegacy)
+	v1.GET("/pb-proxy/file/v1/{path...}", h.downloadFileLegacy)
+	v1.GET("/internal/sync-bucket-size", h.SyncBucketSize)
+	v1.POST("/internal/increment-app-access-usage", h.IncrementAppAccessUsage)
+	v1.POST("/internal/increment-llm-usage", h.IncrementLLMUsage)
+	v1.GET("/internal/lookup-app-access", h.LookupAppAccess)
 }
 
 func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {

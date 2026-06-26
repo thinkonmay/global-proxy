@@ -31,7 +31,7 @@ func (m Money) Minor() int64 { return m.Amount }
 // Major formats the amount in major units as a decimal string, via the currency's
 // minorUnitExponent. Zero-decimal currencies (VND/IDR/JPY) format as a plain
 // integer; others get the exact fractional digits (USD 2000 -> "20.00"). No float.
-// Use for providers/APIs that want major-unit amounts (e.g. PayerMax, Payssion).
+// Use for providers/APIs that want major-unit amounts (e.g. PayerMax).
 func (m Money) Major() string {
 	exp := minorUnitExponent(m.Currency)
 	if exp == 0 {

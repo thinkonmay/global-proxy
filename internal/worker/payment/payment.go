@@ -21,6 +21,7 @@ type Handler struct {
 	eventBus    bus.Client
 	settleRPC   func(ctx context.Context, fn string, args map[string]any) error
 	listPending func(ctx context.Context) ([]pendingTxn, error)
+	listSubs    func(ctx context.Context) ([]pendingSub, error)
 	lookupEmail func(ctx context.Context, txnID string) string
 }
 

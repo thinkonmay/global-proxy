@@ -11,6 +11,7 @@ import (
 	busmemory "github.com/thinkonmay/global-proxy/api/pkg/bus/memory"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
@@ -32,8 +33,8 @@ func (fakeWebhookProvider) GetSubscription(context.Context, string) (payment.Sub
 func (fakeWebhookProvider) CancelSubscription(context.Context, string) error {
 	return payment.ErrNotSupported
 }
-func (fakeWebhookProvider) RegisterRoutes(mux *http.ServeMux, deliver func(context.Context, payment.Event) error) {
-	mux.HandleFunc("POST /api/v1/payment/webhook/testpay", func(w http.ResponseWriter, r *http.Request) {
+func (fakeWebhookProvider) RegisterRoutes(g *router.Group, deliver func(context.Context, payment.Event) error) {
+	g.POST("/testpay", func(w http.ResponseWriter, r *http.Request) {
 		if err := deliver(r.Context(), payment.Event{
 			RefID:  "txn-1",
 			Status: payment.StatusSuccess,

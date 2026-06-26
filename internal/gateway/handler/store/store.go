@@ -9,6 +9,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 const storeQueryTimeout = 5 * time.Second
@@ -27,8 +28,7 @@ func New(pr *postgrest.Client, rt http.RoundTripper) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/store/preorders", h.PreorderTemplate)
-	mux.HandleFunc("POST /v1/store/preorders/", h.PreorderTemplate)
+	router.V1(mux).POST("/store/preorders", h.PreorderTemplate)
 }
 
 func (h *Handler) PreorderTemplate(w http.ResponseWriter, r *http.Request) {

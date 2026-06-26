@@ -98,12 +98,6 @@ type Payment struct {
 		PrivateKey string `mapstructure:"privateKey"`
 		PublicKey  string `mapstructure:"publicKey"`
 	} `mapstructure:"payermax"`
-	Payssion struct {
-		APIKey    string `mapstructure:"apiKey"`
-		PMID      string `mapstructure:"pmId"`
-		SecretKey string `mapstructure:"secretKey"`
-		Link      string `mapstructure:"link"`
-	} `mapstructure:"payssion"`
 }
 
 type TLS struct {
@@ -237,7 +231,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("persona.concurrent", 10)
 	v.SetDefault("persona.rybbitMinSpacing", "250ms")
 	v.SetDefault("payment.enabled", false)
-	v.SetDefault("payment.pollEvery", "10s")
+	v.SetDefault("payment.pollEvery", "5m")
 	v.SetDefault("metrics.scrapeCacheSeconds", 10)
 	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
 	v.SetDefault("metrics.listenAddr", ":9090")

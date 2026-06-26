@@ -2,18 +2,32 @@
 package payermax
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	payermaxsdk "github.com/shareit-payermax/payermax-server-sdk-go/payermax"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
+// prodBaseURL is the PayerMax production gateway, used when Config.BaseURL is empty.
+const prodBaseURL = "https://pay-gate.payermax.com/aggregate-pay/api/gateway/"
+
 // Config holds PayerMax credentials and endpoint; mirrors the legacy payerMaxConfig.
+// PrivateKey/PublicKey accept PEM or bare base64 (PKCS#1/PKCS#8/PKIX). PublicKey is
+// optional and, when set, verifies the response signature on successful replies.
 type Config struct {
 	AppID      string
 	MerchantNo string
@@ -24,26 +38,41 @@ type Config struct {
 
 // Client is a PayerMax payment provider.
 type Client struct {
-	cfg Config
+	cfg        Config
+	privateKey *rsa.PrivateKey
+	publicKey  *rsa.PublicKey
+	keyErr     error
+	http       *http.Client
 }
 
 var _ payment.Client = (*Client)(nil)
 
-// New constructs a PayerMax payment client.
+// New constructs a PayerMax payment client, parsing keys up front. Key errors are
+// deferred to Charge/GetCharge so an unconfigured provider does not fail at startup.
 func New(cfg Config) payment.Client {
-	return &Client{cfg: cfg}
+	c := &Client{cfg: cfg, http: &http.Client{Timeout: 15 * time.Second}}
+	if cfg.PrivateKey == "" {
+		c.keyErr = fmt.Errorf("payermax private_key not configured")
+		return c
+	}
+	if c.privateKey, c.keyErr = parsePrivateKey(cfg.PrivateKey); c.keyErr != nil {
+		return c
+	}
+	if cfg.PublicKey != "" {
+		c.publicKey, c.keyErr = parsePublicKey(cfg.PublicKey)
+	}
+	return c
 }
 
 // Name identifies the provider for registry lookup.
 func (c *Client) Name() string { return "payermax" }
 
-// normalizeBaseURL defaults to the SDK prod URL and ensures a trailing slash.
-func normalizeBaseURL(base string) string {
-	base = strings.TrimSpace(base)
-	if base == "" {
-		return payermaxsdk.Prod
+// baseURL returns the configured endpoint (trailing slash enforced) or the prod default.
+func (c *Client) baseURL() string {
+	if b := strings.TrimSpace(c.cfg.BaseURL); b != "" {
+		return strings.TrimRight(b, "/") + "/"
 	}
-	return strings.TrimRight(base, "/") + "/"
+	return prodBaseURL
 }
 
 // country maps a currency to its PayerMax country code (USD→US, else ID).
@@ -52,30 +81,6 @@ func country(currency string) string {
 		return "US"
 	}
 	return "ID"
-}
-
-// sdkClient builds the underlying PayerMax SDK client, enforcing required config.
-func (c *Client) sdkClient() (*payermaxsdk.Client, error) {
-	if c.cfg.AppID == "" || c.cfg.MerchantNo == "" {
-		return nil, fmt.Errorf("payermax app_id/merchant_no not configured")
-	}
-	if c.cfg.PrivateKey == "" {
-		return nil, fmt.Errorf("payermax private_key not configured")
-	}
-	if c.cfg.PublicKey == "" {
-		return nil, fmt.Errorf("payermax public_key not configured (required for SDK response verification)")
-	}
-	return payermaxsdk.CreateClient(
-		c.cfg.AppID,
-		c.cfg.MerchantNo,
-		c.cfg.PrivateKey,
-		c.cfg.PublicKey,
-		"", "",
-		payermaxsdk.ClientSettings{
-			BaseUrl:       normalizeBaseURL(c.cfg.BaseURL),
-			ClientTimeout: 15 * time.Second,
-		},
-	)
 }
 
 // orderFields builds the orderAndPay request fields for a charge. When args.Method is set
@@ -99,29 +104,79 @@ func orderFields(args payment.ChargeParams, cur, outTradeNo string) map[string]s
 	return fields
 }
 
+// send wraps data in the PayerMax envelope, RSA-signs the body into the "sign" header,
+// POSTs to apiName, and returns the raw response. On APPLY_SUCCESS it verifies the
+// response signature when a public key is configured.
+func (c *Client) send(ctx context.Context, apiName string, data map[string]string) (json.RawMessage, error) {
+	if c.keyErr != nil {
+		return nil, c.keyErr
+	}
+	if c.cfg.AppID == "" || c.cfg.MerchantNo == "" {
+		return nil, fmt.Errorf("payermax app_id/merchant_no not configured")
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"version":     "1.4",
+		"keyVersion":  "1",
+		"requestTime": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		"appId":       c.cfg.AppID,
+		"merchantNo":  c.cfg.MerchantNo,
+		"data":        data,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sign, err := signRSA(body, c.privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+apiName, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json;charset=utf-8")
+	req.Header.Set("sign", sign)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.publicKey != nil {
+		var head struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(respBody, &head) == nil && head.Code == "APPLY_SUCCESS" {
+			if err := verifyRSA(respBody, resp.Header.Get("sign"), c.publicKey); err != nil {
+				return nil, fmt.Errorf("payermax response signature: %w", err)
+			}
+		}
+	}
+	return json.RawMessage(respBody), nil
+}
+
 // Charge initiates a hosted-checkout charge via PayerMax orderAndPay.
 func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment.Charge, error) {
 	cur := strings.ToUpper(strings.TrimSpace(args.Money.Currency))
 	if cur != "USD" && cur != "IDR" {
 		return payment.Charge{}, fmt.Errorf("payermax only supports USD or IDR")
 	}
-	client, err := c.sdkClient()
-	if err != nil {
-		return payment.Charge{}, err
-	}
 
 	outTradeNo := "P" + args.IdempotencyKey
-	payload, err := json.Marshal(orderFields(args, cur, outTradeNo))
+	resp, err := c.send(ctx, "orderAndPay", orderFields(args, cur, outTradeNo))
 	if err != nil {
 		return payment.Charge{}, err
 	}
 
-	resp, err := client.Send("orderAndPay", string(payload))
-	if err != nil {
-		return payment.Charge{}, err
-	}
-
-	redirectURL, err := parseRedirectURL([]byte(resp))
+	redirectURL, err := parseRedirectURL(resp)
 	if err != nil {
 		return payment.Charge{}, err
 	}
@@ -130,21 +185,13 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 		ID:          outTradeNo,
 		Status:      payment.StatusPending,
 		RedirectURL: redirectURL,
-		Detail:      json.RawMessage(resp),
+		Detail:      resp,
 	}, nil
 }
 
 // GetCharge fetches the current state of a charge; id is the PayerMax outTradeNo.
 func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, error) {
-	client, err := c.sdkClient()
-	if err != nil {
-		return payment.Charge{}, err
-	}
-	payload, err := json.Marshal(map[string]string{"outTradeNo": id})
-	if err != nil {
-		return payment.Charge{}, err
-	}
-	resp, err := client.Send("orderQuery", string(payload))
+	resp, err := c.send(ctx, "orderQuery", map[string]string{"outTradeNo": id})
 	if err != nil {
 		return payment.Charge{}, err
 	}
@@ -155,25 +202,26 @@ func (c *Client) GetCharge(ctx context.Context, id string) (payment.Charge, erro
 			Status string `json:"status"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+	if err := json.Unmarshal(resp, &parsed); err != nil {
 		return payment.Charge{}, err
 	}
 	if parsed.Code != "APPLY_SUCCESS" {
 		return payment.Charge{}, fmt.Errorf("payermax query: %s", resp)
 	}
 
-	// Map PayerMax order status to the normalized payment status.
-	var status payment.Status
-	switch parsed.Data.Status {
-	case "SUCCESS":
-		status = payment.StatusSuccess
-	case "FAILED", "CLOSED":
-		status = payment.StatusCanceled
-	default:
-		status = payment.StatusPending
-	}
+	return payment.Charge{ID: id, Status: mapStatus(parsed.Data.Status)}, nil
+}
 
-	return payment.Charge{ID: id, Status: status}, nil
+// mapStatus maps a PayerMax order status to the normalized payment status.
+func mapStatus(s string) payment.Status {
+	switch s {
+	case "SUCCESS":
+		return payment.StatusSuccess
+	case "FAILED", "CLOSED":
+		return payment.StatusCanceled
+	default:
+		return payment.StatusPending
+	}
 }
 
 // parseRedirectURL extracts the redirect URL from the orderAndPay response.
@@ -196,6 +244,87 @@ func parseRedirectURL(resp []byte) (string, error) {
 	return parsed.Data.RedirectURL, nil
 }
 
+// signRSA returns the base64 RSA-SHA256 (PKCS#1 v1.5) signature of body.
+func signRSA(body []byte, key *rsa.PrivateKey) (string, error) {
+	h := sha256.Sum256(body)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, h[:])
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sig), nil
+}
+
+// verifyRSA checks a base64 RSA-SHA256 (PKCS#1 v1.5) signature over body.
+func verifyRSA(body []byte, sign string, key *rsa.PublicKey) error {
+	sig, err := base64.StdEncoding.DecodeString(sign)
+	if err != nil {
+		return fmt.Errorf("decode sign: %w", err)
+	}
+	h := sha256.Sum256(body)
+	return rsa.VerifyPKCS1v15(key, crypto.SHA256, h[:], sig)
+}
+
+// parsePrivateKey accepts a PEM or bare-base64 RSA key in PKCS#1 or PKCS#8.
+func parsePrivateKey(s string) (*rsa.PrivateKey, error) {
+	der, err := keyDER(s)
+	if err != nil {
+		return nil, err
+	}
+	if k, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return k, nil
+	}
+	k, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("payermax: parse private key (PKCS#1/PKCS#8): %w", err)
+	}
+	rk, ok := k.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("payermax: private key is not RSA")
+	}
+	return rk, nil
+}
+
+// parsePublicKey accepts a PEM or bare-base64 RSA key in PKIX, PKCS#1, or X.509 cert form.
+func parsePublicKey(s string) (*rsa.PublicKey, error) {
+	der, err := keyDER(s)
+	if err != nil {
+		return nil, err
+	}
+	if k, err := x509.ParsePKIXPublicKey(der); err == nil {
+		if rk, ok := k.(*rsa.PublicKey); ok {
+			return rk, nil
+		}
+		return nil, fmt.Errorf("payermax: public key is not RSA")
+	}
+	if k, err := x509.ParsePKCS1PublicKey(der); err == nil {
+		return k, nil
+	}
+	if cert, err := x509.ParseCertificate(der); err == nil {
+		if rk, ok := cert.PublicKey.(*rsa.PublicKey); ok {
+			return rk, nil
+		}
+	}
+	return nil, fmt.Errorf("payermax: parse public key (PKIX/PKCS#1/cert) failed")
+}
+
+// keyDER returns the DER bytes of a key given as a PEM block or bare base64.
+func keyDER(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "-----BEGIN") {
+		block, _ := pem.Decode([]byte(s))
+		if block == nil {
+			return nil, fmt.Errorf("payermax: invalid PEM key")
+		}
+		return block.Bytes, nil
+	}
+	s = strings.NewReplacer("\n", "", "\r", "", " ", "").Replace(s)
+	der, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("payermax: invalid base64 key: %w", err)
+	}
+	return der, nil
+}
+
 // Subscribe is unsupported: PayerMax recurring billing is not wired here.
 func (c *Client) Subscribe(ctx context.Context, args payment.SubscribeParams) (payment.Subscription, error) {
 	return payment.Subscription{}, payment.ErrNotSupported
@@ -211,6 +340,54 @@ func (c *Client) CancelSubscription(ctx context.Context, id string) error {
 	return payment.ErrNotSupported
 }
 
-// RegisterRoutes is a no-op; PayerMax events are not wired through HTTP routes here.
-func (c *Client) RegisterRoutes(mux *http.ServeMux, deliver func(ctx context.Context, e payment.Event) error) {
+// payermaxAck is PayerMax's required notification acknowledgement; it retries
+// unless the body's code is "SUCCESS".
+const payermaxAck = `{"code":"SUCCESS","msg":"Success"}`
+
+// RegisterRoutes mounts the PayerMax payment-result webhook. The poll fallback
+// still covers anything the notification misses.
+func (c *Client) RegisterRoutes(g *router.Group, deliver func(ctx context.Context, e payment.Event) error) {
+	g.POST("/payermax", func(w http.ResponseWriter, r *http.Request) {
+		if c.publicKey == nil {
+			http.Error(w, "payermax not configured", http.StatusInternalServerError)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "cannot read body", http.StatusBadRequest)
+			return
+		}
+		// PayerMax RSA-signs the raw body into the "sign" header, same as responses.
+		if err := verifyRSA(body, r.Header.Get("sign"), c.publicKey); err != nil {
+			http.Error(w, "invalid signature", http.StatusBadRequest)
+			return
+		}
+
+		var notif struct {
+			Data struct {
+				OutTradeNo string `json:"outTradeNo"`
+				Status     string `json:"status"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &notif); err != nil || notif.Data.OutTradeNo == "" {
+			http.Error(w, "invalid notification", http.StatusBadRequest)
+			return
+		}
+
+		// Only terminal states settle; PENDING is acked and left to the poll.
+		if st := mapStatus(notif.Data.Status); st != payment.StatusPending {
+			// outTradeNo is "P"+txn id (see Charge); settle keys on the numeric txn id.
+			if err := deliver(r.Context(), payment.Event{
+				Kind:       payment.EventCharge,
+				ProviderID: notif.Data.OutTradeNo,
+				RefID:      strings.TrimPrefix(notif.Data.OutTradeNo, "P"),
+				Status:     st,
+			}); err != nil {
+				http.Error(w, "failed to deliver event", http.StatusInternalServerError)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(payermaxAck))
+	})
 }

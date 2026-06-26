@@ -3,12 +3,14 @@ package payment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"strconv"
 	"time"
 
+	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 )
 
@@ -121,21 +123,105 @@ func (h *Handler) pollOnce(ctx context.Context, reg *registry.Registry) error {
 	return nil
 }
 
-// StartPoller runs pollOnce on a ticker until ctx is cancelled.
+// pendingSub is a provider-backed subscription to reconcile against its provider.
+type pendingSub struct {
+	ID            int64  `json:"id"`
+	Provider      string `json:"provider"`
+	ProviderSubID string `json:"provider_sub_id"`
+}
+
+// defaultListSubs lists subscriptions still tied to a provider (Stripe-style
+// auto-renew) that may have missed a renewal/cancel webhook.
+func (h *Handler) defaultListSubs(ctx context.Context) ([]pendingSub, error) {
+	var rows []pendingSub
+	if err := h.pr.RPC(ctx, "list_reconcilable_subscriptions", nil, &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// subSettleStatus maps a provider subscription status to the settle status, or ""
+// to skip (pending/unknown — nothing to reconcile yet).
+func subSettleStatus(s payment.Status) string {
+	switch s {
+	case payment.StatusActive:
+		return string(payment.StatusActive)
+	case payment.StatusCanceled:
+		return string(payment.StatusCanceled)
+	case payment.StatusPastDue:
+		return string(payment.StatusPastDue)
+	default:
+		return ""
+	}
+}
+
+// pollSubsOnce reconciles provider-backed subscriptions: it asks each provider for
+// the live state and settles idempotently, catching webhooks the provider missed.
+func (h *Handler) pollSubsOnce(ctx context.Context, reg *registry.Registry) error {
+	list := h.listSubs
+	if list == nil {
+		list = h.defaultListSubs
+	}
+	subs, err := list(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range subs {
+		client, ok := reg.Get(s.Provider)
+		if !ok {
+			continue
+		}
+		sub, err := client.GetSubscription(ctx, s.ProviderSubID)
+		if err != nil {
+			if !errors.Is(err, payment.ErrNotSupported) {
+				slog.Warn("payment poll: getsubscription", "id", s.ID, "err", err)
+			}
+			continue
+		}
+		st := subSettleStatus(sub.Status)
+		if st == "" {
+			continue
+		}
+		key := fmt.Sprintf("settle_sub:%s:%s:%s:%d", s.Provider, s.ProviderSubID, st, sub.PeriodEnd)
+		if err := h.idem.Run(ctx, key, func(ctx context.Context) error {
+			return h.settleRPC(ctx, "settle_subscription", map[string]any{
+				"p_provider":        s.Provider,
+				"p_provider_sub_id": s.ProviderSubID,
+				"p_status":          st,
+				"p_period_end":      sub.PeriodEnd,
+			})
+		}); err != nil {
+			slog.Warn("payment poll: settle_sub", "id", s.ID, "err", err)
+		}
+	}
+	return nil
+}
+
+// StartPoller reconciles charges and subscriptions on a ticker until ctx is
+// cancelled. It is the safety net behind webhooks: webhooks settle in real time,
+// this catches anything the provider failed to deliver.
 func (h *Handler) StartPoller(ctx context.Context, reg *registry.Registry, every time.Duration) {
 	go func() {
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
-		_ = h.pollOnce(ctx, reg)
+		h.pollTick(ctx, reg)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := h.pollOnce(ctx, reg); err != nil {
-					slog.Warn("payment poll tick", "err", err)
-				}
+				h.pollTick(ctx, reg)
 			}
 		}
 	}()
+}
+
+// pollTick runs one charge + subscription reconcile pass.
+func (h *Handler) pollTick(ctx context.Context, reg *registry.Registry) {
+	if err := h.pollOnce(ctx, reg); err != nil {
+		slog.Warn("payment poll tick", "err", err)
+	}
+	if err := h.pollSubsOnce(ctx, reg); err != nil {
+		slog.Warn("payment sub poll tick", "err", err)
+	}
 }

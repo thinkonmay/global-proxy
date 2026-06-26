@@ -9,6 +9,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
 const nodeRuntimeTimeout = 30 * time.Second
@@ -24,20 +25,11 @@ func New(pr *postgrest.Client, serviceKey string) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	routes := []struct {
-		method string
-		path   string
-		fn     http.HandlerFunc
-	}{
-		{http.MethodPost, "/v1/app-access/steam/claim", h.SteamClaim},
-		{http.MethodPost, "/v1/app-access/steam/unclaim", h.SteamUnclaim},
-		{http.MethodPost, "/v1/node/keepalive", h.Keepalive},
-		{http.MethodPost, "/v1/node/volumes/sync", h.SyncVolume},
-	}
-	for _, route := range routes {
-		mux.HandleFunc(route.method+" "+route.path, route.fn)
-		mux.HandleFunc(route.method+" "+route.path+"/", route.fn)
-	}
+	v1 := router.V1(mux)
+	v1.POST("/app-access/steam/claim", h.SteamClaim)
+	v1.POST("/app-access/steam/unclaim", h.SteamUnclaim)
+	v1.POST("/node/keepalive", h.Keepalive)
+	v1.POST("/node/volumes/sync", h.SyncVolume)
 }
 
 func (h *Handler) requireServiceKey(r *http.Request) bool {

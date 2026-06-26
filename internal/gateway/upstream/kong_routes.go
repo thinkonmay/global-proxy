@@ -8,6 +8,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
+	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/pkg/supabase/auth"
 )
 
@@ -80,8 +81,7 @@ func RegisterKong(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper) 
 
 func registerRemovedPublicRPCRoutes(mux *http.ServeMux) {
 	serve := http.HandlerFunc(servePublicRPCRemoved)
-	mux.Handle("POST /v1/rpc", serve)
-	mux.Handle("POST /v1/rpc/", serve)
+	router.V1(mux).POST("/rpc", serve) // /v1/rpc (+ trailing-slash alias)
 	mux.Handle(restPrefix+"/rpc", serve)
 	mux.Handle(restPrefix+"/rpc/", serve)
 }
