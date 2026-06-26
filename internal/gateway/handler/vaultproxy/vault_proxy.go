@@ -74,7 +74,27 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusForbidden, "vault path not allowed")
 		return
 	}
-	h.proxy.ServeHTTP(w, r)
+	// Gateway auth uses apikey / Authorization (service role). Vault interprets
+	// Authorization: Bearer as a Vault token — strip gateway creds before proxying.
+	upstream := r.Clone(r.Context())
+	stripGatewayAuthHeaders(upstream, h.serviceKey)
+	h.proxy.ServeHTTP(w, upstream)
+}
+
+// stripGatewayAuthHeaders removes gateway service-role credentials from the
+// upstream request. Vault PKI calls use X-Vault-Token after userpass login.
+func stripGatewayAuthHeaders(r *http.Request, serviceKey string) {
+	r.Header.Del("Apikey")
+	r.Header.Del("apikey")
+	serviceKey = strings.TrimSpace(serviceKey)
+	if serviceKey == "" {
+		return
+	}
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") &&
+		strings.TrimSpace(auth[7:]) == serviceKey {
+		r.Header.Del("Authorization")
+	}
 }
 
 func (h *Handler) requireServiceKey(r *http.Request) bool {
