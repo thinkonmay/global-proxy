@@ -50,6 +50,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Upstreams.Website, "APP_UPSTREAMS_WEBSITE")
 	setEnvString(&cfg.Upstreams.Kong, "APP_UPSTREAMS_KONG")
 	setEnvString(&cfg.Upstreams.GoTrue, "APP_UPSTREAMS_GOTRUE")
+	setEnvString(&cfg.Upstreams.Vault, "APP_UPSTREAMS_VAULT")
 }
 
 func setEnvString(dst *string, key string) {

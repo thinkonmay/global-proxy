@@ -22,6 +22,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/vaultproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/webhook"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
@@ -58,6 +59,7 @@ func newMux(
 	runtimeH *runtime.Handler,
 	personaHTTP *persona.Handler,
 	nodeRuntime *noderuntime.Handler,
+	vaultProxy *vaultproxy.Handler,
 	pwaH *pwa.Handler,
 	volumeH *volume.Handler,
 	cfg *config.Config,
@@ -83,6 +85,9 @@ func newMux(
 	runtimeH.Register(mux)
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)
+	if vaultProxy != nil {
+		vaultProxy.Register(mux)
+	}
 	webhook.RegisterPaymentWebhooks(mux, payReg, eventBus)
 
 	// SSE stream: recipient is the authenticated user, derived server-side — never
