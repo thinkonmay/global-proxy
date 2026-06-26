@@ -162,7 +162,7 @@ func (h *Handler) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 
 // planChargeMoney resolves the fiat amount to charge for a plan in the given
 // currency from the plan's per-currency catalog price (billing.plans.price ->
-// {currency} -> {amount, tag}), returning it in provider minor units. The price
+// {currency} = MAJOR-unit number), returning it in provider minor units. The price
 // is authoritative server state; the client never supplies it. Returns an error
 // if the plan is inactive/missing or has no price for the currency.
 func (h *Handler) planChargeMoney(ctx context.Context, planName, currency string) (payment.Money, error) {
@@ -183,16 +183,14 @@ func (h *Handler) planChargeMoney(ctx context.Context, planName, currency string
 	if !ok || len(raw) == 0 || string(raw) == "null" {
 		return payment.Money{}, fmt.Errorf("plan %q has no %s price", planName, currency)
 	}
-	var val struct {
-		Amount float64 `json:"amount"`
-	}
-	if err := json.Unmarshal(raw, &val); err != nil {
+	var amount float64
+	if err := json.Unmarshal(raw, &amount); err != nil {
 		return payment.Money{}, fmt.Errorf("plan %q malformed %s price: %w", planName, currency, err)
 	}
-	if val.Amount <= 0 {
+	if amount <= 0 {
 		return payment.Money{}, fmt.Errorf("plan %q has non-positive %s price", planName, currency)
 	}
-	return payment.FromMajor(val.Amount, currency), nil
+	return payment.FromMajor(amount, currency), nil
 }
 
 // rawJSON marshals a metadata map for buildRedirectURL; nil/empty → nil.

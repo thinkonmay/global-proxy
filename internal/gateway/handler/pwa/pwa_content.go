@@ -112,19 +112,17 @@ func (h *Handler) Plans(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		raw, ok := rows[0][currency]
-		if !ok {
+		if !ok || len(raw) == 0 || string(raw) == "null" {
 			httpx.WriteError(w, http.StatusOK, "price not found")
 			return
 		}
-		var val map[string]any
-		if err := json.Unmarshal(raw, &val); err != nil {
+		// price->{currency} is a MAJOR-unit number; return it as-is (FE formats + adds symbol).
+		var amount float64
+		if err := json.Unmarshal(raw, &amount); err != nil {
 			httpx.WriteError(w, http.StatusOK, err.Error())
 			return
 		}
-		if amount, ok := val["amount"].(float64); ok {
-			val["amount"] = amount
-		}
-		httpx.WriteData(w, val)
+		httpx.WriteData(w, amount)
 	case "credit":
 		q := url.Values{}
 		q.Set("select", "credit,name")
