@@ -15,6 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
@@ -61,6 +62,7 @@ func newMux(
 	vaultProxy *vaultproxy.Handler,
 	pwaH *pwa.Handler,
 	volumeH *volume.Handler,
+	mailH *mail.Handler,
 	metricsIngest *metricsingest.Handler,
 	routingHTTP *clusterrouting.Handler,
 	cfg *config.Config,
@@ -74,6 +76,9 @@ func newMux(
 
 	h.Register(mux)
 	volumeH.Register(mux)
+	if mailH != nil {
+		mailH.Register(mux)
+	}
 	if metricsIngest != nil {
 		metricsIngest.Register(mux)
 	}

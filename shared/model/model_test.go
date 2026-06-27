@@ -15,12 +15,14 @@ func TestTopicNames(t *testing.T) {
 		"sse":     TopicSSE.Name,
 		"usage":   TopicUsage.Name,
 		"volume":  TopicVolumeJob.Name,
+		"mail":    TopicMailJob.Name,
 	}
 	want := map[string]string{
 		"payment": "billing.payment.event",
 		"sse":     "sse",
 		"usage":   "usage.snapshot",
 		"volume":  "jobs.volume",
+		"mail":    "jobs.mail",
 	}
 	for k, got := range cases {
 		if got != want[k] {
@@ -127,6 +129,29 @@ func TestVolumeJobMsgRoundTrip(t *testing.T) {
 	}
 	if string(out.Arguments) != string(in.Arguments) {
 		t.Errorf("Arguments = %s, want %s", out.Arguments, in.Arguments)
+	}
+}
+
+func TestMailJobMsgRoundTrip(t *testing.T) {
+	in := MailJobMsg{
+		RequestID: "req-mail-1",
+		Email:     "u@example.com",
+		Title:     "Hello",
+		Subject:   "Hello",
+		FinalHTML: "<p>Hi</p>",
+		SendEmail: true,
+		InApp:     true,
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out MailJobMsg
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.RequestID != in.RequestID || out.Email != in.Email || out.FinalHTML != in.FinalHTML {
+		t.Errorf("round-trip mismatch: got %+v want %+v", out, in)
 	}
 }
 

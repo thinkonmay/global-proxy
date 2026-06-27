@@ -1,15 +1,11 @@
 package upstream
 
 import (
-	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/config"
-	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
-	"github.com/thinkonmay/global-proxy/api/pkg/supabase/auth"
 )
 
 const (
@@ -21,62 +17,32 @@ const (
 
 var removedStackMsg = []byte(`{"message":"GoTrue, Realtime, and Edge Functions are not deployed in this stack"}`)
 var removedPublicRPCMsg = []byte(`{"error":"RPC endpoints are not exposed on the public gateway; use /v1/* controllers"}`)
+var internalOnlySupabaseMsg = []byte(`{"message":"Supabase data APIs are internal-only; use /v1/* controllers on the public gateway"}`)
 
-// RegisterKong wires Supabase-compatible Kong service mappings (rest, graphql,
-// storage, meta, studio) with key-auth, ACL, WAF, and basic-auth parity.
+// RegisterKong mounts public-edge Supabase-related routes on thinkmay-gateway.
+// Internal Kong (compose network) serves /rest/v1, /storage/v1, and /pg for
+// Studio and backend services; the public hostname does not proxy them (D22).
 func RegisterKong(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper) {
 	registerRemovedPublicRPCRoutes(mux)
 
-	keys := auth.NewKeys(
-		cfg.Supabase.AnonKey,
-		cfg.Supabase.PublishableKey,
-		cfg.Supabase.ServiceKey,
-		cfg.Supabase.SecretKey,
-	)
-	pathWAF := guard.PathWAF(guard.PathWAFConfig{
-		AllowedIPs:      cfg.WAF.AllowedIPs,
-		PublicReadPaths: cfg.WAF.PublicReadPaths,
-	})
-
 	gotrueEnabled := registerGoTrueRoute(mux, cfg, rt)
+	registerDeniedInternalSupabasePaths(mux)
 	registerRemovedRoutes(mux, gotrueEnabled)
-
-	if rest := NewProxy(cfg.PostgREST.URL, rt, func(req *http.Request) {
-		req.URL.Path = strings.TrimPrefix(req.URL.Path, restPrefix)
-		SetForwardedHeaders(req)
-	}); rest != nil {
-		h := pathWAF(auth.RequireKey(keys, auth.PolicyAnonAndAdmin)(timed(rest, proxyTimeout)))
-		mux.Handle(restPrefix+"/", h)
-	} else {
-		slog.Error("postgrest url invalid, /rest/v1 disabled")
-	}
-
-	if graphql := NewProxy(cfg.PostgREST.URL, rt, func(req *http.Request) {
-		req.URL.Path = "/rpc/graphql"
-		req.Header.Set("Content-Profile", "graphql_public")
-		SetForwardedHeaders(req)
-	}); graphql != nil {
-		h := auth.RequireKey(keys, auth.PolicyAnonAndAdmin)(timed(graphql, proxyTimeout))
-		mux.Handle(graphqlPath, h)
-	}
-
-	registerStorageRoute(mux, cfg, rt, keys)
-
-	if cfg.Upstreams.Meta != "" {
-		if meta := NewProxy(cfg.Upstreams.Meta, rt, func(req *http.Request) {
-			req.URL.Path = strings.TrimPrefix(req.URL.Path, metaPrefix)
-			SetForwardedHeaders(req)
-		}); meta != nil {
-			h := auth.RequireKey(keys, auth.PolicyAdminOnly)(timed(meta, proxyTimeout))
-			mux.Handle(metaPrefix+"/", h)
-		} else {
-			slog.Error("meta upstream invalid, /pg/* disabled")
-		}
-	}
-
 	registerBlockedRoutes(mux)
+}
 
-	// Studio is served on studio.<domain> via admin host router (B12).
+func registerDeniedInternalSupabasePaths(mux *http.ServeMux) {
+	serve := http.HandlerFunc(serveInternalOnlySupabase)
+	mux.Handle(restPrefix+"/", serve)
+	mux.Handle(graphqlPath, serve)
+	mux.Handle(storagePrefix+"/", serve)
+	mux.Handle(metaPrefix+"/", serve)
+}
+
+func serveInternalOnlySupabase(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(internalOnlySupabaseMsg)
 }
 
 func registerRemovedPublicRPCRoutes(mux *http.ServeMux) {

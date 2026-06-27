@@ -41,6 +41,8 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Payment.PayerMax.BaseURL, "APP_PAYMENT_PAYERMAX_BASEURL")
 	setEnvString(&cfg.Payment.PayerMax.PrivateKey, "APP_PAYMENT_PAYERMAX_PRIVATEKEY")
 	setEnvString(&cfg.Payment.PayerMax.PublicKey, "APP_PAYMENT_PAYERMAX_PUBLICKEY")
+	setEnvString(&cfg.Mail.APIKey, "APP_MAIL_RESEND_APIKEY")
+	setEnvString(&cfg.Mail.From, "APP_MAIL_RESEND_FROM")
 	setEnvString(&cfg.Upstreams.Meta, "APP_UPSTREAMS_META")
 	setEnvString(&cfg.Upstreams.Studio, "APP_UPSTREAMS_STUDIO")
 	setEnvString(&cfg.Upstreams.Storage, "APP_UPSTREAMS_STORAGE")

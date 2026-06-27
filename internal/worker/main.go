@@ -95,7 +95,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := NewHandler(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, dc, storjClient)
+	h := NewHandler(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, dc, storjClient, cfg)
 	h.Init()
 	h.StartJobPoller(ctx, slog.Default())
 	if err := h.StartUsageCollector(ctx, cfg, slog.Default()); err != nil {

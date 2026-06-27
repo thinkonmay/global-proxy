@@ -30,6 +30,7 @@ type Config struct {
 	UsageCollector UsageCollector `mapstructure:"usageCollector"`
 	Persona        Persona        `mapstructure:"persona"`
 	Payment        Payment        `mapstructure:"payment"`
+	Mail           Mail           `mapstructure:"mail"`
 	Gateway        Gateway        `mapstructure:"gateway"`
 	Runtime        Runtime        `mapstructure:"runtime"`
 	Storj          Storj          `mapstructure:"storj"`
@@ -74,6 +75,14 @@ type Persona struct {
 	RybbitURL        string `mapstructure:"rybbitURL"`
 	RybbitAPIKey     string `mapstructure:"rybbitAPIKey"`
 	RybbitSiteDomain string `mapstructure:"rybbitSiteDomain"`
+}
+
+// Mail configures product/in-app mail delivery in the worker (F18).
+// Credentials load from .env via APP_MAIL_* (not config.yaml).
+type Mail struct {
+	Enabled bool   `mapstructure:"enabled"`
+	From    string `mapstructure:"from"`
+	APIKey  string `mapstructure:"apiKey"`
 }
 
 // Payment configures provider checkout + status polling in the worker (G8).
@@ -238,6 +247,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("persona.rybbitMinSpacing", "250ms")
 	v.SetDefault("payment.enabled", false)
 	v.SetDefault("payment.pollEvery", "5m")
+	v.SetDefault("mail.enabled", true)
 	v.SetDefault("metrics.scrapeCacheSeconds", 10)
 	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
 	v.SetDefault("metrics.listenAddr", ":9090")

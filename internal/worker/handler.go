@@ -13,6 +13,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/jobpoller"
+	"github.com/thinkonmay/global-proxy/api/internal/worker/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/payment"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/persona"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/usage"
@@ -32,9 +33,10 @@ type Handler struct {
 	payment  *payment.Handler
 	usage    *usage.Handler
 	persona  *persona.Handler
+	mail     *mail.Handler
 }
 
-func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client) *Handler {
+func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client, cfg *config.Config) *Handler {
 	return &Handler{
 		eventBus: eventBus,
 		pr:       pr,
@@ -42,6 +44,7 @@ func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr
 		payment:  payment.New(idem, pr),
 		usage:    usage.New(ch, pr, eventBus),
 		persona:  persona.New(pr),
+		mail:     mail.New(idem, pr, cfg.Mail),
 	}
 }
 
@@ -50,6 +53,7 @@ func (h *Handler) Init() {
 	h.volume.Init(h.eventBus)
 	h.usage.Init(h.eventBus)
 	h.payment.Init(h.eventBus)
+	h.mail.Init(h.eventBus)
 }
 
 func (h *Handler) StartUsageCollector(ctx context.Context, cfg *config.Config, log *slog.Logger) error {

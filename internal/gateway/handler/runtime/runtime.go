@@ -8,18 +8,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thinkonmay/thinkshare-daemon/persistent"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
 	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
-	runtimepkg "github.com/thinkonmay/global-proxy/api/pkg/runtime"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
+	runtimepkg "github.com/thinkonmay/global-proxy/api/pkg/runtime"
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/pkg/superuser"
 	"github.com/thinkonmay/global-proxy/api/pkg/volumeconfig"
 	"github.com/thinkonmay/global-proxy/api/pkg/workerinfor"
+	"github.com/thinkonmay/thinkshare-daemon/persistent"
 )
 
 const (
@@ -71,8 +71,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.Handle(http.MethodPost, "/runtime/snapshots/restore", h.handleRestoreSnapshot)
 	v1.Handle(http.MethodPost, "/runtime/keepalive", h.handleKeepalive)
 	v1.Handle(http.MethodDelete, "/runtime/resource", h.handleResource)
-	v1.Handle(http.MethodGet, "/runtime/log", h.notImplemented)
-	v1.Handle(http.MethodGet, "/runtime/analytics", h.notImplemented)
 }
 
 func (h *Handler) requireDaemon(w http.ResponseWriter) bool {
