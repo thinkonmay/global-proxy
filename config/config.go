@@ -17,7 +17,6 @@ type Config struct {
 	Port           string         `mapstructure:"port"`
 	Log            Log            `mapstructure:"log"`
 	PostgREST      PostgREST      `mapstructure:"postgrest"`
-	PocketBase     PocketBase     `mapstructure:"pocketbase"`
 	Supabase       Supabase       `mapstructure:"supabase"`
 	Upstreams      Upstreams      `mapstructure:"upstreams"`
 	Admin          Admin          `mapstructure:"admin"`
@@ -27,6 +26,7 @@ type Config struct {
 	RPC            RPC            `mapstructure:"rpc"`
 	Scheduler      Scheduler      `mapstructure:"scheduler"`
 	Metrics        Metrics        `mapstructure:"metrics"`
+	Routing        Routing        `mapstructure:"routing"`
 	UsageCollector UsageCollector `mapstructure:"usageCollector"`
 	Persona        Persona        `mapstructure:"persona"`
 	Payment        Payment        `mapstructure:"payment"`
@@ -112,10 +112,24 @@ type Gateway struct {
 	PublicURL string `mapstructure:"publicURL"`
 }
 
-// Runtime configures gateway→cluster runtime proxy (Track C3 transitional HTTP shim).
+// Runtime configures gateway→cluster runtime (Track C3).
 type Runtime struct {
-	// ClusterSecret must match cluster.yaml p2pcred on worker nodes.
-	ClusterSecret string `mapstructure:"clusterSecret"`
+	// Grpc enables mTLS virtdaemon gRPC for GET /v1/runtime/info (D25/D26).
+	Grpc RuntimeGrpc `mapstructure:"grpc"`
+}
+
+// RuntimeGrpc configures gateway→cluster-master persistent.Daemon gRPC.
+type RuntimeGrpc struct {
+	Enabled        bool   `mapstructure:"enabled"`
+	Port           int    `mapstructure:"port"`
+	ClientCN       string `mapstructure:"clientCN"`
+	PKIMount       string `mapstructure:"pkiMount"`
+	PKIRole        string `mapstructure:"pkiRole"`
+	HomeIssuerHost string `mapstructure:"homeIssuerHost"`
+	HomeOverride   string `mapstructure:"homeOverride"`
+	// HomeServerName is TLS SNI when HomeOverride dials an IP (cert CN is the node hostname).
+	HomeServerName string `mapstructure:"homeServerName"`
+	VaultPassword  string `mapstructure:"vaultPassword"`
 }
 
 // Storj configures the global uplink access grant for user bucket file APIs.
@@ -177,15 +191,6 @@ type PostgREST struct {
 	ServiceKey string `mapstructure:"serviceKey"`
 }
 
-// PocketBase holds cluster PocketBase superuser credentials for gateway-side
-// admin API calls (auth-with-password once, bearer token reuse).
-type PocketBase struct {
-	URL        string `mapstructure:"url" validate:"omitempty,url"`
-	IssuerHost string `mapstructure:"issuerHost" validate:"omitempty"`
-	Username   string `mapstructure:"username"`
-	Password   string `mapstructure:"password"`
-}
-
 type Nats struct {
 	URL      string `mapstructure:"url" validate:"required"`
 	Optional bool   `mapstructure:"optional"`
@@ -222,7 +227,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("admin.basicAuthEnabled", false)
 	v.SetDefault("scheduler.enabled", false)
 	v.SetDefault("metrics.cacheTTLSeconds", 90)
-	v.SetDefault("usageCollector.enabled", false)
+	v.SetDefault("usageCollector.enabled", true)
 	v.SetDefault("usageCollector.every", "5m")
 	v.SetDefault("usageCollector.addonEvery", "1h")
 	v.SetDefault("usageCollector.sessionMinutes", 5)
@@ -236,6 +241,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("metrics.scrapeCacheSeconds", 10)
 	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
 	v.SetDefault("metrics.listenAddr", ":9090")
+	v.SetDefault("routing.redisUrl", "redis://redis:6379/2")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -277,6 +283,7 @@ func NewConfig() (*Config, error) {
 	mergeSupabaseKeys(&cfg)
 	mergeAdminDefaults(&cfg)
 	mergeMetricsDefaults(&cfg)
+	mergeRoutingDefaults(&cfg)
 	mergeLLMDefaults(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
@@ -312,6 +319,8 @@ func defaultCorazaSkipPaths() []string {
 		"/auth/v1/",
 		"/storage/v1/",
 		"/vault/v1/",
+		"/v1/metrics/push",
+		"/v1/cluster/routing/",
 		"/api/track",
 		"/api/identify",
 		"/api/script.js",

@@ -28,7 +28,7 @@ func TestAllowedVaultPath(t *testing.T) {
 	}
 }
 
-func TestServe_requiresServiceKey(t *testing.T) {
+func TestServe_allowlistedPathWithoutServiceKey(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -42,8 +42,8 @@ func TestServe_requiresServiceKey(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/vault/v1/auth/userpass/login/virtdaemon", strings.NewReader(`{"password":"x"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status=%d want 401", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/vault/v1/auth/userpass/login/virtdaemon", strings.NewReader(`{"password":"x"}`))

@@ -12,20 +12,18 @@ import (
 
 // Server accepts virtdaemon push POSTs and serves merged Prometheus text from the cache layer.
 type Server struct {
-	cache        *Cache
-	ingestSecret string
+	cache *Cache
 }
 
-func NewServer(cache *Cache, ingestSecret string) *Server {
-	return &Server{cache: cache, ingestSecret: strings.TrimSpace(ingestSecret)}
+func NewServer(cache *Cache) *Server {
+	return &Server{cache: cache}
 }
 
-func (s *Server) Handler() http.Handler {
+func (s *Server) ScrapeHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/internal/nodes", s.handleInternalNodes)
-	mux.HandleFunc("/", s.handlePush)
 	return mux
 }
 
@@ -38,17 +36,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
+// HandlePush ingests a metrics push (protected by mTLS at the gateway edge).
+func (s *Server) HandlePush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.ingestSecret == "" {
-		http.Error(w, "ingest not configured", http.StatusServiceUnavailable)
-		return
-	}
-	if got := strings.TrimSpace(r.Header.Get("Authorization")); got != s.ingestSecret {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	node := strings.TrimSpace(r.Header.Get("node"))
@@ -75,14 +66,6 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInternalNodes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.ingestSecret == "" {
-		http.Error(w, "ingest not configured", http.StatusServiceUnavailable)
-		return
-	}
-	if got := strings.TrimSpace(r.Header.Get("Authorization")); got != s.ingestSecret {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

@@ -16,10 +16,11 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
+	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 )
 
 func main() {
@@ -42,14 +43,6 @@ func main() {
 		Transport:  outbound,
 	})
 
-	pb := pocketbase.New(pocketbase.Config{
-		URL:       cfg.PocketBase.URL,
-		Username:  cfg.PocketBase.Username,
-		Password:  cfg.PocketBase.Password,
-		Transport: outbound,
-		Timeout:   30 * time.Second,
-	})
-
 	ch, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{cfg.ClickHouse.Addr},
 		Auth: clickhouse.Auth{
@@ -69,11 +62,42 @@ func main() {
 	}
 	defer func() { _ = eventBus.Close() }()
 
+	var dc *daemonclient.Client
+	if cfg.Runtime.Grpc.Enabled || cfg.Runtime.Grpc.VaultPassword != "" {
+		if cfg.Upstreams.Vault == "" {
+			slog.Warn("worker daemon gRPC disabled: upstreams.vault not configured")
+		} else {
+			client, err := daemonclient.New(context.Background(), daemonclient.Config{
+				VaultURL:         cfg.Upstreams.Vault,
+				VaultPassword:    cfg.Runtime.Grpc.VaultPassword,
+				VaultGatewayKey:  cfg.PostgREST.ServiceKey,
+				ClientCN:         cfg.Runtime.Grpc.ClientCN,
+				PKIMount:         cfg.Runtime.Grpc.PKIMount,
+				PKIRole:          cfg.Runtime.Grpc.PKIRole,
+				GrpcPort:         cfg.Runtime.Grpc.Port,
+				HomeIssuerHost:     cfg.Runtime.Grpc.HomeIssuerHost,
+				HomeGrpcOverride:   cfg.Runtime.Grpc.HomeOverride,
+				HomeGrpcServerName: cfg.Runtime.Grpc.HomeServerName,
+			}, pr)
+			if err != nil {
+				log.Fatalf("daemon gRPC client: %v", err)
+			}
+			dc = client
+			defer func() { _ = client.Close() }()
+		}
+	}
+
+	storjClient := storj.TryOpen(cfg.Storj.AccessGrant)
+	if storjClient != nil {
+		defer storjClient.Close()
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := NewHandler(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, pb)
+	h := NewHandler(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, dc, storjClient)
 	h.Init()
+	h.StartJobPoller(ctx, slog.Default())
 	if err := h.StartUsageCollector(ctx, cfg, slog.Default()); err != nil {
 		log.Fatalf("usage collector: %v", err)
 	}

@@ -39,11 +39,7 @@ func (h *Handler) Start(ctx context.Context, cfg *config.Config, log *slog.Logge
 		return fmt.Errorf("persona.rybbitMinSpacing: %w", err)
 	}
 
-	pb := pocketbase.New(pocketbase.Config{
-		URL:      cfg.PocketBase.URL,
-		Username: cfg.PocketBase.Username,
-		Password: cfg.PocketBase.Password,
-	})
+	pb := pocketbase.New(pocketbase.Config{})
 
 	worker, err := corepersona.NewWorker(h.pr, pb, corepersona.Config{
 		Every:            every,

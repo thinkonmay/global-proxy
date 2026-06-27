@@ -101,7 +101,7 @@ func TestL1SurvivesRedisFlushAfterPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(body, []byte("mem_usage 2")) {
+	if !bytes.Contains(body, []byte(`mem_usage{node="worker-b"} 2`)) {
 		t.Fatalf("L1 miss after redis flush: %s", body)
 	}
 }

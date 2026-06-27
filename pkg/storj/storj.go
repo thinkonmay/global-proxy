@@ -71,6 +71,63 @@ func (c *Client) CreateBucket(bucketName string) error {
 	return err
 }
 
+// BucketCredential is a scoped Storj S3 grant for guest VM mount.
+type BucketCredential struct {
+	Bucket    string
+	AccessID  string
+	AccessKey string
+	Endpoint  string
+	Token     string
+}
+
+// GrantBucketCredential mints VM-scoped uplink credentials for an existing bucket.
+func (c *Client) GrantBucketCredential(bucketName string) (*BucketCredential, error) {
+	if _, err := c.project.StatBucket(c.ctx, bucketName); err != nil {
+		return nil, err
+	}
+	restrictedAccess, err := c.access.Share(
+		uplink.Permission{
+			AllowDownload: true,
+			AllowUpload:   true,
+			AllowList:     true,
+			AllowDelete:   true,
+			NotAfter:      time.Now().Add(c.expiration),
+		},
+		uplink.SharePrefix{Bucket: bucketName},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("restrict access grant: %w", err)
+	}
+	credentials, err := edgeConfig.RegisterAccess(c.ctx, restrictedAccess, &edge.RegisterAccessOptions{Public: true})
+	if err != nil {
+		return nil, fmt.Errorf("register access: %w", err)
+	}
+	token, err := restrictedAccess.Serialize()
+	if err != nil {
+		return nil, err
+	}
+	return &BucketCredential{
+		Bucket:    bucketName,
+		AccessID:  credentials.AccessKeyID,
+		AccessKey: credentials.SecretKey,
+		Endpoint:  credentials.Endpoint,
+		Token:     token,
+	}, nil
+}
+
+// TryOpen returns a client when accessGrant is configured, otherwise nil.
+func TryOpen(accessGrant string) *Client {
+	grant := strings.TrimSpace(accessGrant)
+	if grant == "" {
+		return nil
+	}
+	c, err := New(grant, 24*time.Hour)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
 func (c *Client) ListObjects(bucketName, path string) ([]Object, error) {
 	result := make([]Object, 0)
 	objs := c.project.ListObjects(c.ctx, bucketName, &uplink.ListObjectsOptions{

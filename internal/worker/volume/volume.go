@@ -1,39 +1,37 @@
 // Package volume consumes volume-lifecycle jobs off the bus and applies them
-// to the target cluster's PocketBase, patching the originating job row with the
-// result. Delivery is at-least-once; an idempotency guard dedups redeliveries.
+// to global Postgres + virtdaemon gRPC, patching the originating job row with
+// the result. Delivery is at-least-once; an idempotency guard dedups redeliveries.
 package volume
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
+	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
 type Handler struct {
-	idem *idempotency.Guard
-	pr   *postgrest.Client
-	pb   *pocketbase.Client
+	idem  *idempotency.Guard
+	pr    *postgrest.Client
+	dc    *daemonclient.Client
+	storj *storj.Client
 }
 
-func New(idem *idempotency.Guard, pr *postgrest.Client, pb *pocketbase.Client) *Handler {
+func New(idem *idempotency.Guard, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client) *Handler {
 	return &Handler{
-		idem: idem,
-		pr:   pr,
-		pb:   pb,
+		idem:  idem,
+		pr:    pr,
+		dc:    dc,
+		storj: st,
 	}
 }
 
@@ -51,46 +49,42 @@ func (h *Handler) Init(eventBus bus.Client) {
 
 func (h *Handler) handle(ctx context.Context, p model.VolumeJobMsg) error {
 	return h.idem.Run(ctx, "volume-"+p.RequestID, func(ctx context.Context) error {
-		// The worker is the sole DB writer: insert the job row (idempotent on
-		// request_id) before applying, so a publish-only gateway leaves no
-		// orphan and a redelivery never duplicates.
 		jobID, err := h.ensureJob(ctx, p)
 		if err != nil {
 			return err
 		}
 		p.JobID = jobID
 		deriveFields(&p)
-
-		switch p.Command {
-		case "create volume v7", "create volume v6":
-			err = h.createVolume(ctx, p)
-		case "update volume v7":
-			err = h.updateVolume(ctx, p)
-		case "delete volume v5":
-			err = h.deleteVolume(ctx, p)
-		case "grant app_access", "grant buckets", "grant llm",
-			"unmap app_access", "unmap buckets", "unmap llm",
-			"reset app_access", "reset llm":
-			err = h.handleGrantJob(ctx, p)
-		default:
-			if patchErr := h.patchJob(ctx, p.JobID, false, jobErrorResult("unsupported command: "+p.Command)); patchErr != nil {
-				return patchErr
-			}
-			return nil
-		}
-		if err == nil || isPermanentDispatchError(err) {
+		err = h.dispatch(ctx, p)
+		if err == nil {
 			return nil
 		}
 		return err
 	})
 }
 
-func isPermanentDispatchError(err error) bool {
-	var pe *pocketbase.Error
-	if errors.As(err, &pe) {
-		return pe.Status >= 400 && pe.Status < 500 && pe.Status != http.StatusTooManyRequests
+func (h *Handler) dispatch(ctx context.Context, p model.VolumeJobMsg) error {
+	var err error
+	switch p.Command {
+	case "create volume v7", "create volume v6":
+		err = h.createVolume(ctx, p)
+	case "update volume v7":
+		err = h.updateVolume(ctx, p)
+	case "delete volume v5":
+		err = h.deleteVolume(ctx, p)
+	case "snapshot all v1":
+		err = h.snapshotAll(ctx, p)
+	case "grant app_access", "grant buckets", "grant llm",
+		"unmap app_access", "unmap buckets", "unmap llm",
+		"reset app_access", "reset llm":
+		err = h.handleGrantJob(ctx, p)
+	default:
+		if patchErr := h.patchJob(ctx, p.JobID, false, jobErrorResult("unsupported command: "+p.Command)); patchErr != nil {
+			return patchErr
+		}
+		return nil
 	}
-	return false
+	return err
 }
 
 // ensureJob inserts the job row for this request and returns its id. It is
@@ -168,23 +162,6 @@ func jsonString(raw json.RawMessage) string {
 	return s
 }
 
-func (h *Handler) patchJobFromPBError(ctx context.Context, jobID int64, err error) error {
-	var pe *pocketbase.Error
-	if errors.As(err, &pe) {
-		if patchErr := h.patchJob(ctx, jobID, false, pe.Body); patchErr != nil {
-			return patchErr
-		}
-		if isPermanentDispatchError(err) {
-			return nil
-		}
-		return err
-	}
-	if patchErr := h.patchJob(ctx, jobID, false, jobErrorResult(err.Error())); patchErr != nil {
-		return patchErr
-	}
-	return err
-}
-
 func (h *Handler) patchJob(ctx context.Context, jobID int64, success bool, content []byte) error {
 	var result any
 	if len(content) > 0 {
@@ -202,63 +179,6 @@ func (h *Handler) patchJob(ctx context.Context, jobID int64, success bool, conte
 		return err
 	}
 	return nil
-}
-
-func (h *Handler) clusterURL(ctx context.Context, clusterID int64) (string, error) {
-	var rows []struct {
-		URL string `json:"url"`
-	}
-	if err := h.pr.RPC(ctx, "get_cluster_secrets", map[string]any{"cluster_id": clusterID}, &rows); err != nil {
-		return "", err
-	}
-	if len(rows) == 0 || rows[0].URL == "" {
-		return "", fmt.Errorf("cluster url not found")
-	}
-	return rows[0].URL, nil
-}
-
-func (h *Handler) ensurePBUser(ctx context.Context, pb *pocketbase.Client, email string) (string, error) {
-	q := url.Values{}
-	q.Set("filter", fmt.Sprintf(`(email="%s")`, email))
-	var list struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-	}
-	if err := pb.ListRecords(ctx, "users", q, &list); err != nil {
-		return "", err
-	}
-	if len(list.Items) > 0 {
-		return list.Items[0].ID, nil
-	}
-
-	password, err := randomPBPassword()
-	if err != nil {
-		return "", err
-	}
-	var created struct {
-		ID string `json:"id"`
-	}
-	err = pb.CreateRecord(ctx, "users", map[string]any{
-		"username":        strings.ReplaceAll(email, "@", ""),
-		"email":           email,
-		"emailVisibility": true,
-		"password":        password,
-		"passwordConfirm": password,
-		"name":            email,
-	}, &created)
-	if err != nil || created.ID == "" {
-		return "", fmt.Errorf("create pb user failed: %w", err)
-	}
-	return created.ID, nil
-}
-
-func randomPBPassword() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func jobErrorResult(msg string) []byte {

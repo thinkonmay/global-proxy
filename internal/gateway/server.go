@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,9 +33,9 @@ func (s *httpServers) shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func startServers(cfg *config.Config, handler http.Handler) (*httpServers, <-chan error, error) {
+func startServers(cfg *config.Config, handler http.Handler, clientCAs *x509.CertPool) (*httpServers, <-chan error, error) {
 	if cfg.TLS.Enabled {
-		return startTLSServers(cfg, handler)
+		return startTLSServers(cfg, handler, clientCAs)
 	}
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -50,7 +51,7 @@ func startServers(cfg *config.Config, handler http.Handler) (*httpServers, <-cha
 	return &httpServers{http: srv}, errCh, nil
 }
 
-func startTLSServers(cfg *config.Config, handler http.Handler) (*httpServers, <-chan error, error) {
+func startTLSServers(cfg *config.Config, handler http.Handler, clientCAs *x509.CertPool) (*httpServers, <-chan error, error) {
 	cacheDir := cfg.TLS.AutocertCache
 	if cacheDir == "" {
 		cacheDir = ".autocert_cache"
@@ -80,7 +81,7 @@ func startTLSServers(cfg *config.Config, handler http.Handler) (*httpServers, <-
 	httpsSrv := &http.Server{
 		Addr:      ":" + httpsPort,
 		Handler:   handler,
-		TLSConfig: certs.TLSConfig(),
+		TLSConfig: certs.TLSConfigWithClientAuth(clientCAs),
 	}
 
 	httpSrv := &http.Server{

@@ -38,7 +38,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.GET("/billing/addons", h.ListActiveAddons)
 	v1.POST("/billing/addons", h.SubscribeAddon)
 	v1.DELETE("/billing/addons/{addonId}", h.UnsubscribeAddon)
-	v1.GET("/billing/domains", h.Domains)
 	v1.POST("/billing/deposits", h.CreateDeposit)
 	v1.GET("/billing/deposits/{transactionId}", h.DepositStatus)
 	v1.DELETE("/billing/deposits/{transactionId}", h.CancelDeposit)

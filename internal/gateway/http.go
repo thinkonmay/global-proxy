@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
@@ -11,11 +10,12 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterrouting"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/nodeproxy"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
@@ -55,13 +55,14 @@ func newMux(
 	storeH *store.Handler,
 	grants *grant.Handler,
 	filesH *files.Handler,
-	nodeProxy *nodeproxy.Handler,
 	runtimeH *runtime.Handler,
 	personaHTTP *persona.Handler,
 	nodeRuntime *noderuntime.Handler,
 	vaultProxy *vaultproxy.Handler,
 	pwaH *pwa.Handler,
 	volumeH *volume.Handler,
+	metricsIngest *metricsingest.Handler,
+	routingHTTP *clusterrouting.Handler,
 	cfg *config.Config,
 	rt http.RoundTripper,
 	coraza *corazawaf.Middleware,
@@ -73,6 +74,12 @@ func newMux(
 
 	h.Register(mux)
 	volumeH.Register(mux)
+	if metricsIngest != nil {
+		metricsIngest.Register(mux)
+	}
+	if routingHTTP != nil {
+		routingHTTP.Register(mux)
+	}
 	catalogH.Register(mux)
 	otaH.Register(mux)
 	gamificationH.Register(mux)
@@ -81,7 +88,6 @@ func newMux(
 	pwaH.Register(mux)
 	grants.Register(mux)
 	filesH.Register(mux)
-	nodeProxy.Register(mux)
 	runtimeH.Register(mux)
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)
@@ -94,9 +100,7 @@ func newMux(
 	// the client-supplied value. EventSource cannot set headers, so the bearer
 	// token is accepted via ?token= and promoted to Authorization before auth.
 	sseHandler := func(w http.ResponseWriter, r *http.Request) {
-		if tok := strings.TrimSpace(r.URL.Query().Get("token")); tok != "" && r.Header.Get("Authorization") == "" {
-			r.Header.Set("Authorization", "Bearer "+strings.TrimPrefix(tok, "Bearer "))
-		}
+		auth.PromoteQueryToken(r)
 		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
 		if !ok {
 			auth.WriteAuthErr(w, status, msg)

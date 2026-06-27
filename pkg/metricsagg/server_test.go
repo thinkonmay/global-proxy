@@ -23,19 +23,18 @@ func testServer(t *testing.T) (*Server, *miniredis.Miniredis) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
-	return NewServer(cache, "test-secret"), mr
+	return NewServer(cache), mr
 }
 
 func TestPushAndScrape(t *testing.T) {
 	srv, _ := testServer(t)
-	h := srv.Handler()
+	h := srv.ScrapeHandler()
 
 	push := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("cpu_usage 1\n"))
-	push.Header.Set("Authorization", "test-secret")
 	push.Header.Set("node", "worker-a")
 	push.Header.Set("type", "node-exporter")
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, push)
+	srv.HandlePush(rec, push)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("push status = %d, want 202", rec.Code)
 	}
@@ -47,7 +46,7 @@ func TestPushAndScrape(t *testing.T) {
 		t.Fatalf("scrape status = %d", rec.Code)
 	}
 	body, _ := io.ReadAll(rec.Body)
-	if !bytes.Contains(body, []byte("cpu_usage 1")) {
+	if !bytes.Contains(body, []byte(`cpu_usage{node="worker-a"} 1`)) {
 		t.Fatalf("missing pushed metric: %s", body)
 	}
 	if !bytes.Contains(body, []byte(`thinkmay_node_up{node="worker-a"} 1`)) {
@@ -55,34 +54,33 @@ func TestPushAndScrape(t *testing.T) {
 	}
 }
 
-func TestPushUnauthorized(t *testing.T) {
-	srv, _ := testServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("x 1\n"))
-	req.Header.Set("Authorization", "wrong")
-	req.Header.Set("node", "worker-a")
-	req.Header.Set("type", "node-exporter")
+func TestRequireVirtdaemonMTLS(t *testing.T) {
+	called := false
+	handler := RequireVirtdaemonMTLS(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
+	handler(rec, req)
+	if rec.Code != http.StatusUnauthorized || called {
+		t.Fatalf("expected 401 without TLS client cert, got %d called=%v", rec.Code, called)
 	}
 }
 
 func TestInternalNodes(t *testing.T) {
 	srv, _ := testServer(t)
-	h := srv.Handler()
+	h := srv.ScrapeHandler()
 	push := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"Hostname":"worker-a"}`))
-	push.Header.Set("Authorization", "test-secret")
 	push.Header.Set("node", "worker-a")
 	push.Header.Set("type", "info")
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, push)
+	srv.HandlePush(rec, push)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("push status = %d", rec.Code)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/internal/nodes", nil)
-	req.Header.Set("Authorization", "test-secret")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
+	"github.com/thinkonmay/global-proxy/api/pkg/grants"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
@@ -21,37 +22,28 @@ func (h *Handler) handleGrantJob(ctx context.Context, p model.VolumeJobMsg) erro
 	}
 
 	args := map[string]any{"email": p.Email, "domain": domain}
-	var rpcName string
+	var result any
 	switch p.Command {
 	case "grant buckets":
-		rpcName = "grant_bucket_access_v1"
-	case "grant app_access":
-		rpcName = "grant_app_access_v1"
-		if appID := configString(p.Configuration, "app_id"); appID != "" {
-			args["app_id"] = appID
+		cred, err := grants.GrantBucketAccess(ctx, h.pr, h.storj, p.Email, domain)
+		if err != nil {
+			if patchErr := h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error())); patchErr != nil {
+				return patchErr
+			}
+			return nil
 		}
-	case "grant llm":
-		rpcName = "grant_llm_access_v1"
-	case "unmap buckets":
-		rpcName = "unmap_bucket_access_v1"
-	case "unmap app_access":
-		rpcName = "unmap_app_access_v1"
-	case "unmap llm":
-		rpcName = "unmap_llm_access_v1"
-	case "reset app_access":
-		rpcName = "reset_user_app_access_usage_v1"
-	case "reset llm":
-		rpcName = "reset_user_llm_usage_v1"
+		result = cred
 	default:
-		return fmt.Errorf("unsupported grant command %q", p.Command)
-	}
-
-	var result any
-	if err := h.pr.RPC(ctx, rpcName, args, &result); err != nil {
-		if patchErr := h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error())); patchErr != nil {
-			return patchErr
+		rpcName := rpcForGrantCommand(p.Command, p.Configuration, args)
+		if rpcName == "" {
+			return fmt.Errorf("unsupported grant command %q", p.Command)
 		}
-		return nil
+		if err := h.pr.RPC(ctx, rpcName, args, &result); err != nil {
+			if patchErr := h.patchJob(ctx, p.JobID, false, jobErrorResult(err.Error())); patchErr != nil {
+				return patchErr
+			}
+			return nil
+		}
 	}
 
 	respBody, _ := json.Marshal(result)
@@ -59,6 +51,30 @@ func (h *Handler) handleGrantJob(ctx context.Context, p model.VolumeJobMsg) erro
 		respBody = []byte(`{"ok":true}`)
 	}
 	return h.patchJob(ctx, p.JobID, true, respBody)
+}
+
+func rpcForGrantCommand(command string, configuration json.RawMessage, args map[string]any) string {
+	switch command {
+	case "grant app_access":
+		if appID := configString(configuration, "app_id"); appID != "" {
+			args["app_id"] = appID
+		}
+		return "grant_app_access_v1"
+	case "grant llm":
+		return "grant_llm_access_v1"
+	case "unmap buckets":
+		return "unmap_bucket_access_v1"
+	case "unmap app_access":
+		return "unmap_app_access_v1"
+	case "unmap llm":
+		return "unmap_llm_access_v1"
+	case "reset app_access":
+		return "reset_user_app_access_usage_v1"
+	case "reset llm":
+		return "reset_user_llm_usage_v1"
+	default:
+		return ""
+	}
 }
 
 func configString(raw json.RawMessage, key string) string {

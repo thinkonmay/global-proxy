@@ -1,18 +1,15 @@
 package runtime
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterproxy"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/testsupport"
+	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
 func testGoTrueJWT(t *testing.T, secret, userID, email string) string {
@@ -31,56 +28,47 @@ func testGoTrueJWT(t *testing.T, secret, userID, email string) string {
 	return s
 }
 
-func TestRuntimeForwardInfo(t *testing.T) {
-	const secret = "test-p2p-secret"
-	const jwtSecret = "gotrue-test-secret"
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(clusterproxy.InternalHeader) != "1" {
-			t.Fatalf("missing internal header")
-		}
-		if r.Header.Get(clusterproxy.SecretHeader) != secret {
-			t.Fatalf("missing secret")
-		}
-		if r.Header.Get(clusterproxy.UserEmailHeader) != "user@test.net" {
-			t.Fatalf("email: %q", r.Header.Get(clusterproxy.UserEmailHeader))
-		}
-		if r.URL.Path != "/info" {
-			t.Fatalf("path: %s", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]string{"Hostname": "node1"})
-	}))
-	defer upstream.Close()
-
-	host := upstream.URL
-	auth.ConfigureClusterRegistry(testsupport.TestIssuerRegistry(host, host))
-	auth.ConfigureGoTrueAuth(jwtSecret)
-
-	h := New(secret, nil)
+func TestRuntimeRequiresDaemon(t *testing.T) {
+	auth.ConfigureGoTrueAuth("gotrue-test-secret")
+	h := New(Config{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info?cluster="+url.QueryEscape(host), nil)
-	req.Header.Set("Authorization", "Bearer "+testGoTrueJWT(t, jwtSecret, "sub-1", "user@test.net"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info", nil)
+	req.Header.Set("Authorization", "Bearer "+testGoTrueJWT(t, "gotrue-test-secret", "sub-1", "user@test.net"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRuntimeNotImplemented(t *testing.T) {
+	auth.ConfigureGoTrueAuth("secret")
+	h := New(Config{})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/runtime/resize", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d", rec.Code)
+	}
+}
+
+func TestRuntimeKeepalive(t *testing.T) {
+	h := New(Config{PostgREST: postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"})})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/runtime/keepalive?id=42", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestRuntimeMissingCluster(t *testing.T) {
-	h := New("", nil)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info?cluster=", nil)
-	req.Header.Set("Authorization", "Bearer test")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
+		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }

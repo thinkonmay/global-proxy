@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/pkg/metricsagg"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
@@ -69,7 +70,7 @@ func (h *Handler) Manifest(w http.ResponseWriter, r *http.Request) {
 		h.manifestBinary(w, r, binaryName)
 		return
 	}
-	h.manifestNode(w, r)
+	metricsagg.RequireVirtdaemonMTLS(h.manifestNode)(w, r)
 }
 
 func (h *Handler) manifestNode(w http.ResponseWriter, r *http.Request) {

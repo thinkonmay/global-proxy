@@ -2,7 +2,6 @@ package pwa
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
@@ -31,8 +30,7 @@ func New(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, persona 
 	}
 	return &Handler{
 		pr:      pr,
-		pbURL:   strings.TrimRight(cfg.PocketBase.URL, "/"),
-		pbAdmin: pocketbase.New(pocketbase.Config{URL: cfg.PocketBase.URL, Username: cfg.PocketBase.Username, Password: cfg.PocketBase.Password, Transport: rt}),
+		pbAdmin: pocketbase.New(pocketbase.Config{Transport: rt}),
 		persona: persona,
 		llm:     cfg.LLM,
 		httpClient: &http.Client{
@@ -59,6 +57,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		{http.MethodPost, "/update_code_name", h.UpdateCodeName},
 		{http.MethodPost, "/search", h.Search},
 		{http.MethodGet, "/persona/recommendations", h.persona.GetRecommendations},
+		{http.MethodGet, "/volumes", h.Volumes},
 	}
 	// Canonical /api/pwa/* plus legacy /api/* aliases.
 	pwaGroup := router.New(mux, "/api/pwa")

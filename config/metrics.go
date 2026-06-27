@@ -2,11 +2,10 @@ package config
 
 // Metrics configures the push ingest → Redis cache → Prometheus scrape aggregator (D16).
 type Metrics struct {
-	RedisURL             string `mapstructure:"redisUrl"`
-	CacheTTLSeconds      int    `mapstructure:"cacheTTLSeconds"`
-	ScrapeCacheSeconds   int    `mapstructure:"scrapeCacheSeconds"`
-	IngestSecret         string `mapstructure:"ingestSecret"`
-	ListenAddr           string `mapstructure:"listenAddr"`
+	RedisURL           string `mapstructure:"redisUrl"`
+	CacheTTLSeconds    int    `mapstructure:"cacheTTLSeconds"`
+	ScrapeCacheSeconds int    `mapstructure:"scrapeCacheSeconds"`
+	ListenAddr         string `mapstructure:"listenAddr"`
 }
 
 func mergeMetricsDefaults(cfg *Config) {

@@ -29,7 +29,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.POST("/app-access/steam/claim", h.SteamClaim)
 	v1.POST("/app-access/steam/unclaim", h.SteamUnclaim)
 	v1.POST("/node/keepalive", h.Keepalive)
-	v1.POST("/node/volumes/sync", h.SyncVolume)
 }
 
 func (h *Handler) requireServiceKey(r *http.Request) bool {
@@ -123,37 +122,4 @@ func (h *Handler) Keepalive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-func (h *Handler) SyncVolume(w http.ResponseWriter, r *http.Request) {
-	if !h.requireServiceKey(r) {
-		h.writeServiceKeyErr(w)
-		return
-	}
-	var body struct {
-		Email         string `json:"email"`
-		VolumeID      string `json:"volume_id"`
-		ClusterDomain string `json:"cluster_domain"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.Email == "" || body.VolumeID == "" || body.ClusterDomain == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "email, volume_id, and cluster_domain required")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), nodeRuntimeTimeout)
-	defer cancel()
-
-	var out json.RawMessage
-	if err := h.pr.RPC(ctx, "sync_volume_data_v1", map[string]any{
-		"email":          body.Email,
-		"volume_id":      body.VolumeID,
-		"cluster_domain": body.ClusterDomain,
-	}, &out); err != nil {
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
-	httpx.WriteData(w, out)
 }

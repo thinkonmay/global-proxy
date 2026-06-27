@@ -16,19 +16,16 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Admin.SigningSecret, "APP_ADMIN_SIGNINGSECRET")
 	setEnvString(&cfg.Admin.Resend.APIKey, "APP_ADMIN_RESEND_APIKEY")
 	setEnvString(&cfg.Admin.Resend.From, "APP_ADMIN_RESEND_FROM")
-	setEnvString(&cfg.PocketBase.URL, "APP_POCKETBASE_URL")
-	setEnvString(&cfg.PocketBase.IssuerHost, "APP_POCKETBASE_ISSUERHOST")
-	// When issuer host is unset, default to the public PB_URL workers/clients use.
-	if cfg.PocketBase.IssuerHost == "" {
-		setEnvString(&cfg.PocketBase.IssuerHost, "PB_URL")
+	setEnvString(&cfg.Runtime.Grpc.HomeIssuerHost, "CLUSTER_HOME_DOMAIN")
+	if cfg.Runtime.Grpc.HomeIssuerHost == "" {
+		setEnvString(&cfg.Runtime.Grpc.HomeIssuerHost, "GATEWAY_PUBLIC_HOST")
 	}
-	setEnvString(&cfg.PocketBase.Username, "APP_POCKETBASE_USERNAME")
-	setEnvString(&cfg.PocketBase.Password, "APP_POCKETBASE_PASSWORD")
 	setEnvString(&cfg.LLM.BaseURL, "APP_LLM_BASEURL")
 	setEnvString(&cfg.LLM.APIKey, "APP_LLM_APIKEY")
 	setEnvString(&cfg.Storj.AccessGrant, "APP_STORJ_ACCESSGRANT")
-	setEnvString(&cfg.Runtime.ClusterSecret, "APP_RUNTIME_CLUSTER_SECRET")
-	setEnvString(&cfg.Metrics.IngestSecret, "APP_METRICS_INGESTSECRET")
+	setEnvString(&cfg.Runtime.Grpc.VaultPassword, "VAULT_VIRTDAEMON_PASSWORD")
+	setEnvString(&cfg.Runtime.Grpc.HomeOverride, "APP_RUNTIME_GRPC_HOME")
+	setEnvString(&cfg.Runtime.Grpc.HomeServerName, "APP_RUNTIME_GRPC_SERVERNAME")
 	setEnvString(&cfg.ClickHouse.Addr, "APP_CLICKHOUSE_ADDR")
 	setEnvString(&cfg.ClickHouse.Database, "APP_CLICKHOUSE_DATABASE")
 	setEnvString(&cfg.ClickHouse.Username, "APP_CLICKHOUSE_USERNAME")

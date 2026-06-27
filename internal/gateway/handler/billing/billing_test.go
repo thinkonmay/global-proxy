@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
@@ -186,15 +187,17 @@ func TestBillingListActiveAddonsWithGoTrueToken(t *testing.T) {
 	}
 }
 
-func TestBillingDomainsPublic(t *testing.T) {
+func TestBillingListActiveAddonsNoSubscription(t *testing.T) {
+	const secret = "gotrue-test-secret"
+	auth.ConfigureGoTrueAuth(secret)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rpc/get_domains_availability_v5" {
+		if r.URL.Path != "/rpc/get_active_addons" {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"domain": "haiphong.thinkmay.net", "routing_only": false},
-		})
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":"P0001","message":"email do not have any subscription"}`))
 	}))
 	defer srv.Close()
 
@@ -203,21 +206,16 @@ func TestBillingDomainsPublic(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/billing/domains", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/billing/addons", nil)
+	req.Header.Set("Authorization", "Bearer "+testsupport.GoTrueJWT(t, secret, "u1", "nosub@example.com"))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body: %s", rec.Code, rec.Body.String())
 	}
-	var out struct {
-		Data []map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if len(out.Data) != 1 || out.Data[0]["domain"] != "haiphong.thinkmay.net" {
-		t.Fatalf("unexpected body: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"data":[]`) {
+		t.Fatalf("expected empty data array, got: %s", rec.Body.String())
 	}
 }
 
