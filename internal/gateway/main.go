@@ -35,6 +35,7 @@ import (
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
@@ -96,7 +97,12 @@ func Run() error {
 	gamificationHTTP := gamification.New(pr, bt, usageQ)
 	billingHTTP := billing.New(pr, bt, payReg, payRates)
 	storeHTTP := store.New(pr, bt)
-	grants := grant.New(*cfg, pr, bt)
+	storjClient := storj.TryOpen(cfg.Storj.AccessGrant)
+	if storjClient != nil {
+		defer storjClient.Close()
+	}
+
+	grantsHTTP := grant.New(pr, storjClient)
 	filesHTTP := files.New(*cfg, pr, bt)
 
 	if cfg.Upstreams.Vault == "" {
@@ -123,6 +129,7 @@ func Run() error {
 		Transport: bt,
 		Daemon:    daemonGRPC,
 		PostgREST: pr,
+		Storj:     storjClient,
 	})
 	personaHTTP := persona.New(pr, bt)
 	nodeRuntimeHTTP := noderuntime.New(pr, cfg.PostgREST.ServiceKey)
@@ -146,7 +153,7 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
 	if err != nil {

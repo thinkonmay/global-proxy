@@ -7,7 +7,7 @@ import "testing"
 // dependency-free (sub-constructors only stash their args), so nil deps are
 // enough to exercise the wiring.
 func TestNewHandlerWiresAllDomains(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, nil)
+	h := NewHandler(nil, nil, nil, nil, nil, nil)
 	if h == nil {
 		t.Fatal("NewHandler returned nil")
 	}

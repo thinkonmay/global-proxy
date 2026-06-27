@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
@@ -20,7 +19,7 @@ func TestStorageGrantSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := New(config.Config{}, postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil)
+	h := New(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -41,7 +40,7 @@ func TestStorageGrantSuccess(t *testing.T) {
 }
 
 func TestStorageGrantMissingParams(t *testing.T) {
-	h := New(config.Config{}, postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil)
+	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -55,7 +54,7 @@ func TestStorageGrantMissingParams(t *testing.T) {
 }
 
 func TestStorageGrantGlobalUnavailable(t *testing.T) {
-	h := New(config.Config{}, postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil)
+	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

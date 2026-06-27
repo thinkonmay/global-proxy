@@ -20,6 +20,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
@@ -33,11 +34,11 @@ type Handler struct {
 	persona  *persona.Handler
 }
 
-func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client, dc *daemonclient.Client) *Handler {
+func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client) *Handler {
 	return &Handler{
 		eventBus: eventBus,
 		pr:       pr,
-		volume:   volume.New(idem, pr, dc),
+		volume:   volume.New(idem, pr, dc, st),
 		payment:  payment.New(idem, pr),
 		usage:    usage.New(ch, pr, eventBus),
 		persona:  persona.New(pr),

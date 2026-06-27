@@ -15,6 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	runtimepkg "github.com/thinkonmay/global-proxy/api/pkg/runtime"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/pkg/workerinfor"
 )
 
@@ -29,6 +30,7 @@ type Config struct {
 	Transport http.RoundTripper
 	Daemon    *daemonclient.Client
 	PostgREST *postgrest.Client
+	Storj     *storj.Client
 }
 
 // Handler serves node runtime REST at /v1/runtime/* via virtdaemon gRPC only (D25).
@@ -43,7 +45,7 @@ func New(cfg Config) *Handler {
 	return &Handler{
 		cfg:      cfg,
 		tickets:  runtimepkg.NewTickets(),
-		sessions: runtimepkg.NewSessionBuilder(cfg.PostgREST, cfg.PublicURL),
+		sessions: runtimepkg.NewSessionBuilder(cfg.PostgREST, cfg.PublicURL, cfg.Storj),
 	}
 }
 

@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"log/slog"
-	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -11,7 +10,9 @@ import (
 	"github.com/thinkonmay/thinkshare-daemon/persistent"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
+	"github.com/thinkonmay/global-proxy/api/pkg/grants"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 )
 
 const grantTimeout = 2 * time.Second
@@ -20,11 +21,16 @@ const grantTimeout = 2 * time.Second
 type SessionBuilder struct {
 	pr        *postgrest.Client
 	publicURL string
+	storj     *storj.Client
 }
 
 // NewSessionBuilder creates a session builder.
-func NewSessionBuilder(pr *postgrest.Client, publicURL string) *SessionBuilder {
-	return &SessionBuilder{pr: pr, publicURL: strings.TrimRight(strings.TrimSpace(publicURL), "/")}
+func NewSessionBuilder(pr *postgrest.Client, publicURL string, st *storj.Client) *SessionBuilder {
+	return &SessionBuilder{
+		pr:        pr,
+		publicURL: strings.TrimRight(strings.TrimSpace(publicURL), "/"),
+		storj:     st,
+	}
 }
 
 // Prepare validates volume ownership and hydrates storage/app sessions for /new.
@@ -46,9 +52,9 @@ func (b *SessionBuilder) Prepare(ctx context.Context, email string, session *per
 	}
 	domain := httpx.ClusterHost(info.Domain)
 
+	b.attachKeepalive(session)
 	b.attachStorageGrant(ctx, session, email, domain)
 	b.attachAppGrant(ctx, session, email, domain)
-	b.attachKeepalive(session)
 	return clusterID, nil
 }
 
@@ -58,11 +64,8 @@ func (b *SessionBuilder) attachStorageGrant(ctx context.Context, session *persis
 	}
 	ctx, cancel := context.WithTimeout(ctx, grantTimeout)
 	defer cancel()
-	var cred map[string]any
-	if err := b.pr.RPC(ctx, "grant_bucket_access_v1", map[string]any{
-		"email":  email,
-		"domain": domain,
-	}, &cred); err != nil {
+	cred, err := grants.GrantBucketAccess(ctx, b.pr, b.storj, email, domain)
+	if err != nil {
 		slog.Warn("storage grant failed (fail-open)", "err", err)
 		return
 	}
@@ -78,6 +81,9 @@ func (b *SessionBuilder) attachStorageGrant(ctx context.Context, session *persis
 	if endpoint, ok := cred["endpoint"].(string); ok {
 		session.S3Bucket.Endpoint = endpoint
 	}
+	if token, ok := cred["token"].(string); ok {
+		session.S3Bucket.Token = token
+	}
 }
 
 func (b *SessionBuilder) attachAppGrant(ctx context.Context, session *persistent.WorkerSession, email, domain string) {
@@ -86,23 +92,19 @@ func (b *SessionBuilder) attachAppGrant(ctx context.Context, session *persistent
 	}
 	ctx, cancel := context.WithTimeout(ctx, grantTimeout)
 	defer cancel()
-	args := map[string]any{"email": email, "domain": domain}
-	if session.App.Appid != "" {
-		args["app_id"] = session.App.Appid
-	}
-	var cred map[string]any
-	if err := b.pr.RPC(ctx, "grant_app_access_v1", args, &cred); err != nil {
+	claim, err := grants.GrantAndClaimApp(ctx, b.pr, email, domain, session.App.Appid)
+	if err != nil {
 		slog.Warn("app grant failed (fail-open)", "err", err)
 		return
 	}
-	if u, ok := cred["username"].(string); ok {
-		session.App.Username = u
+	if claim.AppID != "" {
+		session.App.Appid = claim.AppID
 	}
-	if c, ok := cred["credential"].(string); ok {
-		session.App.Credential = c
-	}
-	if sid, ok := cred["session_id"].(string); ok {
-		session.App.SessionId = sid
+	session.App.Username = claim.Username
+	session.App.Credential = claim.Password
+	session.App.Depotkey = claim.DepotKey
+	if session.App.Keepalive != nil && claim.KeepaliveID > 0 {
+		session.App.Keepalive.KeepaliveID = claim.KeepaliveID
 	}
 }
 
@@ -116,14 +118,14 @@ func (b *SessionBuilder) attachKeepalive(session *persistent.WorkerSession) {
 		session.S3Bucket.Keepalive = &persistent.Keepalive{
 			KeepaliveUrl:        url,
 			KeepaliveCredential: uuid.NewString(),
-			KeepaliveID:         rand.Int32(),
+			KeepaliveID:         0,
 		}
 	}
 	if session.App != nil {
 		session.App.Keepalive = &persistent.Keepalive{
 			KeepaliveUrl:        url,
 			KeepaliveCredential: uuid.NewString(),
-			KeepaliveID:         rand.Int32(),
+			KeepaliveID:         0,
 		}
 	}
 }

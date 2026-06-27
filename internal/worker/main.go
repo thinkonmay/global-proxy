@@ -20,6 +20,7 @@ import (
 
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
 	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 )
 
 func main() {
@@ -85,10 +86,15 @@ func main() {
 		}
 	}
 
+	storjClient := storj.TryOpen(cfg.Storj.AccessGrant)
+	if storjClient != nil {
+		defer storjClient.Close()
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := NewHandler(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, dc)
+	h := NewHandler(idempotency.New(idempotency.NewPostgrestStore(pr)), eventBus, ch, pr, dc, storjClient)
 	h.Init()
 	h.StartJobPoller(ctx, slog.Default())
 	if err := h.StartUsageCollector(ctx, cfg, slog.Default()); err != nil {

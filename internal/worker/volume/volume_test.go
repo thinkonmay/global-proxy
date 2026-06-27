@@ -73,7 +73,7 @@ func newTestHandler(t *testing.T, extra func(w http.ResponseWriter, r *http.Requ
 	}))
 	t.Cleanup(prSrv.Close)
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	return New(idempotency.New(idempotency.NewMemStore()), pr, nil), &mu, jobPatch
+	return New(idempotency.New(idempotency.NewMemStore()), pr, nil, nil), &mu, jobPatch
 }
 
 func TestVolumeHandlerCreateVolume(t *testing.T) {
@@ -205,7 +205,7 @@ func TestVolumeHandlerGrantJob(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil, nil)
 
 	err := vh.handle(context.Background(), model.VolumeJobMsg{
 		RequestID: "req-grant",
@@ -258,7 +258,7 @@ func TestVolumeHandlerResetAppAccessJob(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil, nil)
 
 	err := vh.handle(context.Background(), model.VolumeJobMsg{
 		RequestID: "req-reset",
@@ -301,7 +301,7 @@ func TestVolumeHandlerSkipsUnknownCommand(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil, nil)
 	err := vh.handle(context.Background(), model.VolumeJobMsg{RequestID: "req-unknown", Command: "unknown"})
 	if err != nil {
 		t.Fatalf("expected nil for unknown command, got %v", err)
@@ -316,7 +316,7 @@ func TestVolumeHandlerSkipsUnknownCommand(t *testing.T) {
 func TestInitSubscribesVolumeTopic(t *testing.T) {
 	bus := busmemory.New(nil)
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"})
-	h := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
+	h := New(idempotency.New(idempotency.NewMemStore()), pr, nil, nil)
 	h.Init(bus)
 
 	err := bus.Publish(context.Background(), model.TopicVolumeJob.Name, []byte(`{"command":"unknown","request_id":"req-init"}`))
@@ -344,7 +344,7 @@ func TestVolumeHandlerSkipsDuplicateDelivery(t *testing.T) {
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
 	store := idempotency.NewMemStore()
-	vh := New(idempotency.New(store), pr, nil)
+	vh := New(idempotency.New(store), pr, nil, nil)
 
 	msg := model.VolumeJobMsg{RequestID: "req-dup", Command: "unknown"}
 	if err := vh.handle(context.Background(), msg); err != nil {
@@ -407,7 +407,7 @@ func TestVolumeHandlerRecoversExistingJobOnRetry(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil, nil)
 
 	msg := model.VolumeJobMsg{
 		RequestID: "req-retry",
@@ -426,5 +426,51 @@ func TestVolumeHandlerRecoversExistingJobOnRetry(t *testing.T) {
 	}
 	if jobPatch == nil || jobPatch["success"] != true {
 		t.Fatalf("job patch after retry: %v", jobPatch)
+	}
+}
+
+func TestVolumeHandlerGrantBuckets(t *testing.T) {
+	var mu sync.Mutex
+	var jobPatch map[string]any
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case jobInsert(w, r, 77):
+			return
+		case r.URL.Path == "/rpc/grant_bucket_access_v1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"bucket_name": "user-bucket"})
+			return
+		case r.URL.Path == "/clusters" && strings.Contains(r.URL.RawQuery, "id=eq."):
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 3, "domain": "test.thinkmay.net"}})
+			return
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job"):
+			_ = json.NewDecoder(r.Body).Decode(&jobPatch)
+			mu.Lock()
+			w.WriteHeader(http.StatusNoContent)
+			mu.Unlock()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer prSrv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil, nil)
+	err := vh.handle(context.Background(), model.VolumeJobMsg{
+		RequestID: "req-grant-buckets",
+		Command:   "grant buckets",
+		ClusterID: 3,
+		Arguments: rawArgs(t, map[string]any{"email": "u@example.com"}),
+	})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if jobPatch == nil || jobPatch["success"] != true {
+		t.Fatalf("job patch: %v", jobPatch)
+	}
+	result, ok := jobPatch["result"].(map[string]any)
+	if !ok || result["bucket_name"] != "user-bucket" {
+		t.Fatalf("result: %v", jobPatch["result"])
 	}
 }

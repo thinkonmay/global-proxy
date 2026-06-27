@@ -15,20 +15,23 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
 type Handler struct {
-	idem *idempotency.Guard
-	pr   *postgrest.Client
-	dc   *daemonclient.Client
+	idem  *idempotency.Guard
+	pr    *postgrest.Client
+	dc    *daemonclient.Client
+	storj *storj.Client
 }
 
-func New(idem *idempotency.Guard, pr *postgrest.Client, dc *daemonclient.Client) *Handler {
+func New(idem *idempotency.Guard, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client) *Handler {
 	return &Handler{
-		idem: idem,
-		pr:   pr,
-		dc:   dc,
+		idem:  idem,
+		pr:    pr,
+		dc:    dc,
+		storj: st,
 	}
 }
 
