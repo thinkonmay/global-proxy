@@ -112,10 +112,24 @@ type Gateway struct {
 	PublicURL string `mapstructure:"publicURL"`
 }
 
-// Runtime configures gateway→cluster runtime proxy (Track C3 transitional HTTP shim).
+// Runtime configures gateway→cluster runtime (Track C3).
 type Runtime struct {
-	// ClusterSecret must match cluster.yaml p2pcred on worker nodes.
+	// ClusterSecret must match cluster.yaml p2pcred on worker nodes (HTTP proxy fallback).
 	ClusterSecret string `mapstructure:"clusterSecret"`
+	// Grpc enables mTLS virtdaemon gRPC for GET /v1/runtime/info (D25/D26).
+	Grpc RuntimeGrpc `mapstructure:"grpc"`
+}
+
+// RuntimeGrpc configures gateway→cluster-master persistent.Daemon gRPC.
+type RuntimeGrpc struct {
+	Enabled        bool   `mapstructure:"enabled"`
+	Port           int    `mapstructure:"port"`
+	ClientCN       string `mapstructure:"clientCN"`
+	PKIMount       string `mapstructure:"pkiMount"`
+	PKIRole        string `mapstructure:"pkiRole"`
+	HomeIssuerHost string `mapstructure:"homeIssuerHost"`
+	HomeOverride   string `mapstructure:"homeOverride"`
+	VaultPassword  string `mapstructure:"vaultPassword"`
 }
 
 // Storj configures the global uplink access grant for user bucket file APIs.

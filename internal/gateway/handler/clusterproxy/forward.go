@@ -41,7 +41,7 @@ func Forward(w http.ResponseWriter, r *http.Request, opts ForwardOpts) {
 		defer cancel()
 		var status int
 		var msg string
-		email, _, status, msg = auth.Validate(ctx, authHeader, opts.Transport)
+		email, _, status, msg = auth.ValidateRequest(ctx, r, opts.Transport)
 		if status != 0 {
 			httpx.WriteError(w, status, msg)
 			return

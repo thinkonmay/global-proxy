@@ -15,6 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
 	"github.com/thinkonmay/global-proxy/api/pkg/gotrue"
+	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
@@ -82,41 +83,88 @@ func AuthErrFromValidate(err error) (status int, msg string) {
 	return http.StatusUnauthorized, "auth failed"
 }
 
-// RequireUser validates the GoTrue JWT and returns the user email.
-func RequireUser(ctx context.Context, r *http.Request, _ http.RoundTripper) (email string, ok bool, status int, msg string) {
+// RequireUser validates GoTrue JWT or a legacy PocketBase users token (virtdaemon)
+// and returns the user email.
+func RequireUser(ctx context.Context, r *http.Request, rt http.RoundTripper) (email string, ok bool, status int, msg string) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	if authHeader == "" {
 		return "", false, http.StatusUnauthorized, "authorization required"
 	}
-	if gotrueUserAuth == nil {
-		return "", false, http.StatusServiceUnavailable, "auth not configured"
-	}
-	ctx, cancel := context.WithTimeout(ctx, authTimeout)
-	defer cancel()
-	a, err := gotrueUserAuth.Validate(ctx, authHeader)
-	if err != nil {
-		status, msg = AuthErrFromValidate(err)
+	email, userID, status, msg := resolveUser(ctx, r, authHeader, rt)
+	if status != 0 {
 		return "", false, status, msg
 	}
-	linkAuthUser(ctx, a.UserID, a.Email)
-	return a.Email, true, 0, ""
+	if userID != "" {
+		linkAuthUser(ctx, userID, email)
+	}
+	return email, true, 0, ""
 }
 
-// Validate authenticates a GoTrue token and returns email and user id.
-// status 0 == ok. rt is unused (kept for call-site compatibility).
-func Validate(ctx context.Context, authHeader string, _ http.RoundTripper) (email, userID string, status int, msg string) {
-	if gotrueUserAuth == nil {
-		return "", "", http.StatusServiceUnavailable, "auth not configured"
+// ValidateRequest authenticates the request Authorization header (GoTrue or PocketBase).
+func ValidateRequest(ctx context.Context, r *http.Request, rt http.RoundTripper) (email, userID string, status int, msg string) {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authHeader == "" {
+		return "", "", http.StatusUnauthorized, "authorization required"
 	}
-	ctx, cancel := context.WithTimeout(ctx, authTimeout)
+	return resolveUser(ctx, r, authHeader, rt)
+}
+
+// Validate authenticates a GoTrue JWT or legacy PocketBase users token.
+// status 0 == ok. Prefer ValidateRequest when ?cluster= / ?issuer= are required for PB tokens.
+func Validate(ctx context.Context, authHeader string, rt http.RoundTripper) (email, userID string, status int, msg string) {
+	authHeader = strings.TrimSpace(authHeader)
+	if authHeader == "" {
+		return "", "", http.StatusUnauthorized, "authorization required"
+	}
+	return resolveUser(ctx, nil, authHeader, rt)
+}
+
+// resolveUser tries GoTrue first, then PocketBase auth-refresh on the cluster issuer.
+func resolveUser(ctx context.Context, r *http.Request, authHeader string, rt http.RoundTripper) (email, userID string, status int, msg string) {
+	if gotrueUserAuth != nil {
+		ctxGT, cancel := context.WithTimeout(ctx, authTimeout)
+		a, err := gotrueUserAuth.Validate(ctxGT, authHeader)
+		cancel()
+		if err == nil {
+			return a.Email, a.UserID, 0, ""
+		}
+		if !errors.Is(err, gotrue.ErrInvalidToken) && !errors.Is(err, gotrue.ErrEmptyToken) {
+			status, msg = AuthErrFromValidate(err)
+			return "", "", status, msg
+		}
+	}
+
+	issuerRaw := ""
+	if r != nil {
+		issuerRaw = IssuerFromRequest(r)
+		if issuerRaw == "" {
+			issuerRaw = strings.TrimSpace(r.URL.Query().Get("cluster"))
+		}
+	}
+	if issuerRaw == "" {
+		if gotrueUserAuth == nil {
+			return "", "", http.StatusServiceUnavailable, "auth not configured"
+		}
+		return "", "", http.StatusUnauthorized, "auth failed"
+	}
+	if clusterIssuers == nil {
+		if gotrueUserAuth == nil {
+			return "", "", http.StatusServiceUnavailable, "auth not configured"
+		}
+		return "", "", http.StatusUnauthorized, "auth failed"
+	}
+
+	fetchURL, code, errMsg := ResolveClusterURL(ctx, issuerRaw)
+	if code != 0 {
+		return "", "", code, errMsg
+	}
+	ctxPB, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
-	a, err := gotrueUserAuth.Validate(ctx, authHeader)
+	email, err := pocketbase.UserEmailFromRefresh(ctxPB, fetchURL, authHeader, rt)
 	if err != nil {
-		status, msg = AuthErrFromValidate(err)
-		return "", "", status, msg
+		return "", "", http.StatusUnauthorized, "auth failed"
 	}
-	linkAuthUser(ctx, a.UserID, a.Email)
-	return a.Email, a.UserID, 0, ""
+	return email, "", 0, ""
 }
 
 // linkAuthUser upserts identity.app_user for the GoTrue subject (best-effort).

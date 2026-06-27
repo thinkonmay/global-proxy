@@ -34,6 +34,9 @@ ci_gateway_test_packages() {
 ./pkg/payment/payos
 ./pkg/payment/payermax
 ./pkg/cluster
+./pkg/daemonclient
+./pkg/vaultpki
+./pkg/workerinfor
 ./pkg/gotrue
 ./pkg/certmanager
 ./pkg/guard

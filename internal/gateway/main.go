@@ -31,6 +31,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
+	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
@@ -99,7 +100,32 @@ func Run() error {
 	grants := grant.New(*cfg, pr, bt)
 	filesHTTP := files.New(*cfg, pr, bt)
 	nodeProxy := nodeproxy.New(cfg.Runtime.ClusterSecret, bt)
-	runtimeHTTP := runtime.New(cfg.Runtime.ClusterSecret, bt)
+
+	var daemonGRPC *daemonclient.Client
+	if cfg.Runtime.Grpc.Enabled || cfg.Runtime.Grpc.VaultPassword != "" {
+		if cfg.Upstreams.Vault == "" {
+			slog.Warn("runtime gRPC disabled: upstreams.vault not configured")
+		} else {
+			dc, err := daemonclient.New(context.Background(), daemonclient.Config{
+				VaultURL:         cfg.Upstreams.Vault,
+				VaultPassword:    cfg.Runtime.Grpc.VaultPassword,
+				VaultGatewayKey:  cfg.PostgREST.ServiceKey,
+				ClientCN:         cfg.Runtime.Grpc.ClientCN,
+				PKIMount:         cfg.Runtime.Grpc.PKIMount,
+				PKIRole:          cfg.Runtime.Grpc.PKIRole,
+				GrpcPort:         cfg.Runtime.Grpc.Port,
+				HomeIssuerHost:   cfg.Runtime.Grpc.HomeIssuerHost,
+				HomeGrpcOverride: cfg.Runtime.Grpc.HomeOverride,
+			}, pr)
+			if err != nil {
+				return fmt.Errorf("daemon gRPC client: %w", err)
+			}
+			daemonGRPC = dc
+			defer func() { _ = dc.Close() }()
+		}
+	}
+
+	runtimeHTTP := runtime.New(cfg.Runtime.ClusterSecret, bt, daemonGRPC)
 	personaHTTP := persona.New(pr, bt)
 	nodeRuntimeHTTP := noderuntime.New(pr, cfg.PostgREST.ServiceKey)
 	vaultProxyHTTP := vaultproxy.New(cfg.Upstreams.Vault, cfg.PostgREST.ServiceKey, bt)

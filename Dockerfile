@@ -1,10 +1,18 @@
-# Multi-stage build for both Go binaries in this module.
-# Pick which one with: --build-arg CMD=gateway   (or CMD=worker, scheduler)
+# Build from repo root (docker-compose build.context: .).
+# gateway/go.mod: replace github.com/thinkonmay/thinkshare-daemon => ../worker/daemon
 FROM golang:1.26 AS build
+
 WORKDIR /src
-COPY go.mod go.sum ./
+
+COPY worker/daemon/go.mod worker/daemon/go.sum ./worker/daemon/
+COPY gateway/go.mod gateway/go.sum ./gateway/
+
+WORKDIR /src/gateway
 RUN go mod download
-COPY . .
+
+COPY worker/daemon /src/worker/daemon
+COPY gateway /src/gateway
+
 ARG CMD=gateway
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/app ./internal/${CMD}
 

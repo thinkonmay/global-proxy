@@ -56,7 +56,7 @@ func TestRuntimeForwardInfo(t *testing.T) {
 	auth.ConfigureClusterRegistry(testsupport.TestIssuerRegistry(host, host))
 	auth.ConfigureGoTrueAuth(jwtSecret)
 
-	h := New(secret, nil)
+	h := New(secret, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -70,8 +70,56 @@ func TestRuntimeForwardInfo(t *testing.T) {
 	}
 }
 
+func TestRuntimeForwardInfoWithPocketBaseToken(t *testing.T) {
+	const secret = "test-p2p-secret"
+	const jwtSecret = "gotrue-test-secret"
+
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/collections/users/auth-refresh":
+			if r.Header.Get("Authorization") != "Bearer legacy-pb-token" {
+				t.Fatalf("auth-refresh Authorization = %q", r.Header.Get("Authorization"))
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"token":"refreshed","record":{"email":"pb-user@test.net"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/info":
+			if r.Header.Get(clusterproxy.InternalHeader) != "1" {
+				t.Fatalf("missing internal header")
+			}
+			if r.Header.Get(clusterproxy.SecretHeader) != secret {
+				t.Fatalf("missing secret")
+			}
+			if r.Header.Get(clusterproxy.UserEmailHeader) != "pb-user@test.net" {
+				t.Fatalf("email: %q", r.Header.Get(clusterproxy.UserEmailHeader))
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{"Hostname": "node1"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer issuer.Close()
+
+	host := issuer.URL
+	auth.ConfigureClusterRegistry(testsupport.TestIssuerRegistry(host, host))
+	auth.ConfigureGoTrueAuth(jwtSecret)
+
+	h := New(secret, nil, nil)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info?cluster="+url.QueryEscape(host), nil)
+	req.Header.Set("Authorization", "Bearer legacy-pb-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRuntimeMissingCluster(t *testing.T) {
-	h := New("", nil)
+	h := New("", nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
