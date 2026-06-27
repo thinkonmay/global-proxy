@@ -10,7 +10,6 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	corepersona "github.com/thinkonmay/global-proxy/api/pkg/persona"
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
@@ -39,9 +38,7 @@ func (h *Handler) Start(ctx context.Context, cfg *config.Config, log *slog.Logge
 		return fmt.Errorf("persona.rybbitMinSpacing: %w", err)
 	}
 
-	pb := pocketbase.New(pocketbase.Config{})
-
-	worker, err := corepersona.NewWorker(h.pr, pb, corepersona.Config{
+	worker, err := corepersona.NewWorker(h.pr, corepersona.Config{
 		Every:            every,
 		MaxBatch:         pc.MaxBatch,
 		Concurrent:       pc.Concurrent,

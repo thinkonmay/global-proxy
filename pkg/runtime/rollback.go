@@ -12,9 +12,26 @@ func RollbackLeases(ctx context.Context, pr *postgrest.Client, session *persiste
 	if pr == nil || session == nil {
 		return
 	}
-	if session.App != nil && session.App.Keepalive != nil && session.App.Keepalive.KeepaliveID > 0 {
-		_ = pr.RPC(ctx, "unclaim_v1", map[string]any{
-			"keepaliveid": session.App.Keepalive.KeepaliveID,
-		}, nil)
+	unclaimKeepalive(ctx, pr, keepaliveID(session.GetApp()))
+	unclaimKeepalive(ctx, pr, keepaliveID(session.GetS3Bucket()))
+}
+
+func keepaliveID(holder interface{ GetKeepalive() *persistent.Keepalive }) int32 {
+	if holder == nil {
+		return 0
 	}
+	ka := holder.GetKeepalive()
+	if ka == nil {
+		return 0
+	}
+	return ka.GetKeepaliveID()
+}
+
+func unclaimKeepalive(ctx context.Context, pr *postgrest.Client, id int32) {
+	if id <= 0 {
+		return
+	}
+	_ = pr.RPC(ctx, "unclaim_v1", map[string]any{
+		"keepaliveid": id,
+	}, nil)
 }

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
@@ -24,7 +24,6 @@ type Config struct {
 
 type Worker struct {
 	pr     *postgrest.Client
-	pb     *pocketbase.Client
 	rybbit *Rybbit
 	llm    *synthesizer
 	cfg    Config
@@ -34,7 +33,7 @@ type Worker struct {
 	lastRybbitHit time.Time
 }
 
-func NewWorker(pr *postgrest.Client, pb *pocketbase.Client, cfg Config, log *slog.Logger) (*Worker, error) {
+func NewWorker(pr *postgrest.Client, cfg Config, log *slog.Logger) (*Worker, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -53,7 +52,6 @@ func NewWorker(pr *postgrest.Client, pb *pocketbase.Client, cfg Config, log *slo
 	}
 	return &Worker{
 		pr:     pr,
-		pb:     pb,
 		rybbit: rybbit,
 		llm:    newSynthesizer(cfg.LLM),
 		cfg:    cfg,
@@ -122,7 +120,7 @@ func (w *Worker) refreshOne(ctx context.Context, c Candidate) error {
 	pbUID := c.PBUserID
 	if pbUID == "" {
 		var err error
-		pbUID, err = w.resolvePBUserID(ctx, c.Email)
+		pbUID, err = w.resolveAnalyticsUserID(ctx, c.Email)
 		if err != nil {
 			return err
 		}
@@ -180,28 +178,21 @@ func (w *Worker) waitRybbitSlot(ctx context.Context) error {
 	return nil
 }
 
-func (w *Worker) resolvePBUserID(ctx context.Context, email string) (string, error) {
-	if w.pb == nil || !w.pb.Configured() {
-		return "", fmt.Errorf("pocketbase admin not configured for pb_user_id lookup")
+func (w *Worker) resolveAnalyticsUserID(ctx context.Context, email string) (string, error) {
+	var rows []struct {
+		AuthUserID string `json:"auth_user_id"`
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	q := url.Values{}
-	q.Set("filter", fmt.Sprintf(`email=%q`, email))
-	q.Set("perPage", "1")
-	q.Set("fields", "id")
-	var page struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-	}
-	if err := w.pb.ListRecords(ctx, "users", q, &page); err != nil {
+	q.Set("select", "auth_user_id")
+	q.Set("email", "eq."+strings.ToLower(strings.TrimSpace(email)))
+	q.Set("limit", "1")
+	if err := w.pr.SelectService(ctx, "users", q, &rows); err != nil {
 		return "", err
 	}
-	if len(page.Items) == 0 || page.Items[0].ID == "" {
-		return "", fmt.Errorf("pb user not found for %s", email)
+	if len(rows) == 0 || rows[0].AuthUserID == "" {
+		return "", fmt.Errorf("auth user id not found for %s", email)
 	}
-	return page.Items[0].ID, nil
+	return rows[0].AuthUserID, nil
 }
 
 // FetchProfile reads persona profile JSON for gateway/PWA handlers.

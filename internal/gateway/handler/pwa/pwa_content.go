@@ -232,38 +232,32 @@ func (h *Handler) Referrals(w http.ResponseWriter, r *http.Request) {
 		Username string
 		Avatar   string
 	}{}
-	if h.pbAdmin.Configured() {
-		filterParts := make([]string, 0, len(referred))
-		for _, e := range referred {
-			filterParts = append(filterParts, fmt.Sprintf(`email=%q`, e))
-		}
-		uq := url.Values{}
-		uq.Set("filter", strings.Join(filterParts, " || "))
-		uq.Set("fields", "id,email,avatar,collectionId,username,name")
-		uq.Set("perPage", "500")
-		var page struct {
-			Items []struct {
-				ID           string `json:"id"`
-				Email        string `json:"email"`
-				Avatar       string `json:"avatar"`
-				CollectionID string `json:"collectionId"`
-				Username     string `json:"username"`
-				Name         string `json:"name"`
-			} `json:"items"`
-		}
-		if err := h.pbAdmin.ListRecords(ctx, "users", uq, &page); err == nil {
-			for _, u := range page.Items {
-				name := u.Username
-				if name == "" {
-					name = u.Name
-				}
-				userMap[u.Email] = struct {
-					Username string
-					Avatar   string
-				}{
-					Username: name,
-					Avatar:   pbFileURL(h.pbURL, u.CollectionID, u.ID, u.Avatar),
-				}
+	userQ := url.Values{}
+	userQ.Set("select", "email,metadata")
+	userQ.Set("email", "in.("+quoteInFilter(referred)+")")
+	var userRows []struct {
+		Email    string          `json:"email"`
+		Metadata json.RawMessage `json:"metadata"`
+	}
+	if err := h.pr.SelectService(ctx, "users", userQ, &userRows); err == nil {
+		for _, u := range userRows {
+			var meta struct {
+				Name   string `json:"name"`
+				Avatar string `json:"avatar"`
+			}
+			if len(u.Metadata) > 0 {
+				_ = json.Unmarshal(u.Metadata, &meta)
+			}
+			avatar := meta.Avatar
+			if avatar == "" {
+				avatar = fmt.Sprintf("https://api.dicebear.com/9.x/thumbs/svg?seed=%s", u.Email)
+			}
+			userMap[u.Email] = struct {
+				Username string
+				Avatar   string
+			}{
+				Username: meta.Name,
+				Avatar:   avatar,
 			}
 		}
 	}

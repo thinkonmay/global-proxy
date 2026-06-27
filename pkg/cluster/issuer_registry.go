@@ -3,19 +3,19 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
-// ErrUnknownIssuer is kept for handlers that already import cluster.
-var ErrUnknownIssuer = pocketbase.ErrUnknownIssuer
+// ErrUnknownIssuer is returned when ?issuer= / cluster= is not in infra.clusters.
+var ErrUnknownIssuer = errors.New("unknown cluster issuer")
 
-// IssuerRegistry resolves client ?issuer=/cluster= values to trusted PocketBase bases
+// IssuerRegistry resolves client ?issuer=/cluster= values to trusted cluster API bases
 // loaded from the active rows in infra.clusters (via PostgREST).
 type IssuerRegistry struct {
 	pr             *postgrest.Client
@@ -36,7 +36,7 @@ type issuerEntry struct {
 
 // IssuerRegistryConfig tunes home-cluster Docker reachability overrides.
 type IssuerRegistryConfig struct {
-	// HomeFetch is the gateway-reachable PocketBase base for the local cluster.
+	// HomeFetch is the gateway-reachable API base for the local cluster.
 	HomeFetch string
 	// HomeIssuerHost is the public hostname clients send for the local cluster.
 	HomeIssuerHost string
@@ -72,20 +72,20 @@ func NewStaticIssuerRegistry(hostToFetch map[string]string, cfg IssuerRegistryCo
 	return r
 }
 
-// FetchURL returns the trusted PocketBase base URL for a client issuer/cluster value.
+// FetchURL returns the trusted cluster API base URL for a client issuer/cluster value.
 func (r *IssuerRegistry) FetchURL(ctx context.Context, clientIssuer string) (string, error) {
 	if err := r.ensureLoaded(ctx); err != nil {
 		return "", err
 	}
 	host := NormalizeHost(clientIssuer)
 	if host == "" {
-		return "", pocketbase.ErrUnknownIssuer
+		return "", ErrUnknownIssuer
 	}
 	r.mu.RLock()
 	entry, ok := r.byHost[host]
 	r.mu.RUnlock()
 	if !ok {
-		return "", pocketbase.ErrUnknownIssuer
+		return "", ErrUnknownIssuer
 	}
 	fetch := entry.FetchURL
 	if r.homeFetch != "" && r.homeIssuerHost != "" &&
@@ -93,7 +93,7 @@ func (r *IssuerRegistry) FetchURL(ctx context.Context, clientIssuer string) (str
 		fetch = r.homeFetch
 	}
 	if fetch == "" {
-		return "", pocketbase.ErrUnknownIssuer
+		return "", ErrUnknownIssuer
 	}
 	return fetch, nil
 }
@@ -110,7 +110,7 @@ func (r *IssuerRegistry) ensureLoaded(ctx context.Context) error {
 
 func (r *IssuerRegistry) reload(ctx context.Context) error {
 	if r.pr == nil {
-		return pocketbase.ErrUnknownIssuer
+		return ErrUnknownIssuer
 	}
 	var rows []struct {
 		ID     int64           `json:"id"`

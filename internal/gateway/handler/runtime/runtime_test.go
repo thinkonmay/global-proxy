@@ -50,7 +50,7 @@ func TestRuntimeNotImplemented(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/runtime/resize", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/log", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

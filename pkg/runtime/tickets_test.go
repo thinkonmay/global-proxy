@@ -2,7 +2,6 @@ package runtime_test
 
 import (
 	"testing"
-	"time"
 
 	runtimepkg "github.com/thinkonmay/global-proxy/api/pkg/runtime"
 	"github.com/thinkonmay/thinkshare-daemon/persistent"
@@ -37,10 +36,17 @@ func TestTicketsExpiry(t *testing.T) {
 	tickets := runtimepkg.NewTickets()
 	// internal TTL is 5m; just verify issue/take path for alloc tickets
 	req := &persistent.AllocateRequest{}
-	id := tickets.IssueAlloc(2, req)
+	id := tickets.IssueAlloc(2, "u@example.com", req)
 	got, ok := tickets.TakeAlloc(id)
 	if !ok || got.ClusterID != 2 {
 		t.Fatalf("alloc take failed")
 	}
-	_ = time.Now()
+	tickets.FinishAlloc(id)
+	if !tickets.IsFinishedAlloc(id) {
+		t.Fatal("expected finished alloc ticket")
+	}
+	_, afterFinish := tickets.TakeAlloc(id)
+	if afterFinish {
+		t.Fatal("finished alloc ticket should not replay")
+	}
 }

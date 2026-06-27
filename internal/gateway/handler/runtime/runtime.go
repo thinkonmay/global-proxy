@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/thinkonmay/thinkshare-daemon/persistent"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
@@ -16,6 +17,8 @@ import (
 	runtimepkg "github.com/thinkonmay/global-proxy/api/pkg/runtime"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
+	"github.com/thinkonmay/global-proxy/api/pkg/superuser"
+	"github.com/thinkonmay/global-proxy/api/pkg/volumeconfig"
 	"github.com/thinkonmay/global-proxy/api/pkg/workerinfor"
 )
 
@@ -61,8 +64,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.Handle(http.MethodGet, "/runtime/reallocate/sse", h.handleReallocateSSE)
 	v1.Handle(http.MethodPost, "/runtime/template", h.handleTemplate)
 	v1.Handle(http.MethodGet, "/runtime/template/sse", h.handleTemplateSSE)
-	v1.Handle(http.MethodPost, "/runtime/resize", h.notImplemented)
-	v1.Handle(http.MethodPost, "/runtime/assistant", h.notImplemented)
+	v1.Handle(http.MethodPost, "/runtime/resize", h.handleResize)
+	v1.Handle(http.MethodPost, "/runtime/assistant", h.handleAssistant)
 	v1.Handle(http.MethodGet, "/runtime/snapshots", h.handleListSnapshots)
 	v1.Handle(http.MethodPost, "/runtime/snapshots", h.handleConfigureSnapshots)
 	v1.Handle(http.MethodPost, "/runtime/snapshots/restore", h.handleRestoreSnapshot)
@@ -254,7 +257,27 @@ func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "failed to restart session")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	info, err := h.cfg.Daemon.InfoCluster(ctx, clusterID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, "daemon info unavailable")
+		return
+	}
+	vols, _ := cluster.UserVolumeGroups(ctx, h.cfg.PostgREST, email)
+	filtered := workerinfor.Filter(info, vols[clusterID])
+	httpx.WriteJSON(w, http.StatusOK, filtered)
+}
+
+func (h *Handler) requireSuperuser(w http.ResponseWriter, r *http.Request, email string) bool {
+	ok, err := superuser.IsEmail(r.Context(), h.cfg.PostgREST, email)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, "superuser check failed")
+		return false
+	}
+	if !ok {
+		httpx.WriteError(w, http.StatusForbidden, "only superusers can set template")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) handleReallocate(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +303,23 @@ func (h *Handler) handleReallocate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), runtimeTimeout)
 	defer cancel()
+
+	transient, err := volumeconfig.TransientEnabled(ctx, h.cfg.PostgREST, email, body.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if transient {
+		if err := volumeconfig.SetTemplateSource(ctx, h.cfg.PostgREST, email, body.ID, body.Source); err != nil {
+			httpx.WriteError(w, http.StatusBadGateway, "failed to update volume template")
+			return
+		}
+		id := uuid.NewString()
+		h.tickets.MarkAllocFinished(id)
+		httpx.WriteJSON(w, http.StatusOK, id)
+		return
+	}
+
 	info, err := h.cfg.Daemon.InfoCluster(ctx, clusterID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, "cluster info unavailable")
@@ -290,7 +330,7 @@ func (h *Handler) handleReallocate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id := h.tickets.IssueAlloc(clusterID, req)
+	id := h.tickets.IssueAlloc(clusterID, email, req)
 	httpx.WriteJSON(w, http.StatusOK, id)
 }
 
@@ -303,9 +343,13 @@ func (h *Handler) handleReallocateSSE(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "id required")
 		return
 	}
+	if h.tickets.IsFinishedAlloc(sid) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	ticket, ok := h.tickets.TakeAlloc(sid)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		httpx.WriteError(w, http.StatusUnauthorized, "session not found")
 		return
 	}
 	defer h.tickets.FinishAlloc(sid)
@@ -316,7 +360,10 @@ func (h *Handler) handleReallocateSSE(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadGateway, "allocate stream unavailable")
 		return
 	}
-	_ = daemonclient.RelayAllocateStream(ctx, w, stream)
+	finished, _ := daemonclient.RelayAllocateStream(ctx, w, stream)
+	if finished && ticket.Request != nil && ticket.Request.Destination != nil && ticket.Request.Source != nil {
+		_ = volumeconfig.SetTemplateSource(ctx, h.cfg.PostgREST, ticket.Email, ticket.Request.Destination.Name, ticket.Request.Source.Name)
+	}
 }
 
 func (h *Handler) handleTemplate(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +372,9 @@ func (h *Handler) handleTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	email, ok := h.requireUser(w, r)
 	if !ok {
+		return
+	}
+	if !h.requireSuperuser(w, r, email) {
 		return
 	}
 	var body struct {
@@ -365,9 +415,13 @@ func (h *Handler) handleTemplateSSE(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "id required")
 		return
 	}
+	if h.tickets.IsFinishedTemplate(sid) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	ticket, ok := h.tickets.TakeTemplate(sid)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		httpx.WriteError(w, http.StatusUnauthorized, "session not found")
 		return
 	}
 	defer h.tickets.FinishTemplate(sid)
@@ -405,7 +459,8 @@ func (h *Handler) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleConfigureSnapshots(w http.ResponseWriter, r *http.Request) {
-	if !h.requireDaemon(w) {
+	if h.cfg.PostgREST == nil {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "postgrest unavailable")
 		return
 	}
 	email, ok := h.requireUser(w, r)
@@ -413,31 +468,106 @@ func (h *Handler) handleConfigureSnapshots(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Enable *bool  `json:"enable"`
 	}
 	if err := httpx.ReadJSONBody(r, &body); err != nil {
-		_ = r.URL.Query().Get("id")
-	}
-	volID := strings.TrimSpace(body.ID)
-	if volID == "" {
-		volID = strings.TrimSpace(r.URL.Query().Get("id"))
-	}
-	if volID == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "id required")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	clusterID, err := cluster.ClusterForVolume(r.Context(), h.cfg.PostgREST, email, volID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusForbidden, err.Error())
+	if body.ID == "" || body.Enable == nil {
+		httpx.WriteError(w, http.StatusBadRequest, "id and enable required")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), runtimeTimeout)
 	defer cancel()
-	if err := h.cfg.Daemon.SnapshotVolume(ctx, clusterID, volID); err != nil {
-		httpx.WriteError(w, http.StatusBadGateway, "snapshot configure failed")
+	if _, err := cluster.ClusterForVolume(ctx, h.cfg.PostgREST, email, body.ID); err != nil {
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	if err := volumeconfig.Patch(ctx, h.cfg.PostgREST, email, body.ID, map[string]any{
+		"snapshot": *body.Enable,
+	}); err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, "failed to update snapshot setting")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleResize(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.PostgREST == nil {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "postgrest unavailable")
+		return
+	}
+	email, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		ID   string `json:"id"`
+		Size *int64 `json:"size"`
+	}
+	if err := httpx.ReadJSONBody(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if body.ID == "" || body.Size == nil {
+		httpx.WriteError(w, http.StatusBadRequest, "id and size required")
+		return
+	}
+	if *body.Size < 100 || *body.Size > 600 {
+		httpx.WriteError(w, http.StatusBadRequest, "size must be between 100 and 600 GB")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), runtimeTimeout)
+	defer cancel()
+	if _, err := cluster.ClusterForVolume(ctx, h.cfg.PostgREST, email, body.ID); err != nil {
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if err := volumeconfig.Patch(ctx, h.cfg.PostgREST, email, body.ID, map[string]any{
+		"disk": *body.Size,
+	}); err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, "failed to resize")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleAssistant(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.PostgREST == nil {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "postgrest unavailable")
+		return
+	}
+	email, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		ID     string `json:"id"`
+		Enable *bool  `json:"enable"`
+	}
+	if err := httpx.ReadJSONBody(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if body.ID == "" || body.Enable == nil {
+		httpx.WriteError(w, http.StatusBadRequest, "id and enable required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), runtimeTimeout)
+	defer cancel()
+	if _, err := cluster.ClusterForVolume(ctx, h.cfg.PostgREST, email, body.ID); err != nil {
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if err := volumeconfig.Patch(ctx, h.cfg.PostgREST, email, body.ID, map[string]any{
+		"assistant": *body.Enable,
+	}); err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, "failed to update assistant setting")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -467,7 +597,7 @@ func (h *Handler) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusBadRequest, "restore failed")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleKeepalive(w http.ResponseWriter, r *http.Request) {
@@ -497,11 +627,13 @@ func (h *Handler) handleKeepalive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleResource(w http.ResponseWriter, r *http.Request) {
-	// Addon session leases are global (Postgres); clearing is a no-op at the gRPC edge.
-	_, ok := h.requireUser(w, r)
+	email, ok := h.requireUser(w, r)
 	if !ok {
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	runtimepkg.UnclaimUserSessions(ctx, h.cfg.PostgREST, email)
 	w.WriteHeader(http.StatusNoContent)
 }
 

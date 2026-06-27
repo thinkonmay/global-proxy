@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 )
 
 func TestStaticIssuerRegistryRejectsUnknown(t *testing.T) {
@@ -17,7 +16,7 @@ func TestStaticIssuerRegistryRejectsUnknown(t *testing.T) {
 	}, IssuerRegistryConfig{})
 
 	_, err := r.FetchURL(context.Background(), "https://evil.example.com")
-	if err != pocketbase.ErrUnknownIssuer {
+	if err != ErrUnknownIssuer {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -68,7 +67,7 @@ func TestIssuerRegistryLoadsActiveClusters(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	_, err = r.FetchURL(context.Background(), "inactive.example")
-	if err != pocketbase.ErrUnknownIssuer {
+	if err != ErrUnknownIssuer {
 		t.Fatalf("inactive err = %v", err)
 	}
 }

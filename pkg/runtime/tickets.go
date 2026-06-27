@@ -8,7 +8,10 @@ import (
 	"github.com/thinkonmay/thinkshare-daemon/persistent"
 )
 
-const ticketTTL = 5 * time.Second
+const (
+	ticketPendingTTL = 5 * time.Second
+	ticketFinishTTL  = 3 * time.Minute
+)
 
 // NewTicket holds a pending VM boot stream.
 type NewTicket struct {
@@ -21,6 +24,7 @@ type NewTicket struct {
 // AllocTicket holds a pending volume clone/reallocate stream.
 type AllocTicket struct {
 	ClusterID int64
+	Email     string
 	Request   *persistent.AllocateRequest
 	Expires   time.Time
 }
@@ -62,7 +66,7 @@ func (t *Tickets) IssueNew(clusterID int64, session *persistent.WorkerSession, v
 		ClusterID: clusterID,
 		Session:   session,
 		VolumeIDs: append([]string(nil), volumeIDs...),
-		Expires:   time.Now().Add(ticketTTL),
+		Expires:   time.Now().Add(ticketPendingTTL),
 	}
 	return id
 }
@@ -94,19 +98,35 @@ func (t *Tickets) TakeNew(id string) (*NewTicket, bool) {
 func (t *Tickets) FinishNew(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.done[id] = time.Now().Add(ticketTTL)
+	t.done[id] = time.Now().Add(ticketPendingTTL)
+}
+
+// IsFinishedAlloc reports whether a reallocate stream already completed (PB allocfinish → 204).
+func (t *Tickets) IsFinishedAlloc(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	exp, ok := t.done[id]
+	return ok && time.Now().Before(exp)
+}
+
+// MarkAllocFinished records a finished reallocate ticket without running allocate (transient fast-path).
+func (t *Tickets) MarkAllocFinished(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.done[id] = time.Now().Add(ticketFinishTTL)
 }
 
 // IssueAlloc stores an allocate/reallocate ticket.
-func (t *Tickets) IssueAlloc(clusterID int64, req *persistent.AllocateRequest) string {
+func (t *Tickets) IssueAlloc(clusterID int64, email string, req *persistent.AllocateRequest) string {
 	id := uuid.NewString()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.gcLocked()
 	t.alloc[id] = &AllocTicket{
 		ClusterID: clusterID,
+		Email:     email,
 		Request:   req,
-		Expires:   time.Now().Add(ticketTTL),
+		Expires:   time.Now().Add(ticketPendingTTL),
 	}
 	return id
 }
@@ -130,7 +150,15 @@ func (t *Tickets) TakeAlloc(id string) (*AllocTicket, bool) {
 func (t *Tickets) FinishAlloc(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.done[id] = time.Now().Add(ticketTTL)
+	t.done[id] = time.Now().Add(ticketFinishTTL)
+}
+
+// IsFinishedTemplate reports whether a template stream already completed.
+func (t *Tickets) IsFinishedTemplate(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	exp, ok := t.done[id]
+	return ok && time.Now().Before(exp)
 }
 
 // IssueTemplate stores a template-set ticket and returns its id.
@@ -143,7 +171,7 @@ func (t *Tickets) IssueTemplate(clusterID int64, rename *persistent.RenameReques
 		ClusterID: clusterID,
 		Rename:    rename,
 		Allocate:  allocate,
-		Expires:   time.Now().Add(ticketTTL),
+		Expires:   time.Now().Add(ticketPendingTTL),
 	}
 	return id
 }
@@ -167,7 +195,7 @@ func (t *Tickets) TakeTemplate(id string) (*TemplateTicket, bool) {
 func (t *Tickets) FinishTemplate(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.done[id] = time.Now().Add(ticketTTL)
+	t.done[id] = time.Now().Add(ticketFinishTTL)
 }
 
 func (t *Tickets) gcLocked() {

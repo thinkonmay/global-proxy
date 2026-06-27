@@ -6,33 +6,32 @@ import (
 	"strings"
 )
 
-// PWAUserAuth is the authenticated identity resolved for a PWA request.
-type PWAUserAuth struct {
+// PWAUser is the authenticated subject for legacy /api/pwa/* routes.
+type PWAUser struct {
 	Email  string
 	UserID string
 }
 
-// PWAAuthFromRequest validates the request's Authorization header (GoTrue JWT)
-// and returns the resolved identity. status 0 == ok.
-func PWAAuthFromRequest(ctx context.Context, rt http.RoundTripper, r *http.Request) (PWAUserAuth, int, string) {
+// PWAAuthFromRequest validates the GoTrue JWT on a PWA request.
+func PWAAuthFromRequest(ctx context.Context, rt http.RoundTripper, r *http.Request) (PWAUser, int, string) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	if authHeader == "" {
-		return PWAUserAuth{}, http.StatusUnauthorized, "Unauthorized: No auth header"
+		return PWAUser{}, http.StatusUnauthorized, "Unauthorized: No auth header"
 	}
-	email, userID, status, msg := Validate(ctx, authHeader, rt)
+	email, userID, status, msg := ValidateRequest(ctx, r, rt)
 	if status != 0 {
-		return PWAUserAuth{}, status, msg
+		if status == http.StatusUnauthorized {
+			return PWAUser{}, http.StatusUnauthorized, "Unauthorized: Invalid token"
+		}
+		return PWAUser{}, status, msg
 	}
-	return PWAUserAuth{Email: email, UserID: userID}, 0, ""
+	return PWAUser{Email: email, UserID: userID}, 0, ""
 }
 
-// PWAEmailMatch checks that the authenticated identity matches the supplied email.
-func PWAEmailMatch(a PWAUserAuth, email string) (int, string) {
-	if email == "" {
-		return http.StatusBadRequest, "Missing email"
+// PWAEmailMatch ensures the JWT subject matches a body/query email field.
+func PWAEmailMatch(usr PWAUser, email string) (int, string) {
+	if strings.EqualFold(strings.TrimSpace(usr.Email), strings.TrimSpace(email)) {
+		return 0, ""
 	}
-	if !strings.EqualFold(a.Email, email) {
-		return http.StatusForbidden, "Unauthorized: Email mismatch"
-	}
-	return 0, ""
+	return http.StatusForbidden, "Unauthorized: Email mismatch"
 }

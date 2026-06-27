@@ -6,7 +6,6 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	personah "github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
@@ -16,8 +15,6 @@ const pwaQueryTimeout = 5 * time.Second
 // Handler serves browser PWA API routes (replaces website/app/api/*).
 type Handler struct {
 	pr         *postgrest.Client
-	pbAdmin    *pocketbase.Client
-	pbURL      string
 	persona    *personah.Handler
 	llm        config.LLM
 	httpClient *http.Client
@@ -30,7 +27,6 @@ func New(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, persona 
 	}
 	return &Handler{
 		pr:      pr,
-		pbAdmin: pocketbase.New(pocketbase.Config{Transport: rt}),
 		persona: persona,
 		llm:     cfg.LLM,
 		httpClient: &http.Client{

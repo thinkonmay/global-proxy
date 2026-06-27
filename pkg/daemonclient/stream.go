@@ -57,14 +57,15 @@ func RelayNewStream(ctx context.Context, w http.ResponseWriter, stream persisten
 }
 
 // RelayAllocateStream copies gRPC Allocate progress to SSE (reallocate/template).
-func RelayAllocateStream(ctx context.Context, w http.ResponseWriter, stream persistent.Daemon_AllocateClient) error {
+// finished is true when allocate completed without error.
+func RelayAllocateStream(ctx context.Context, w http.ResponseWriter, stream persistent.Daemon_AllocateClient) (finished bool, err error) {
 	sse.WriteHeaders(w)
 	fl, _ := w.(http.Flusher)
 	index := 0
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		default:
 		}
 		res, err := stream.Recv()
@@ -74,20 +75,20 @@ func RelayAllocateStream(ctx context.Context, w http.ResponseWriter, stream pers
 			if fl != nil {
 				fl.Flush()
 			}
-			return nil
+			return false, nil
 		}
 		index++
 		if res.Finished {
 			if err := sse.WriteEvent(w, index, map[string]any{"finished": true}); err != nil {
-				return err
+				return false, err
 			}
 			if fl != nil {
 				fl.Flush()
 			}
-			return nil
+			return true, nil
 		}
 		if err := sse.WriteEvent(w, index, map[string]any{"percentage": res.Percentage}); err != nil {
-			return err
+			return false, err
 		}
 		if fl != nil {
 			fl.Flush()

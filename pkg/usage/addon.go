@@ -51,7 +51,7 @@ func (c *Collector) tickAddons(ctx context.Context, now time.Time, bucket int64)
 	stats := addonStats{}
 	dedupTTL := c.addonInterval*2 + time.Minute
 
-	if rows, err := cluster.ListAppAccessUsageGlobal(ctx, c.pr); err != nil {
+	if rows, err := cluster.ListAppAccessUsage(ctx, c.pr); err != nil {
 		c.log.Warn("addon tick: global app_access", "err", err)
 		stats.errors++
 	} else if err := c.processAppAccessRows(ctx, rows, now, bucket, dedupTTL, &stats); err != nil {
@@ -59,7 +59,7 @@ func (c *Collector) tickAddons(ctx context.Context, now time.Time, bucket int64)
 		stats.errors++
 	}
 
-	if rows, err := cluster.ListBucketUsageGlobal(ctx, c.pr); err != nil {
+	if rows, err := cluster.ListBucketUsage(ctx, c.pr); err != nil {
 		c.log.Warn("addon tick: global buckets", "err", err)
 		stats.errors++
 	} else if err := c.processBucketRows(ctx, rows, now, bucket, dedupTTL, &stats); err != nil {
@@ -67,7 +67,7 @@ func (c *Collector) tickAddons(ctx context.Context, now time.Time, bucket int64)
 		stats.errors++
 	}
 
-	if rows, err := cluster.ListLLMUsageGlobal(ctx, c.pr); err != nil {
+	if rows, err := cluster.ListLLMUsage(ctx, c.pr); err != nil {
 		c.log.Warn("addon tick: global llm", "err", err)
 		stats.errors++
 	} else if err := c.processLLMRows(ctx, rows, now, bucket, dedupTTL, &stats); err != nil {

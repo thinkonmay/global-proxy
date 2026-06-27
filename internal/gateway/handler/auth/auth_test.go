@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
@@ -81,44 +80,12 @@ func TestRequireUserMissingAuth(t *testing.T) {
 
 func TestRequireUserRejectsInvalidToken(t *testing.T) {
 	ConfigureGoTrueAuth("right-secret")
-	ConfigureClusterRegistry(testsupport.TestIssuerRegistry("http://issuer", "issuer.test"))
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/test?cluster=issuer.test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
 	req.Header.Set("Authorization", "Bearer "+testGoTrueJWT(t, "wrong-secret", "u1", "user@example.com"))
 	_, ok, status, msg := RequireUser(context.Background(), req, nil)
 	if ok || status != http.StatusUnauthorized || msg != "auth failed" {
 		t.Fatalf("ok=%v status=%d msg=%q", ok, status, msg)
-	}
-}
-
-func TestRequireUserAcceptsPocketBaseToken(t *testing.T) {
-	const jwtSecret = "gotrue-test-secret"
-	ConfigureGoTrueAuth(jwtSecret)
-
-	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/collections/users/auth-refresh" {
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer legacy-pb-token" {
-			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"token":"refreshed","record":{"email":"pb-user@test.net"}}`))
-	}))
-	defer issuer.Close()
-
-	host := issuer.URL
-	ConfigureClusterRegistry(testsupport.TestIssuerRegistry(host, host))
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info?cluster="+url.QueryEscape(host), nil)
-	req.Header.Set("Authorization", "Bearer legacy-pb-token")
-
-	email, ok, status, msg := RequireUser(context.Background(), req, nil)
-	if !ok {
-		t.Fatalf("requireUser failed: status=%d msg=%q", status, msg)
-	}
-	if email != "pb-user@test.net" {
-		t.Fatalf("email = %q", email)
 	}
 }
 
