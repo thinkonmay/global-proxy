@@ -227,6 +227,39 @@ func TestVolumeHandlerGrantJob(t *testing.T) {
 	}
 }
 
+// F02 regression: duplicate NATS delivery of the same volume job must not double-provision.
+func TestVolumeHandlerF02DuplicateDeliverySingleProvision(t *testing.T) {
+	var provisionCalls int
+	vh, _, jobPatch := newTestHandler(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/rpc/provision_volume_v1" {
+			provisionCalls++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("null"))
+			return true
+		}
+		return false
+	})
+
+	msg := model.VolumeJobMsg{
+		RequestID: "req-f02-dup",
+		Command:   "create volume v7",
+		ClusterID: 3,
+		Arguments: rawArgs(t, map[string]any{"email": "u@example.com", "volume_id": "vol-f02"}),
+	}
+	if err := vh.handle(context.Background(), msg); err != nil {
+		t.Fatalf("first handle: %v", err)
+	}
+	if err := vh.handle(context.Background(), msg); err != nil {
+		t.Fatalf("duplicate handle: %v", err)
+	}
+	if provisionCalls != 1 {
+		t.Fatalf("provision calls = %d, want 1 (idempotent redelivery)", provisionCalls)
+	}
+	if jobPatch["success"] != true {
+		t.Fatalf("job patch: %v", jobPatch)
+	}
+}
+
 func TestVolumeHandlerResetAppAccessJob(t *testing.T) {
 	var mu sync.Mutex
 	var jobPatch map[string]any
