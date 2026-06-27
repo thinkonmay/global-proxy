@@ -21,6 +21,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/jobs"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
@@ -141,6 +142,7 @@ func Run() error {
 	nodeRuntimeHTTP := noderuntime.New(pr, cfg.PostgREST.ServiceKey)
 	vaultProxyHTTP := vaultproxy.New(cfg.Upstreams.Vault, cfg.PostgREST.ServiceKey, bt)
 	pwaHTTP := pwa.New(*cfg, pr, bt, personaHTTP)
+	jobsHTTP := jobs.New(pr, bt)
 	volumeHTTP := volume.New(pr, eventBus)
 	mailHTTP := mail.New(pr, eventBus, cfg.PostgREST.ServiceKey, bt)
 
@@ -184,7 +186,7 @@ func Run() error {
 	routingHTTP := clusterrouting.New(routingStore, eventBus, routingWatch)
 	routingHTTP.InitSubscriptions()
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, metricsIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	clientCAs, err := virtdaemonClientCAs(context.Background(), cfg)
 	if err != nil {

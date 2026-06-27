@@ -20,18 +20,20 @@ import (
 )
 
 type Handler struct {
-	idem  *idempotency.Guard
-	pr    *postgrest.Client
-	dc    *daemonclient.Client
-	storj *storj.Client
+	idem     *idempotency.Guard
+	pr       *postgrest.Client
+	dc       *daemonclient.Client
+	storj    *storj.Client
+	eventBus bus.Client
 }
 
-func New(idem *idempotency.Guard, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client) *Handler {
+func New(idem *idempotency.Guard, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client, eventBus bus.Client) *Handler {
 	return &Handler{
-		idem:  idem,
-		pr:    pr,
-		dc:    dc,
-		storj: st,
+		idem:     idem,
+		pr:       pr,
+		dc:       dc,
+		storj:    st,
+		eventBus: eventBus,
 	}
 }
 
@@ -178,7 +180,50 @@ func (h *Handler) patchJob(ctx context.Context, jobID int64, success bool, conte
 		slog.Error("patch job failed", "job_id", jobID, "err", err)
 		return err
 	}
+	h.notifyJobFinished(ctx, jobID, success, content)
 	return nil
+}
+
+func (h *Handler) notifyJobFinished(ctx context.Context, jobID int64, success bool, content []byte) {
+	if h.eventBus == nil {
+		return
+	}
+	email := h.jobOwnerEmail(ctx, jobID)
+	if email == "" {
+		return
+	}
+	var result any
+	if len(content) > 0 {
+		_ = json.Unmarshal(content, &result)
+	}
+	_ = model.PublishSSE(ctx, h.eventBus, model.SSEMsg[map[string]any]{
+		Type:      "job",
+		Recipient: email,
+		Data: map[string]any{
+			"job_id":   jobID,
+			"success":  success,
+			"finished": true,
+			"result":   result,
+		},
+	})
+}
+
+func (h *Handler) jobOwnerEmail(ctx context.Context, jobID int64) string {
+	q := url.Values{}
+	q.Set("select", "arguments")
+	q.Set("id", fmt.Sprintf("eq.%d", jobID))
+	q.Set("limit", "1")
+	var rows []struct {
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := h.pr.SelectService(ctx, "job", q, &rows); err != nil || len(rows) == 0 {
+		return ""
+	}
+	m := map[string]json.RawMessage{}
+	if json.Unmarshal(rows[0].Arguments, &m) != nil {
+		return ""
+	}
+	return jsonString(m["email"])
 }
 
 func jobErrorResult(msg string) []byte {

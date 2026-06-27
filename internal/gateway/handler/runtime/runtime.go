@@ -71,6 +71,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.Handle(http.MethodPost, "/runtime/snapshots/restore", h.handleRestoreSnapshot)
 	v1.Handle(http.MethodPost, "/runtime/keepalive", h.handleKeepalive)
 	v1.Handle(http.MethodDelete, "/runtime/resource", h.handleResource)
+	v1.Handle(http.MethodGet, "/runtime/log", h.notImplemented)
+	v1.Handle(http.MethodGet, "/runtime/analytics", h.notImplemented)
 }
 
 func (h *Handler) requireDaemon(w http.ResponseWriter) bool {

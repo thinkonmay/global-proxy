@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
@@ -15,6 +17,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/jobs"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
@@ -63,6 +66,7 @@ func newMux(
 	pwaH *pwa.Handler,
 	volumeH *volume.Handler,
 	mailH *mail.Handler,
+	jobsH *jobs.Handler,
 	metricsIngest *metricsingest.Handler,
 	routingHTTP *clusterrouting.Handler,
 	cfg *config.Config,
@@ -78,6 +82,9 @@ func newMux(
 	volumeH.Register(mux)
 	if mailH != nil {
 		mailH.Register(mux)
+	}
+	if jobsH != nil {
+		jobsH.Register(mux)
 	}
 	if metricsIngest != nil {
 		metricsIngest.Register(mux)
@@ -101,9 +108,8 @@ func newMux(
 	}
 	webhook.RegisterPaymentWebhooks(mux, payReg, eventBus)
 
-	// SSE stream: recipient is the authenticated user, derived server-side — never
-	// the client-supplied value. EventSource cannot set headers, so the bearer
-	// token is accepted via ?token= and promoted to Authorization before auth.
+	// SSE: one authenticated stream per user; clients filter on msg.type / ids.
+	// Per-resource paths are aliases that pre-filter the same hub (OpenAPI parity).
 	sseHandler := func(w http.ResponseWriter, r *http.Request) {
 		auth.PromoteQueryToken(r)
 		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
@@ -113,7 +119,52 @@ func newMux(
 		}
 		hub.ServeFor(w, r, email)
 	}
-	router.V1(mux).GET("/sse", sseHandler) // canonical /v1/sse
+	paymentSSE := func(w http.ResponseWriter, r *http.Request) {
+		auth.PromoteQueryToken(r)
+		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
+		if !ok {
+			auth.WriteAuthErr(w, status, msg)
+			return
+		}
+		txnID := strings.TrimSpace(r.PathValue("transactionId"))
+		hub.ServeForFiltered(w, r, email, "payment", func(data json.RawMessage) bool {
+			if txnID == "" {
+				return true
+			}
+			var p struct {
+				TransactionID string `json:"transaction_id"`
+			}
+			if json.Unmarshal(data, &p) != nil {
+				return false
+			}
+			return p.TransactionID == txnID
+		})
+	}
+	jobSSE := func(w http.ResponseWriter, r *http.Request) {
+		auth.PromoteQueryToken(r)
+		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
+		if !ok {
+			auth.WriteAuthErr(w, status, msg)
+			return
+		}
+		jobID := strings.TrimSpace(r.PathValue("jobId"))
+		hub.ServeForFiltered(w, r, email, "job", func(data json.RawMessage) bool {
+			if jobID == "" {
+				return true
+			}
+			var p struct {
+				JobID int64 `json:"job_id"`
+			}
+			if json.Unmarshal(data, &p) != nil {
+				return false
+			}
+			return fmt.Sprint(p.JobID) == jobID
+		})
+	}
+	v1 := router.V1(mux)
+	v1.GET("/sse", sseHandler)
+	v1.GET("/payments/{transactionId}/events", paymentSSE)
+	v1.GET("/jobs/{jobId}/events", jobSSE)
 	mux.HandleFunc("GET /sse", sseHandler) // legacy alias for pre-/v1 clients
 
 	adminhost.RegisterInternalRoutes(mux, gate)

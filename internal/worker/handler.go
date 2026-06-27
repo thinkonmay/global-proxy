@@ -40,7 +40,7 @@ func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr
 	return &Handler{
 		eventBus: eventBus,
 		pr:       pr,
-		volume:   volume.New(idem, pr, dc, st),
+		volume:   volume.New(idem, pr, dc, st, eventBus),
 		payment:  payment.New(idem, pr),
 		usage:    usage.New(ch, pr, eventBus),
 		persona:  persona.New(pr),

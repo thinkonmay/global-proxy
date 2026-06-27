@@ -37,7 +37,7 @@ func New(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, persona 
 	}
 }
 
-// Register mounts PWA endpoints under /api/pwa/* and legacy /api/* aliases.
+// Register mounts PWA endpoints under /api/pwa/*, legacy /api/* aliases, and /v1/feedbacks.
 func (h *Handler) Register(mux *http.ServeMux) {
 	routes := []struct {
 		method string
@@ -62,4 +62,5 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		pwaGroup.Handle(route.method, route.path, route.fn)
 		legacyGroup.Handle(route.method, route.path, route.fn)
 	}
+	router.V1(mux).POST("/feedbacks", h.Feedback)
 }

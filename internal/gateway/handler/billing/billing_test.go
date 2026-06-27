@@ -85,7 +85,7 @@ func TestPlanChargeMoneyResolvesServerSide(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"USD": map[string]any{"amount": 12, "tag": "USD"}},
+			{"USD": 12},
 		})
 	}))
 	defer srv.Close()
