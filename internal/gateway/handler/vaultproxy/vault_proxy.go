@@ -66,18 +66,17 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
-	if !h.requireServiceKey(r) {
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid service credentials")
-		return
-	}
 	if !allowedVaultPath(r.Method, r.URL.Path) {
 		httpx.WriteError(w, http.StatusForbidden, "vault path not allowed")
 		return
 	}
-	// Gateway auth uses apikey / Authorization (service role). Vault interprets
-	// Authorization: Bearer as a Vault token — strip gateway creds before proxying.
+	// Virtdaemon reaches PKI bootstrap paths with Vault userpass only (no service role on workers).
+	// Compose callers may still authenticate with the service role key; strip those headers before
+	// proxying because Vault interprets Authorization: Bearer as a Vault token.
 	upstream := r.Clone(r.Context())
-	stripGatewayAuthHeaders(upstream, h.serviceKey)
+	if h.requireServiceKey(r) {
+		stripGatewayAuthHeaders(upstream, h.serviceKey)
+	}
 	h.proxy.ServeHTTP(w, upstream)
 }
 

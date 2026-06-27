@@ -4,6 +4,7 @@ package certmanager
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 
@@ -47,6 +48,16 @@ func (m *Manager) TLSConfig() *tls.Config {
 		GetCertificate: m.acme.GetCertificate,
 		NextProtos:     []string{acme.ALPNProto, "h2", "http/1.1"},
 	}
+}
+
+// TLSConfigWithClientAuth returns TLS config that accepts optional virtdaemon client certs.
+func (m *Manager) TLSConfigWithClientAuth(clientCAs *x509.CertPool) *tls.Config {
+	cfg := m.TLSConfig()
+	if clientCAs != nil {
+		cfg.ClientCAs = clientCAs
+		cfg.ClientAuth = tls.VerifyClientCertIfGiven
+	}
+	return cfg
 }
 
 // HTTPChallengeHandler serves ACME HTTP-01 challenges on :80 and redirects other traffic to next.

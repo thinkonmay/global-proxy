@@ -31,7 +31,6 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Runtime.Grpc.VaultPassword, "VAULT_VIRTDAEMON_PASSWORD")
 	setEnvString(&cfg.Runtime.Grpc.HomeIssuerHost, "APP_POCKETBASE_ISSUERHOST")
 	setEnvString(&cfg.Runtime.Grpc.HomeOverride, "APP_RUNTIME_GRPC_HOME")
-	setEnvString(&cfg.Metrics.IngestSecret, "APP_METRICS_INGESTSECRET")
 	setEnvString(&cfg.ClickHouse.Addr, "APP_CLICKHOUSE_ADDR")
 	setEnvString(&cfg.ClickHouse.Database, "APP_CLICKHOUSE_DATABASE")
 	setEnvString(&cfg.ClickHouse.Username, "APP_CLICKHOUSE_USERNAME")

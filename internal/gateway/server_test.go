@@ -14,7 +14,7 @@ func TestStartServersPlainHTTP(t *testing.T) {
 	}
 	servers, errCh, err := startServers(cfg, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestStartTLSServersRequiresHosts(t *testing.T) {
 	cfg := &config.Config{
 		TLS: config.TLS{Enabled: true},
 	}
-	_, _, err := startTLSServers(cfg, http.NotFoundHandler())
+	_, _, err := startTLSServers(cfg, http.NotFoundHandler(), nil)
 	if err == nil {
 		t.Fatal("expected error when tls hosts empty")
 	}

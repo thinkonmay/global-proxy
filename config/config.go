@@ -236,7 +236,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("admin.basicAuthEnabled", false)
 	v.SetDefault("scheduler.enabled", false)
 	v.SetDefault("metrics.cacheTTLSeconds", 90)
-	v.SetDefault("usageCollector.enabled", false)
+	v.SetDefault("usageCollector.enabled", true)
 	v.SetDefault("usageCollector.every", "5m")
 	v.SetDefault("usageCollector.addonEvery", "1h")
 	v.SetDefault("usageCollector.sessionMinutes", 5)
@@ -326,6 +326,7 @@ func defaultCorazaSkipPaths() []string {
 		"/auth/v1/",
 		"/storage/v1/",
 		"/vault/v1/",
+		"/v1/metrics/push",
 		"/api/track",
 		"/api/identify",
 		"/api/script.js",

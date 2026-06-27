@@ -11,23 +11,15 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
-func TestPickPlacementDomainSkipsRoutingOnly(t *testing.T) {
+func TestPickPlacementDomainPrefersMostFree(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/clusters" {
 			http.NotFound(w, r)
 			return
 		}
 		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{
-				"domain": "routing.thinkmay.net",
-				"free":   999,
-				"secret": json.RawMessage(`{}`),
-			},
-			{
-				"domain": "haiphong.thinkmay.net",
-				"free":   10,
-				"secret": json.RawMessage(`{"url":"https://haiphong.thinkmay.net","username":"a","password":"b"}`),
-			},
+			{"domain": "macro9.thinkmay.net", "free": 999},
+			{"domain": "haiphong.thinkmay.net", "free": 10},
 		})
 	}))
 	defer srv.Close()
@@ -37,7 +29,7 @@ func TestPickPlacementDomainSkipsRoutingOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if domain != "haiphong.thinkmay.net" {
+	if domain != "macro9.thinkmay.net" {
 		t.Fatalf("domain=%q", domain)
 	}
 }
@@ -45,7 +37,7 @@ func TestPickPlacementDomainSkipsRoutingOnly(t *testing.T) {
 func TestPickPlacementDomainNoEligibleCluster(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"domain": "routing.thinkmay.net", "free": 1, "secret": json.RawMessage(`{}`)},
+			{"domain": "", "free": 1},
 		})
 	}))
 	defer srv.Close()
