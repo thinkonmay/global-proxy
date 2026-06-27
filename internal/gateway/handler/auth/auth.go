@@ -58,6 +58,19 @@ func IssuerFromRequest(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("issuer"))
 }
 
+// PromoteQueryToken copies ?token= into Authorization when the client cannot set
+// headers (browser EventSource).
+func PromoteQueryToken(r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+		return
+	}
+	tok := strings.TrimSpace(r.URL.Query().Get("token"))
+	if tok == "" {
+		return
+	}
+	r.Header.Set("Authorization", "Bearer "+strings.TrimPrefix(tok, "Bearer "))
+}
+
 // ResolveClusterURL maps an issuer reference to a fetch URL via the registry,
 // returning an HTTP status + message on failure (status 0 == ok).
 func ResolveClusterURL(ctx context.Context, raw string) (string, int, string) {

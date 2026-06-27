@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
@@ -101,9 +100,7 @@ func newMux(
 	// the client-supplied value. EventSource cannot set headers, so the bearer
 	// token is accepted via ?token= and promoted to Authorization before auth.
 	sseHandler := func(w http.ResponseWriter, r *http.Request) {
-		if tok := strings.TrimSpace(r.URL.Query().Get("token")); tok != "" && r.Header.Get("Authorization") == "" {
-			r.Header.Set("Authorization", "Bearer "+strings.TrimPrefix(tok, "Bearer "))
-		}
+		auth.PromoteQueryToken(r)
 		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
 		if !ok {
 			auth.WriteAuthErr(w, status, msg)

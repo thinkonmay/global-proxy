@@ -32,6 +32,27 @@ func testGoTrueJWT(t *testing.T, secret, userID, email string) string {
 	return s
 }
 
+func TestPromoteQueryToken(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/new/sse?id=abc&token=raw-jwt", nil)
+	PromoteQueryToken(req)
+	if got := req.Header.Get("Authorization"); got != "Bearer raw-jwt" {
+		t.Fatalf("Authorization = %q", got)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/runtime/new/sse?id=abc&token=Bearer+prefixed", nil)
+	PromoteQueryToken(req2)
+	if got := req2.Header.Get("Authorization"); got != "Bearer prefixed" {
+		t.Fatalf("Authorization = %q", got)
+	}
+
+	req3 := httptest.NewRequest(http.MethodGet, "/v1/runtime/new/sse?id=abc", nil)
+	req3.Header.Set("Authorization", "Bearer existing")
+	PromoteQueryToken(req3)
+	if got := req3.Header.Get("Authorization"); got != "Bearer existing" {
+		t.Fatalf("Authorization = %q", got)
+	}
+}
+
 func TestRequireUserAcceptsGoTrueToken(t *testing.T) {
 	const secret = "gotrue-test-secret"
 	ConfigureGoTrueAuth(secret)

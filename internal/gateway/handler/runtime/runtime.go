@@ -81,6 +81,7 @@ func (h *Handler) requireDaemon(w http.ResponseWriter) bool {
 }
 
 func (h *Handler) requireUser(w http.ResponseWriter, r *http.Request) (email string, ok bool) {
+	auth.PromoteQueryToken(r)
 	email, ok, status, msg := auth.RequireUser(r.Context(), r, h.cfg.Transport)
 	if !ok {
 		auth.WriteAuthErr(w, status, msg)
