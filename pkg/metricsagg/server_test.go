@@ -46,7 +46,7 @@ func TestPushAndScrape(t *testing.T) {
 		t.Fatalf("scrape status = %d", rec.Code)
 	}
 	body, _ := io.ReadAll(rec.Body)
-	if !bytes.Contains(body, []byte("cpu_usage 1")) {
+	if !bytes.Contains(body, []byte(`cpu_usage{node="worker-a"} 1`)) {
 		t.Fatalf("missing pushed metric: %s", body)
 	}
 	if !bytes.Contains(body, []byte(`thinkmay_node_up{node="worker-a"} 1`)) {

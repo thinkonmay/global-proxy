@@ -57,6 +57,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		{http.MethodPost, "/update_code_name", h.UpdateCodeName},
 		{http.MethodPost, "/search", h.Search},
 		{http.MethodGet, "/persona/recommendations", h.persona.GetRecommendations},
+		{http.MethodGet, "/volumes", h.Volumes},
 	}
 	// Canonical /api/pwa/* plus legacy /api/* aliases.
 	pwaGroup := router.New(mux, "/api/pwa")
