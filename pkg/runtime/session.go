@@ -13,6 +13,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/grants"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
+	"github.com/thinkonmay/global-proxy/api/pkg/volumeconfig"
 )
 
 const grantTimeout = 2 * time.Second
@@ -33,29 +34,53 @@ func NewSessionBuilder(pr *postgrest.Client, publicURL string, st *storj.Client)
 	}
 }
 
-// Prepare validates volume ownership and hydrates storage/app sessions for /new.
-func (b *SessionBuilder) Prepare(ctx context.Context, email string, session *persistent.WorkerSession) (clusterID int64, err error) {
+// Prepare validates volume ownership, merges configuration, and hydrates addon sessions for /new.
+func (b *SessionBuilder) Prepare(ctx context.Context, email string, session *persistent.WorkerSession) (*PrepareResult, error) {
 	if session == nil {
-		return 0, errVolumeRequired
+		return nil, errVolumeRequired
 	}
-	volID := primaryVolumeID(session)
+	volID := PrimaryVolumeID(session)
 	if volID == "" {
-		return 0, errVolumeRequired
+		return nil, errVolumeRequired
 	}
-	clusterID, err = cluster.ClusterForVolume(ctx, b.pr, email, volID)
+	clusterID, err := cluster.ClusterForVolume(ctx, b.pr, email, volID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	info, err := cluster.Lookup(ctx, b.pr, clusterID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	domain := httpx.ClusterHost(info.Domain)
 
+	conf, err := LookupVolumeConfiguration(ctx, b.pr, email, volID)
+	if err != nil {
+		return nil, err
+	}
+	volumeconfig.Apply(session, volID, conf, volumeconfig.DefaultVlans)
+
+	b.attachEntitledAddons(ctx, session, email, domain)
 	b.attachKeepalive(session)
-	b.attachStorageGrant(ctx, session, email, domain)
-	b.attachAppGrant(ctx, session, email, domain)
-	return clusterID, nil
+
+	volumeIDs, err := b.volumeIDsForCluster(ctx, email, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PrepareResult{
+		ClusterID: clusterID,
+		VolumeIDs: volumeIDs,
+		Session:   session,
+		Config:    conf,
+	}, nil
+}
+
+func (b *SessionBuilder) volumeIDsForCluster(ctx context.Context, email string, clusterID int64) ([]string, error) {
+	groups, err := cluster.UserVolumeGroups(ctx, b.pr, email)
+	if err != nil {
+		return nil, err
+	}
+	return groups[clusterID], nil
 }
 
 func (b *SessionBuilder) attachStorageGrant(ctx context.Context, session *persistent.WorkerSession, email, domain string) {
@@ -130,7 +155,9 @@ func (b *SessionBuilder) attachKeepalive(session *persistent.WorkerSession) {
 	}
 }
 
-func primaryVolumeID(session *persistent.WorkerSession) string {
+// PrimaryVolumeID returns the first volume id referenced in a WorkerSession body
+// (Vm.Volumes, Ndisks, Ndisk, or Portfw).
+func PrimaryVolumeID(session *persistent.WorkerSession) string {
 	if session.Vm != nil {
 		for _, v := range session.Vm.Volumes {
 			if v != nil && strings.TrimSpace(v.Name) != "" {
@@ -160,7 +187,3 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
-// VolumeFromCloseRequest extracts a volume id from a close/restart session body.
-func VolumeFromCloseRequest(session *persistent.WorkerSession) string {
-	return primaryVolumeID(session)
-}

@@ -11,7 +11,7 @@ import (
 func TestTicketsNewAndTake(t *testing.T) {
 	tickets := runtimepkg.NewTickets()
 	session := &persistent.WorkerSession{Id: "s1"}
-	id := tickets.IssueNew(1, session)
+	id := tickets.IssueNew(1, session, []string{"vol-1"})
 	if id == "" {
 		t.Fatal("expected ticket id")
 	}
@@ -24,6 +24,9 @@ func TestTicketsNewAndTake(t *testing.T) {
 		t.Fatal("ticket should be single-use")
 	}
 	tickets.FinishNew(id)
+	if !tickets.IsFinishedNew(id) {
+		t.Fatal("expected finished ticket")
+	}
 	_, afterFinish := tickets.TakeNew(id)
 	if afterFinish {
 		t.Fatal("finished ticket should not replay")

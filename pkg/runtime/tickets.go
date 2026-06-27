@@ -8,12 +8,13 @@ import (
 	"github.com/thinkonmay/thinkshare-daemon/persistent"
 )
 
-const ticketTTL = 5 * time.Minute
+const ticketTTL = 5 * time.Second
 
 // NewTicket holds a pending VM boot stream.
 type NewTicket struct {
 	ClusterID int64
 	Session   *persistent.WorkerSession
+	VolumeIDs []string
 	Expires   time.Time
 }
 
@@ -52,7 +53,7 @@ func NewTickets() *Tickets {
 }
 
 // IssueNew stores a new-session ticket and returns its id.
-func (t *Tickets) IssueNew(clusterID int64, session *persistent.WorkerSession) string {
+func (t *Tickets) IssueNew(clusterID int64, session *persistent.WorkerSession, volumeIDs []string) string {
 	id := uuid.NewString()
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -60,9 +61,18 @@ func (t *Tickets) IssueNew(clusterID int64, session *persistent.WorkerSession) s
 	t.new[id] = &NewTicket{
 		ClusterID: clusterID,
 		Session:   session,
+		VolumeIDs: append([]string(nil), volumeIDs...),
 		Expires:   time.Now().Add(ticketTTL),
 	}
 	return id
+}
+
+// IsFinishedNew reports whether the stream already completed (PB newfinish → 204).
+func (t *Tickets) IsFinishedNew(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.done[id]
+	return ok
 }
 
 // TakeNew consumes a new-session ticket.

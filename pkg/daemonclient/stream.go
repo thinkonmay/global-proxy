@@ -12,7 +12,8 @@ import (
 )
 
 // RelayNewStream copies gRPC NewStream events to an HTTP SSE response.
-func RelayNewStream(ctx context.Context, w http.ResponseWriter, stream persistent.Daemon_NewStreamClient) error {
+// When volumeIDs is non-empty, the final WorkerInfor is filtered (PB filterVolume).
+func RelayNewStream(ctx context.Context, w http.ResponseWriter, stream persistent.Daemon_NewStreamClient, volumeIDs []string) error {
 	sse.WriteHeaders(w)
 	fl, _ := w.(http.Flusher)
 	index := 0
@@ -32,7 +33,15 @@ func RelayNewStream(ctx context.Context, w http.ResponseWriter, stream persisten
 			if fl != nil {
 				fl.Flush()
 			}
-			return nil
+			return err
+		}
+		if res.Info != nil && len(volumeIDs) > 0 {
+			filtered := workerinfor.Filter(res.Info, volumeIDs)
+			res = &persistent.NewResult{
+				Status: res.Status,
+				Code:   res.Code,
+				Info:   filtered,
+			}
 		}
 		index++
 		if err := sse.WriteEvent(w, index, res); err != nil {

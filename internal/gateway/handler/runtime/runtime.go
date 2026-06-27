@@ -142,12 +142,18 @@ func (h *Handler) handleNew(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), runtimeTimeout)
 	defer cancel()
-	clusterID, err := h.sessions.Prepare(ctx, email, &session)
+	prepared, err := h.sessions.Prepare(ctx, email, &session)
 	if err != nil {
 		httpx.WriteError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	id := h.tickets.IssueNew(clusterID, &session)
+	volID := runtimepkg.PrimaryVolumeID(prepared.Session)
+	if err := h.cfg.Daemon.EnsureVolumeAllocated(ctx, h.cfg.PostgREST, prepared.ClusterID, email, volID); err != nil {
+		runtimepkg.RollbackLeases(ctx, h.cfg.PostgREST, prepared.Session)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	id := h.tickets.IssueNew(prepared.ClusterID, prepared.Session, prepared.VolumeIDs)
 	httpx.WriteJSON(w, http.StatusOK, id)
 }
 
@@ -155,25 +161,42 @@ func (h *Handler) handleNewSSE(w http.ResponseWriter, r *http.Request) {
 	if !h.requireDaemon(w) {
 		return
 	}
+	email, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
 	sid := strings.TrimSpace(r.URL.Query().Get("id"))
 	if sid == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "id required")
 		return
 	}
+	if h.tickets.IsFinishedNew(sid) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	ticket, ok := h.tickets.TakeNew(sid)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		httpx.WriteError(w, http.StatusUnauthorized, "session not found")
 		return
 	}
 	defer h.tickets.FinishNew(sid)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	volID := runtimepkg.PrimaryVolumeID(ticket.Session)
+	if err := h.cfg.Daemon.EnsureVolumeAllocated(ctx, h.cfg.PostgREST, ticket.ClusterID, email, volID); err != nil {
+		runtimepkg.RollbackLeases(ctx, h.cfg.PostgREST, ticket.Session)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
+		return
+	}
 	stream, err := h.cfg.Daemon.NewStream(ctx, ticket.ClusterID, ticket.Session)
 	if err != nil {
+		runtimepkg.RollbackLeases(ctx, h.cfg.PostgREST, ticket.Session)
 		httpx.WriteError(w, http.StatusBadGateway, "new stream unavailable")
 		return
 	}
-	_ = daemonclient.RelayNewStream(ctx, w, stream)
+	if err := daemonclient.RelayNewStream(ctx, w, stream, ticket.VolumeIDs); err != nil {
+		runtimepkg.RollbackLeases(ctx, h.cfg.PostgREST, ticket.Session)
+	}
 }
 
 func (h *Handler) handleClose(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +212,7 @@ func (h *Handler) handleClose(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	clusterID, err := h.resolveCluster(r.Context(), email, runtimepkg.VolumeFromCloseRequest(&session))
+	clusterID, err := h.resolveCluster(r.Context(), email, runtimepkg.PrimaryVolumeID(&session))
 	if err != nil {
 		httpx.WriteError(w, http.StatusForbidden, err.Error())
 		return
@@ -219,7 +242,7 @@ func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	clusterID, err := h.resolveCluster(r.Context(), email, runtimepkg.VolumeFromCloseRequest(&session))
+	clusterID, err := h.resolveCluster(r.Context(), email, runtimepkg.PrimaryVolumeID(&session))
 	if err != nil {
 		httpx.WriteError(w, http.StatusForbidden, err.Error())
 		return
