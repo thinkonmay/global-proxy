@@ -27,6 +27,7 @@ type Config struct {
 	RPC            RPC            `mapstructure:"rpc"`
 	Scheduler      Scheduler      `mapstructure:"scheduler"`
 	Metrics        Metrics        `mapstructure:"metrics"`
+	Routing        Routing        `mapstructure:"routing"`
 	UsageCollector UsageCollector `mapstructure:"usageCollector"`
 	Persona        Persona        `mapstructure:"persona"`
 	Payment        Payment        `mapstructure:"payment"`
@@ -250,6 +251,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("metrics.scrapeCacheSeconds", 10)
 	v.SetDefault("metrics.redisUrl", "redis://redis:6379/1")
 	v.SetDefault("metrics.listenAddr", ":9090")
+	v.SetDefault("routing.redisUrl", "redis://redis:6379/2")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -291,6 +293,7 @@ func NewConfig() (*Config, error) {
 	mergeSupabaseKeys(&cfg)
 	mergeAdminDefaults(&cfg)
 	mergeMetricsDefaults(&cfg)
+	mergeRoutingDefaults(&cfg)
 	mergeLLMDefaults(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
@@ -327,6 +330,7 @@ func defaultCorazaSkipPaths() []string {
 		"/storage/v1/",
 		"/vault/v1/",
 		"/v1/metrics/push",
+		"/v1/cluster/routing/",
 		"/api/track",
 		"/api/identify",
 		"/api/script.js",

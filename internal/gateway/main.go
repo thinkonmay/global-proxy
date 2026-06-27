@@ -16,6 +16,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterrouting"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
@@ -105,7 +106,7 @@ func Run() error {
 		defer storjClient.Close()
 	}
 
-	grantsHTTP := grant.New(pr, storjClient)
+	grantsHTTP := grant.New(pr, storjClient, bt)
 	filesHTTP := files.New(*cfg, pr, bt)
 
 	if cfg.Upstreams.Vault == "" {
@@ -168,7 +169,19 @@ func Run() error {
 		metricsIngest = metricsingest.New(metricsStack.server, pr)
 	}
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, metricsIngest, cfg, bt, coraza, gate, payReg, eventBus)
+	routingStore, err := initRoutingStore(cfg)
+	if err != nil {
+		return err
+	}
+	if routingStore != nil {
+		defer func() { _ = routingStore.Close() }()
+	}
+
+	routingWatch := clusterrouting.NewWatchHub()
+	routingHTTP := clusterrouting.New(routingStore, eventBus, routingWatch)
+	routingHTTP.InitSubscriptions()
+
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, metricsIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	clientCAs, err := virtdaemonClientCAs(context.Background(), cfg)
 	if err != nil {

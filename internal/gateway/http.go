@@ -11,6 +11,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterrouting"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
@@ -62,6 +63,7 @@ func newMux(
 	pwaH *pwa.Handler,
 	volumeH *volume.Handler,
 	metricsIngest *metricsingest.Handler,
+	routingHTTP *clusterrouting.Handler,
 	cfg *config.Config,
 	rt http.RoundTripper,
 	coraza *corazawaf.Middleware,
@@ -75,6 +77,9 @@ func newMux(
 	volumeH.Register(mux)
 	if metricsIngest != nil {
 		metricsIngest.Register(mux)
+	}
+	if routingHTTP != nil {
+		routingHTTP.Register(mux)
 	}
 	catalogH.Register(mux)
 	otaH.Register(mux)

@@ -9,6 +9,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
@@ -149,27 +150,24 @@ func (h *Handler) serveUpload(w http.ResponseWriter, r *http.Request, path strin
 }
 
 func (h *Handler) resolveBucket(r *http.Request) (string, int, string) {
-	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
-	if cluster == "" {
-		return "", http.StatusBadRequest, "cluster query required"
-	}
-	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-	if authHeader == "" {
+	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
 		return "", http.StatusUnauthorized, "authorization required"
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), grantTimeout)
 	defer cancel()
-	email, _, status, msg := auth.Validate(ctx, authHeader, h.transport)
-	if status != 0 {
-		if msg == "invalid issuer" {
-			msg = "invalid cluster"
-		}
+	email, ok, status, msg := auth.RequireUser(ctx, r, h.transport)
+	if !ok {
 		return "", status, msg
+	}
+	volumeID := strings.TrimSpace(r.URL.Query().Get("volume_id"))
+	domain, err := cluster.ResolveGrantDomain(ctx, h.pr, email, volumeID)
+	if err != nil {
+		return "", http.StatusBadRequest, err.Error()
 	}
 	var lookup map[string]any
 	if err := h.pr.RPC(ctx, "lookup_user_bucket_v1", map[string]any{
 		"email":  email,
-		"domain": httpx.ClusterHost(cluster),
+		"domain": domain,
 	}, &lookup); err != nil || lookup == nil {
 		return "", http.StatusUnauthorized, "no bucket was found"
 	}

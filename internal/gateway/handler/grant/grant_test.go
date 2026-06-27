@@ -6,24 +6,35 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/testsupport"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
 func TestStorageGrantSuccess(t *testing.T) {
+	const secret = "grant-test-secret"
+	auth.ConfigureGoTrueAuth(secret)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rpc/grant_bucket_access_v1" {
+		switch r.URL.Path {
+		case "/rpc/get_subscription_v3":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"cluster": "node1.thinkmay.net"},
+			})
+		case "/rpc/grant_bucket_access_v1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"bucket_name": "test-bucket"})
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"bucket_name": "test-bucket"})
 	}))
 	defer srv.Close()
 
-	h := New(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil)
+	h := New(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/storage/grant?email=u@example.com&cluster=node1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/storage/grant", nil)
+	req.Header.Set("Authorization", "Bearer "+testsupport.GoTrueJWT(t, secret, "u1", "u@example.com"))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -39,26 +50,44 @@ func TestStorageGrantSuccess(t *testing.T) {
 	}
 }
 
-func TestStorageGrantMissingParams(t *testing.T) {
-	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil)
+func TestStorageGrantMissingAuth(t *testing.T) {
+	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/storage/grant?email=u@example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/storage/grant", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
 	}
 }
 
 func TestStorageGrantGlobalUnavailable(t *testing.T) {
-	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil)
+	const secret = "grant-test-secret"
+	auth.ConfigureGoTrueAuth(secret)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc/get_subscription_v3":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"cluster": "node1.thinkmay.net"},
+			})
+		case "/rpc/grant_bucket_access_v1":
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	h := New(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/storage/grant?email=u@example.com&cluster=node1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/storage/grant", nil)
+	req.Header.Set("Authorization", "Bearer "+testsupport.GoTrueJWT(t, secret, "u1", "u@example.com"))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
