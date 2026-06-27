@@ -37,12 +37,13 @@ func (b *SessionBuilder) tryAttachBucketSession(ctx context.Context, session *pe
 func (b *SessionBuilder) tryAttachAppSession(ctx context.Context, session *persistent.WorkerSession, email, domain string) {
 	ctx, cancel := context.WithTimeout(ctx, grantTimeout)
 	defer cancel()
-	claim, err := grants.GrantAndClaimApp(ctx, b.pr, email, domain, "")
-	if err != nil {
-		slog.Warn("app session failed (fail-open)", "err", err)
+	appID, err := grants.LookupUserAppAccess(ctx, b.pr, email, domain)
+	if err != nil || appID == "" || appID == "unknown" {
 		return
 	}
-	if claim.AppID == "" || claim.AppID == "unknown" {
+	claim, err := grants.ClaimApp(ctx, b.pr, email, appID)
+	if err != nil {
+		slog.Warn("app session failed (fail-open)", "err", err)
 		return
 	}
 	if session.App == nil {

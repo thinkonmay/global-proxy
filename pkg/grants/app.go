@@ -18,6 +18,56 @@ type AppClaim struct {
 	DepotKey    map[string]string
 }
 
+// LookupUserAppAccess reads infra.user_app_access for the user/cluster.
+func LookupUserAppAccess(ctx context.Context, pr *postgrest.Client, email, domain string) (string, error) {
+	var lookup map[string]any
+	if err := pr.RPC(ctx, "lookup_user_app_access_v1", map[string]any{
+		"email":  email,
+		"domain": domain,
+	}, &lookup); err != nil {
+		return "", err
+	}
+	if lookup == nil {
+		return "", nil
+	}
+	appID, _ := lookup["app_id"].(string)
+	return strings.TrimSpace(appID), nil
+}
+
+// ClaimApp claims a runtime lease via claim_v1 for an existing app entitlement.
+func ClaimApp(ctx context.Context, pr *postgrest.Client, email, appID string) (*AppClaim, error) {
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return nil, fmt.Errorf("empty app_id")
+	}
+	var rows []struct {
+		ID       int32             `json:"id"`
+		Username string            `json:"username"`
+		Password string            `json:"password"`
+		DepotKey map[string]string `json:"depotKey"`
+	}
+	if err := pr.RPC(ctx, "claim_v1", map[string]any{
+		"app_id": appID,
+		"email":  email,
+	}, &rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("empty claim for app %s", appID)
+	}
+	row := rows[0]
+	if row.DepotKey == nil {
+		row.DepotKey = map[string]string{}
+	}
+	return &AppClaim{
+		AppID:       appID,
+		Username:    row.Username,
+		Password:    row.Password,
+		KeepaliveID: row.ID,
+		DepotKey:    row.DepotKey,
+	}, nil
+}
+
 // GrantAndClaimApp ensures user_app_access then claims a runtime lease via claim_v1.
 func GrantAndClaimApp(ctx context.Context, pr *postgrest.Client, email, domain, appID string) (*AppClaim, error) {
 	args := map[string]any{"email": email, "domain": domain}
@@ -35,33 +85,7 @@ func GrantAndClaimApp(ctx context.Context, pr *postgrest.Client, email, domain, 
 	if claimedAppID == "" {
 		claimedAppID = "unknown"
 	}
-
-	var rows []struct {
-		ID       int32             `json:"id"`
-		Username string            `json:"username"`
-		Password string            `json:"password"`
-		DepotKey map[string]string `json:"depotKey"`
-	}
-	if err := pr.RPC(ctx, "claim_v1", map[string]any{
-		"app_id": claimedAppID,
-		"email":  email,
-	}, &rows); err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("empty claim for app %s", claimedAppID)
-	}
-	row := rows[0]
-	if row.DepotKey == nil {
-		row.DepotKey = map[string]string{}
-	}
-	return &AppClaim{
-		AppID:       claimedAppID,
-		Username:    row.Username,
-		Password:    row.Password,
-		KeepaliveID: row.ID,
-		DepotKey:    row.DepotKey,
-	}, nil
+	return ClaimApp(ctx, pr, email, claimedAppID)
 }
 
 // AppClaimFromRows parses a raw PostgREST claim_v1 payload.

@@ -35,6 +35,47 @@ func TestGrantBucketAccessRPCOnly(t *testing.T) {
 	}
 }
 
+func TestLookupAndClaimApp(t *testing.T) {
+	var lookupCalls, claimCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/lookup_user_app_access_v1"):
+			lookupCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"app_id": "570", "usage": 0})
+		case strings.HasSuffix(r.URL.Path, "/claim_v1"):
+			claimCalls++
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"id":       int32(42),
+				"username": "steam",
+				"password": "secret",
+				"depotKey": map[string]string{"1": "abc"},
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	appID, err := grants.LookupUserAppAccess(context.Background(), pr, "u@example.com", "test.thinkmay.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appID != "570" {
+		t.Fatalf("app_id: %s", appID)
+	}
+	claim, err := grants.ClaimApp(context.Background(), pr, "u@example.com", appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookupCalls != 1 || claimCalls != 1 {
+		t.Fatalf("lookup=%d claim=%d", lookupCalls, claimCalls)
+	}
+	if claim.AppID != "570" || claim.KeepaliveID != 42 {
+		t.Fatalf("claim: %+v", claim)
+	}
+}
+
 func TestGrantAndClaimApp(t *testing.T) {
 	var grantCalls, claimCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
