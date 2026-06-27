@@ -41,8 +41,8 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.PlanName == "" || body.ClusterDomain == "" || body.Provider == "" || body.Currency == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "plan_name, cluster_domain, provider, and currency required")
+	if body.PlanName == "" || body.Provider == "" || body.Currency == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "plan_name, provider, and currency required")
 		return
 	}
 	if h.registry == nil {
@@ -58,6 +58,12 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingDepositTimeout)
 	defer cancel()
 
+	clusterDomain, err := h.resolveClusterDomain(ctx, body.ClusterDomain)
+	if err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
+	}
+
 	// Create the pending subscription intent; its id correlates the activation webhook.
 	template := "win11"
 	if body.Template != nil && *body.Template != "" {
@@ -67,7 +73,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	if err := h.pr.RPC(ctx, "create_subscription_intent", map[string]any{
 		"p_email":          email,
 		"p_plan_name":      body.PlanName,
-		"p_cluster_domain": body.ClusterDomain,
+		"p_cluster_domain": clusterDomain,
 		"p_template":       template,
 	}, &subID); err != nil {
 		httpx.WriteUpstreamErr(w, err)

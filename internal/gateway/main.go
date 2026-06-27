@@ -19,7 +19,6 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/nodeproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
@@ -99,33 +98,32 @@ func Run() error {
 	storeHTTP := store.New(pr, bt)
 	grants := grant.New(*cfg, pr, bt)
 	filesHTTP := files.New(*cfg, pr, bt)
-	nodeProxy := nodeproxy.New(cfg.Runtime.ClusterSecret, bt)
 
-	var daemonGRPC *daemonclient.Client
-	if cfg.Runtime.Grpc.Enabled || cfg.Runtime.Grpc.VaultPassword != "" {
-		if cfg.Upstreams.Vault == "" {
-			slog.Warn("runtime gRPC disabled: upstreams.vault not configured")
-		} else {
-			dc, err := daemonclient.New(context.Background(), daemonclient.Config{
-				VaultURL:         cfg.Upstreams.Vault,
-				VaultPassword:    cfg.Runtime.Grpc.VaultPassword,
-				VaultGatewayKey:  cfg.PostgREST.ServiceKey,
-				ClientCN:         cfg.Runtime.Grpc.ClientCN,
-				PKIMount:         cfg.Runtime.Grpc.PKIMount,
-				PKIRole:          cfg.Runtime.Grpc.PKIRole,
-				GrpcPort:         cfg.Runtime.Grpc.Port,
-				HomeIssuerHost:   cfg.Runtime.Grpc.HomeIssuerHost,
-				HomeGrpcOverride: cfg.Runtime.Grpc.HomeOverride,
-			}, pr)
-			if err != nil {
-				return fmt.Errorf("daemon gRPC client: %w", err)
-			}
-			daemonGRPC = dc
-			defer func() { _ = dc.Close() }()
-		}
+	if cfg.Upstreams.Vault == "" {
+		return fmt.Errorf("runtime gRPC requires upstreams.vault")
 	}
+	daemonGRPC, err := daemonclient.New(context.Background(), daemonclient.Config{
+		VaultURL:         cfg.Upstreams.Vault,
+		VaultPassword:    cfg.Runtime.Grpc.VaultPassword,
+		VaultGatewayKey:  cfg.PostgREST.ServiceKey,
+		ClientCN:         cfg.Runtime.Grpc.ClientCN,
+		PKIMount:         cfg.Runtime.Grpc.PKIMount,
+		PKIRole:          cfg.Runtime.Grpc.PKIRole,
+		GrpcPort:         cfg.Runtime.Grpc.Port,
+		HomeIssuerHost:   cfg.Runtime.Grpc.HomeIssuerHost,
+		HomeGrpcOverride: cfg.Runtime.Grpc.HomeOverride,
+	}, pr)
+	if err != nil {
+		return fmt.Errorf("daemon gRPC client: %w", err)
+	}
+	defer func() { _ = daemonGRPC.Close() }()
 
-	runtimeHTTP := runtime.New(cfg.Runtime.ClusterSecret, bt, daemonGRPC)
+	runtimeHTTP := runtime.New(runtime.Config{
+		PublicURL: cfg.Gateway.PublicURL,
+		Transport: bt,
+		Daemon:    daemonGRPC,
+		PostgREST: pr,
+	})
 	personaHTTP := persona.New(pr, bt)
 	nodeRuntimeHTTP := noderuntime.New(pr, cfg.PostgREST.ServiceKey)
 	vaultProxyHTTP := vaultproxy.New(cfg.Upstreams.Vault, cfg.PostgREST.ServiceKey, bt)
@@ -148,7 +146,7 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, nodeProxy, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grants, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	metricsCache, metricsSrv, metricsErrCh, err := startMetricsServer(cfg)
 	if err != nil {

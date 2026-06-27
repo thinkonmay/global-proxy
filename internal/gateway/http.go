@@ -15,7 +15,6 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/nodeproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
@@ -55,7 +54,6 @@ func newMux(
 	storeH *store.Handler,
 	grants *grant.Handler,
 	filesH *files.Handler,
-	nodeProxy *nodeproxy.Handler,
 	runtimeH *runtime.Handler,
 	personaHTTP *persona.Handler,
 	nodeRuntime *noderuntime.Handler,
@@ -81,7 +79,6 @@ func newMux(
 	pwaH.Register(mux)
 	grants.Register(mux)
 	filesH.Register(mux)
-	nodeProxy.Register(mux)
 	runtimeH.Register(mux)
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)

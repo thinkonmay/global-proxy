@@ -43,14 +43,3 @@ func (h *Handler) Subscription(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rows})
 }
 
-func (h *Handler) Domains(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
-	defer cancel()
-
-	var rows json.RawMessage
-	if err := h.pr.RPC(ctx, "get_domains_availability_v5", map[string]any{}, &rows); err != nil {
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rows})
-}

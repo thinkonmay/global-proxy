@@ -306,13 +306,19 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.PlanName == "" || body.ClusterDomain == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "plan_name and cluster_domain required")
+	if body.PlanName == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "plan_name required")
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), billingDepositTimeout)
 	defer cancel()
+
+	clusterDomain, err := h.resolveClusterDomain(ctx, body.ClusterDomain)
+	if err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
+	}
 
 	var discard json.RawMessage
 	if err := h.pr.RPC(ctx, "pay_all_addon_charges", map[string]any{"email": email}, &discard); err != nil {
@@ -322,7 +328,7 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	args := map[string]any{
 		"email":          email,
 		"plan_name":      body.PlanName,
-		"cluster_domain": body.ClusterDomain,
+		"cluster_domain": clusterDomain,
 	}
 	if body.Template != nil {
 		args["template"] = *body.Template

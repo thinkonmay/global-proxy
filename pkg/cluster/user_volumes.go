@@ -10,7 +10,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
-// UserVolumeRow ties a user's volume to a cluster (legacy user_v2; identity.user_volume post-migration).
+// UserVolumeRow ties a user's volume to a cluster via public.user_v2 (join view over infra.volumes).
 type UserVolumeRow struct {
 	ClusterID int64
 	VolumeID  string

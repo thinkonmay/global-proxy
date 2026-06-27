@@ -114,7 +114,7 @@ type Gateway struct {
 
 // Runtime configures gateway→cluster runtime (Track C3).
 type Runtime struct {
-	// ClusterSecret must match cluster.yaml p2pcred on worker nodes (HTTP proxy fallback).
+	// ClusterSecret is deprecated — runtime uses virtdaemon gRPC only (Track C3).
 	ClusterSecret string `mapstructure:"clusterSecret"`
 	// Grpc enables mTLS virtdaemon gRPC for GET /v1/runtime/info (D25/D26).
 	Grpc RuntimeGrpc `mapstructure:"grpc"`

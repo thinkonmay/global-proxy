@@ -11,26 +11,30 @@ import (
 
 	busmemory "github.com/thinkonmay/global-proxy/api/pkg/bus/memory"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
-	"github.com/thinkonmay/global-proxy/api/pkg/pocketbase"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
-func pbAuthHandler(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method == http.MethodPost && r.URL.Path == "/api/collections/_superusers/auth-with-password" {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"token":"admin-token"}`))
-		return true
-	}
-	return false
-}
-
-// jobInsert answers the worker's job-row insert (POST /job) with a fixed id.
 func jobInsert(w http.ResponseWriter, r *http.Request, id int64) bool {
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/job") {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": id}})
 		return true
+	}
+	return false
+}
+
+func provisionAndClusterMocks(w http.ResponseWriter, r *http.Request) bool {
+	switch r.URL.Path {
+	case "/rpc/provision_volume_v1":
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("null"))
+		return true
+	case "/clusters":
+		if strings.Contains(r.URL.RawQuery, "id=eq.") {
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 3, "domain": "test.thinkmay.net"}})
+			return true
+		}
 	}
 	return false
 }
@@ -44,56 +48,36 @@ func rawArgs(t *testing.T, m map[string]any) json.RawMessage {
 	return b
 }
 
-func TestVolumeHandlerCreateVolume(t *testing.T) {
+func newTestHandler(t *testing.T, extra func(w http.ResponseWriter, r *http.Request) bool) (*Handler, *sync.Mutex, map[string]any) {
+	t.Helper()
 	var mu sync.Mutex
-	var jobPatch map[string]any
-	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if pbAuthHandler(w, r) {
+	jobPatch := map[string]any{}
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if extra != nil && extra(w, r) {
+			return
+		}
+		if provisionAndClusterMocks(w, r) {
 			return
 		}
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
-			if r.Header.Get("Authorization") != "Bearer admin-token" {
-				t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]string{{"id": "user-1"}},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/collections/volumes/records":
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]string{"id": "vol-1"})
+		case jobInsert(w, r, 99):
+			return
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job"):
+			_ = json.NewDecoder(r.Body).Decode(&jobPatch)
+			mu.Lock()
+			w.WriteHeader(http.StatusNoContent)
+			mu.Unlock()
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer pbSrv.Close()
-
-	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/rpc/get_cluster_secrets":
-			_ = json.NewEncoder(w).Encode([]map[string]string{{
-				"url": pbSrv.URL,
-			}})
-		default:
-			if jobInsert(w, r, 99) {
-				return
-			}
-			if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
-				_ = json.NewDecoder(r.Body).Decode(&jobPatch)
-				mu.Lock()
-				w.WriteHeader(http.StatusNoContent)
-				mu.Unlock()
-				return
-			}
-			http.NotFound(w, r)
-		}
-	}))
-	defer prSrv.Close()
-
+	t.Cleanup(prSrv.Close)
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
-	idem := idempotency.New(idempotency.NewMemStore())
-	vh := New(idem, pr, pb)
+	return New(idempotency.New(idempotency.NewMemStore()), pr, nil), &mu, jobPatch
+}
+
+func TestVolumeHandlerCreateVolume(t *testing.T) {
+	vh, mu, jobPatch := newTestHandler(t, nil)
 
 	err := vh.handle(context.Background(), model.VolumeJobMsg{
 		RequestID: "req-create",
@@ -107,77 +91,38 @@ func TestVolumeHandlerCreateVolume(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if jobPatch == nil || jobPatch["success"] != true {
+	if jobPatch["success"] != true {
 		t.Fatalf("job patch: %v", jobPatch)
 	}
 }
 
 func TestVolumeHandlerUpdateVolume(t *testing.T) {
-	var mu sync.Mutex
-	var jobPatch map[string]any
-	var patchedCfg map[string]any
-	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if pbAuthHandler(w, r) {
-			return
-		}
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]string{{"id": "user-1"}},
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/volumes/records":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]any{{
-					"id": "vol-rec-1",
-					"configuration": map[string]any{
-						"email":    "u@example.com",
-						"template": "win11",
-						"disk":     map[string]any{"size": 50},
-						"plan":     "pro",
-					},
-				}},
-			})
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/collections/volumes/records/"):
-			_ = json.NewDecoder(r.Body).Decode(&patchedCfg)
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]string{"id": "vol-rec-1"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer pbSrv.Close()
-
-	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var provisionCfg map[string]any
+	vh, mu, jobPatch := newTestHandler(t, func(w http.ResponseWriter, r *http.Request) bool {
 		switch r.URL.Path {
-		case "/rpc/get_cluster_secrets":
-			_ = json.NewEncoder(w).Encode([]map[string]string{{
-				"url": pbSrv.URL,
-			}})
+		case "/rpc/lookup_volume_configuration_v1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"email":    "u@example.com",
+				"template": "win11",
+				"disk":     map[string]any{"size": 50},
+				"plan":     "pro",
+			})
+			return true
+		case "/rpc/provision_volume_v1":
+			_ = json.NewDecoder(r.Body).Decode(&provisionCfg)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("null"))
+			return true
 		default:
-			if jobInsert(w, r, 100) {
-				return
-			}
-			if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
-				_ = json.NewDecoder(r.Body).Decode(&jobPatch)
-				mu.Lock()
-				w.WriteHeader(http.StatusNoContent)
-				mu.Unlock()
-				return
-			}
-			http.NotFound(w, r)
+			return false
 		}
-	}))
-	defer prSrv.Close()
-
-	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+	})
 
 	err := vh.handle(context.Background(), model.VolumeJobMsg{
 		RequestID: "req-update",
 		Command:   "update volume v7",
 		ClusterID: 3,
-		Arguments: rawArgs(t, map[string]any{"email": "u@example.com", "tier": "premium"}),
+		Arguments: rawArgs(t, map[string]any{"email": "u@example.com", "volume_id": "vol-1", "tier": "premium"}),
 	})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
@@ -185,75 +130,35 @@ func TestVolumeHandlerUpdateVolume(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if jobPatch == nil || jobPatch["success"] != true {
+	if jobPatch["success"] != true {
 		t.Fatalf("job patch: %v", jobPatch)
 	}
-	merged, ok := patchedCfg["configuration"].(map[string]any)
+	cfg, ok := provisionCfg["configuration"].(map[string]any)
 	if !ok {
-		t.Fatalf("patch configuration: %v", patchedCfg)
+		t.Fatalf("provision configuration: %v", provisionCfg)
 	}
-	if merged["tier"] != "premium" || merged["template"] != "win11" {
-		t.Fatalf("merged configuration: %v", merged)
+	if cfg["tier"] != "premium" || cfg["template"] != "win11" {
+		t.Fatalf("merged configuration: %v", cfg)
 	}
 }
 
 func TestVolumeHandlerDeleteVolume(t *testing.T) {
-	var mu sync.Mutex
-	var jobPatch map[string]any
-	var deleted bool
-	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if pbAuthHandler(w, r) {
-			return
+	var deprovisionCalled bool
+	vh, mu, jobPatch := newTestHandler(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/rpc/deprovision_volume_v1" {
+			deprovisionCalled = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("null"))
+			return true
 		}
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]string{{"id": "user-1"}},
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/volumes/records":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]string{{"id": "vol-rec-1"}},
-			})
-		case r.Method == http.MethodDelete && r.URL.Path == "/api/collections/volumes/records/vol-rec-1":
-			mu.Lock()
-			deleted = true
-			mu.Unlock()
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer pbSrv.Close()
-
-	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/rpc/get_cluster_secrets":
-			_ = json.NewEncoder(w).Encode([]map[string]string{{"url": pbSrv.URL}})
-		default:
-			if jobInsert(w, r, 101) {
-				return
-			}
-			if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/job") {
-				mu.Lock()
-				_ = json.NewDecoder(r.Body).Decode(&jobPatch)
-				mu.Unlock()
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			http.NotFound(w, r)
-		}
-	}))
-	defer prSrv.Close()
-
-	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+		return false
+	})
 
 	err := vh.handle(context.Background(), model.VolumeJobMsg{
 		RequestID: "req-delete",
 		Command:   "delete volume v5",
 		ClusterID: 3,
-		Arguments: rawArgs(t, map[string]any{"email": "u@example.com"}),
+		Arguments: rawArgs(t, map[string]any{"email": "u@example.com", "volume_id": "vol-1"}),
 	})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
@@ -261,10 +166,10 @@ func TestVolumeHandlerDeleteVolume(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if !deleted {
-		t.Fatal("volume record was not deleted")
+	if !deprovisionCalled {
+		t.Fatal("deprovision RPC was not called")
 	}
-	if jobPatch == nil || jobPatch["success"] != true {
+	if jobPatch["success"] != true {
 		t.Fatalf("job patch: %v", jobPatch)
 	}
 }
@@ -280,7 +185,6 @@ func TestVolumeHandlerGrantJob(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"id":     3,
 				"domain": "saigon2.thinkmay.net",
-				"secret": map[string]string{"url": "http://127.0.0.1:1", "username": "admin@test.com", "password": "secret"},
 			}})
 		case r.URL.Path == "/rpc/grant_app_access_v1":
 			mu.Lock()
@@ -301,8 +205,7 @@ func TestVolumeHandlerGrantJob(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "admin@test.com", Password: "secret"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
 
 	err := vh.handle(context.Background(), model.VolumeJobMsg{
 		RequestID: "req-grant",
@@ -335,7 +238,6 @@ func TestVolumeHandlerResetAppAccessJob(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"id":     3,
 				"domain": "saigon2.thinkmay.net",
-				"secret": map[string]string{"url": "http://127.0.0.1:1", "username": "admin@test.com", "password": "secret"},
 			}})
 		case r.URL.Path == "/rpc/reset_user_app_access_usage_v1":
 			mu.Lock()
@@ -356,8 +258,7 @@ func TestVolumeHandlerResetAppAccessJob(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "admin@test.com", Password: "secret"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
 
 	err := vh.handle(context.Background(), model.VolumeJobMsg{
 		RequestID: "req-reset",
@@ -400,8 +301,7 @@ func TestVolumeHandlerSkipsUnknownCommand(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
 	err := vh.handle(context.Background(), model.VolumeJobMsg{RequestID: "req-unknown", Command: "unknown"})
 	if err != nil {
 		t.Fatalf("expected nil for unknown command, got %v", err)
@@ -416,8 +316,7 @@ func TestVolumeHandlerSkipsUnknownCommand(t *testing.T) {
 func TestInitSubscribesVolumeTopic(t *testing.T) {
 	bus := busmemory.New(nil)
 	pr := postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"})
-	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})
-	h := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+	h := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
 	h.Init(bus)
 
 	err := bus.Publish(context.Background(), model.TopicVolumeJob.Name, []byte(`{"command":"unknown","request_id":"req-init"}`))
@@ -444,9 +343,8 @@ func TestVolumeHandlerSkipsDuplicateDelivery(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: "http://127.0.0.1:1", Username: "a", Password: "b"})
 	store := idempotency.NewMemStore()
-	vh := New(idempotency.New(store), pr, pb)
+	vh := New(idempotency.New(store), pr, nil)
 
 	msg := model.VolumeJobMsg{RequestID: "req-dup", Command: "unknown"}
 	if err := vh.handle(context.Background(), msg); err != nil {
@@ -462,40 +360,28 @@ func TestVolumeHandlerSkipsDuplicateDelivery(t *testing.T) {
 
 func TestVolumeHandlerRecoversExistingJobOnRetry(t *testing.T) {
 	var mu sync.Mutex
-	var pbCalls int
+	var provisionCalls int
 	var jobPosts int
 	var jobPatch map[string]any
 
-	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if pbAuthHandler(w, r) {
-			return
-		}
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/collections/users/records":
+	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/rpc/provision_volume_v1" {
 			mu.Lock()
-			pbCalls++
-			call := pbCalls
+			provisionCalls++
+			call := provisionCalls
 			mu.Unlock()
 			if call == 1 {
 				http.Error(w, "busy", http.StatusServiceUnavailable)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]string{{"id": "user-1"}},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/collections/volumes/records":
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]string{"id": "vol-1"})
-		default:
-			http.NotFound(w, r)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("null"))
+			return
 		}
-	}))
-	defer pbSrv.Close()
-
-	prSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if provisionAndClusterMocks(w, r) {
+			return
+		}
 		switch {
-		case r.URL.Path == "/rpc/get_cluster_secrets":
-			_ = json.NewEncoder(w).Encode([]map[string]string{{"url": pbSrv.URL}})
 		case r.Method == http.MethodPost && r.URL.Path == "/job":
 			jobPosts++
 			if jobPosts == 1 {
@@ -521,8 +407,7 @@ func TestVolumeHandlerRecoversExistingJobOnRetry(t *testing.T) {
 	defer prSrv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: prSrv.URL, ServiceKey: "svc"})
-	pb := pocketbase.New(pocketbase.Config{URL: pbSrv.URL, Username: "admin@test.com", Password: "secret"})
-	vh := New(idempotency.New(idempotency.NewMemStore()), pr, pb)
+	vh := New(idempotency.New(idempotency.NewMemStore()), pr, nil)
 
 	msg := model.VolumeJobMsg{
 		RequestID: "req-retry",
@@ -531,7 +416,7 @@ func TestVolumeHandlerRecoversExistingJobOnRetry(t *testing.T) {
 		Arguments: rawArgs(t, map[string]any{"email": "u@example.com", "volume_id": "vol-retry"}),
 	}
 	if err := vh.handle(context.Background(), msg); err == nil {
-		t.Fatal("expected retryable error on first PB failure")
+		t.Fatal("expected retryable error on first provision failure")
 	}
 	if err := vh.handle(context.Background(), msg); err != nil {
 		t.Fatalf("retry handle: %v", err)
