@@ -33,11 +33,10 @@ var (
 
 // ConfigureAuth wires GoTrue JWT validation and the cluster issuer registry.
 // Call once at gateway startup after PostgREST is available.
-func ConfigureAuth(pr *postgrest.Client, pbCfg config.PocketBase, supabaseCfg config.Supabase) {
+func ConfigureAuth(pr *postgrest.Client, homeIssuerHost string, supabaseCfg config.Supabase) {
 	authPR = pr
 	clusterIssuers = cluster.NewIssuerRegistry(pr, cluster.IssuerRegistryConfig{
-		HomeFetch:      pbCfg.URL,
-		HomeIssuerHost: pbCfg.IssuerHost,
+		HomeIssuerHost: homeIssuerHost,
 	})
 	gotrueUserAuth = gotrue.NewJWTValidator(gotrue.JWTValidatorConfig{
 		Secret: supabaseCfg.JWTSecret,

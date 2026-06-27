@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,8 +27,9 @@ type Config struct {
 	PKIMount      string
 	PKIRole       string
 	GrpcPort      int
-	HomeIssuerHost string
+	HomeIssuerHost   string
 	HomeGrpcOverride string
+	HomeGrpcServerName string
 }
 
 // Client calls persistent.Daemon Info over mTLS.
@@ -193,7 +195,14 @@ func (c *Client) conn(ctx context.Context, clusterID int64) (*grpc.ClientConn, e
 	if target == "" {
 		return nil, fmt.Errorf("cluster %d: no gRPC target", clusterID)
 	}
-	dialOpts, err := vaultpki.GrpcDialOptions(c.mtls)
+	serverName := ""
+	if o := strings.TrimSpace(c.cfg.HomeGrpcOverride); o != "" {
+		if c.cfg.HomeIssuerHost == "" ||
+			strings.EqualFold(cluster.NormalizeHost(info.Domain), cluster.NormalizeHost(c.cfg.HomeIssuerHost)) {
+			serverName = c.cfg.HomeGrpcServerName
+		}
+	}
+	dialOpts, err := vaultpki.GrpcDialOptions(c.mtls, serverName)
 	if err != nil {
 		return nil, err
 	}

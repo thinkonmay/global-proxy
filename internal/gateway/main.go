@@ -16,8 +16,8 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterrouting"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterrouting"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
@@ -66,7 +66,7 @@ func Run() error {
 		Transport:  bt,
 	})
 
-	auth.ConfigureAuth(pr, cfg.PocketBase, cfg.Supabase)
+	auth.ConfigureAuth(pr, cfg.Runtime.Grpc.HomeIssuerHost, cfg.Supabase)
 
 	eventBus, err := connectBus(cfg)
 	if err != nil {
@@ -113,15 +113,16 @@ func Run() error {
 		return fmt.Errorf("runtime gRPC requires upstreams.vault")
 	}
 	daemonGRPC, err := daemonclient.New(context.Background(), daemonclient.Config{
-		VaultURL:         cfg.Upstreams.Vault,
-		VaultPassword:    cfg.Runtime.Grpc.VaultPassword,
-		VaultGatewayKey:  cfg.PostgREST.ServiceKey,
-		ClientCN:         cfg.Runtime.Grpc.ClientCN,
-		PKIMount:         cfg.Runtime.Grpc.PKIMount,
-		PKIRole:          cfg.Runtime.Grpc.PKIRole,
-		GrpcPort:         cfg.Runtime.Grpc.Port,
-		HomeIssuerHost:   cfg.Runtime.Grpc.HomeIssuerHost,
-		HomeGrpcOverride: cfg.Runtime.Grpc.HomeOverride,
+		VaultURL:           cfg.Upstreams.Vault,
+		VaultPassword:      cfg.Runtime.Grpc.VaultPassword,
+		VaultGatewayKey:    cfg.PostgREST.ServiceKey,
+		ClientCN:           cfg.Runtime.Grpc.ClientCN,
+		PKIMount:           cfg.Runtime.Grpc.PKIMount,
+		PKIRole:            cfg.Runtime.Grpc.PKIRole,
+		GrpcPort:           cfg.Runtime.Grpc.Port,
+		HomeIssuerHost:     cfg.Runtime.Grpc.HomeIssuerHost,
+		HomeGrpcOverride:   cfg.Runtime.Grpc.HomeOverride,
+		HomeGrpcServerName: cfg.Runtime.Grpc.HomeServerName,
 	}, pr)
 	if err != nil {
 		return fmt.Errorf("daemon gRPC client: %w", err)

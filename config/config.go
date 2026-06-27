@@ -17,7 +17,6 @@ type Config struct {
 	Port           string         `mapstructure:"port"`
 	Log            Log            `mapstructure:"log"`
 	PostgREST      PostgREST      `mapstructure:"postgrest"`
-	PocketBase     PocketBase     `mapstructure:"pocketbase"`
 	Supabase       Supabase       `mapstructure:"supabase"`
 	Upstreams      Upstreams      `mapstructure:"upstreams"`
 	Admin          Admin          `mapstructure:"admin"`
@@ -115,8 +114,6 @@ type Gateway struct {
 
 // Runtime configures gateway→cluster runtime (Track C3).
 type Runtime struct {
-	// ClusterSecret is deprecated — runtime uses virtdaemon gRPC only (Track C3).
-	ClusterSecret string `mapstructure:"clusterSecret"`
 	// Grpc enables mTLS virtdaemon gRPC for GET /v1/runtime/info (D25/D26).
 	Grpc RuntimeGrpc `mapstructure:"grpc"`
 }
@@ -130,6 +127,8 @@ type RuntimeGrpc struct {
 	PKIRole        string `mapstructure:"pkiRole"`
 	HomeIssuerHost string `mapstructure:"homeIssuerHost"`
 	HomeOverride   string `mapstructure:"homeOverride"`
+	// HomeServerName is TLS SNI when HomeOverride dials an IP (cert CN is the node hostname).
+	HomeServerName string `mapstructure:"homeServerName"`
 	VaultPassword  string `mapstructure:"vaultPassword"`
 }
 
@@ -190,15 +189,6 @@ type PostgREST struct {
 	URL        string `mapstructure:"url" validate:"required,url"`
 	AnonKey    string `mapstructure:"anonKey"`
 	ServiceKey string `mapstructure:"serviceKey"`
-}
-
-// PocketBase holds cluster PocketBase superuser credentials for gateway-side
-// admin API calls (auth-with-password once, bearer token reuse).
-type PocketBase struct {
-	URL        string `mapstructure:"url" validate:"omitempty,url"`
-	IssuerHost string `mapstructure:"issuerHost" validate:"omitempty"`
-	Username   string `mapstructure:"username"`
-	Password   string `mapstructure:"password"`
 }
 
 type Nats struct {

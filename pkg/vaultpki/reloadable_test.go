@@ -8,7 +8,7 @@ import (
 
 func TestReloadableStoreAndClientTLS(t *testing.T) {
 	// Minimal self-signed material is not needed — test nil path returns insecure opts.
-	opts, err := vaultpki.GrpcDialOptions(nil)
+	opts, err := vaultpki.GrpcDialOptions(nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

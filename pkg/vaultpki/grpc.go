@@ -3,6 +3,7 @@ package vaultpki
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -10,8 +11,9 @@ import (
 )
 
 // GrpcDialOptions returns client options for virtdaemon↔virtdaemon gRPC.
+// serverName sets TLS SNI when the dial target is an IP but the server cert CN is a hostname.
 // Pass nil to use plaintext (no mTLS).
-func GrpcDialOptions(r *Reloadable) ([]grpc.DialOption, error) {
+func GrpcDialOptions(r *Reloadable, serverName string) ([]grpc.DialOption, error) {
 	opts := []grpc.DialOption{
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
 	}
@@ -22,6 +24,9 @@ func GrpcDialOptions(r *Reloadable) ([]grpc.DialOption, error) {
 	cfg, err := r.ClientTLSConfig()
 	if err != nil {
 		return nil, err
+	}
+	if sn := strings.TrimSpace(serverName); sn != "" {
+		cfg.ServerName = sn
 	}
 	opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(cfg)))
 	return opts, nil

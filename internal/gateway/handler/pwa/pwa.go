@@ -2,7 +2,6 @@ package pwa
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
@@ -31,8 +30,7 @@ func New(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, persona 
 	}
 	return &Handler{
 		pr:      pr,
-		pbURL:   strings.TrimRight(cfg.PocketBase.URL, "/"),
-		pbAdmin: pocketbase.New(pocketbase.Config{URL: cfg.PocketBase.URL, Username: cfg.PocketBase.Username, Password: cfg.PocketBase.Password, Transport: rt}),
+		pbAdmin: pocketbase.New(pocketbase.Config{Transport: rt}),
 		persona: persona,
 		llm:     cfg.LLM,
 		httpClient: &http.Client{

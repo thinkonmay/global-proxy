@@ -75,8 +75,9 @@ func main() {
 				PKIMount:         cfg.Runtime.Grpc.PKIMount,
 				PKIRole:          cfg.Runtime.Grpc.PKIRole,
 				GrpcPort:         cfg.Runtime.Grpc.Port,
-				HomeIssuerHost:   cfg.Runtime.Grpc.HomeIssuerHost,
-				HomeGrpcOverride: cfg.Runtime.Grpc.HomeOverride,
+				HomeIssuerHost:     cfg.Runtime.Grpc.HomeIssuerHost,
+				HomeGrpcOverride:   cfg.Runtime.Grpc.HomeOverride,
+				HomeGrpcServerName: cfg.Runtime.Grpc.HomeServerName,
 			}, pr)
 			if err != nil {
 				log.Fatalf("daemon gRPC client: %v", err)

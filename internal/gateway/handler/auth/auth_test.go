@@ -187,7 +187,7 @@ func TestConfigureAuthLinksUserOnRequireUser(t *testing.T) {
 	defer srv.Close()
 
 	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
-	ConfigureAuth(pr, config.PocketBase{}, config.Supabase{JWTSecret: secret})
+	ConfigureAuth(pr, "", config.Supabase{JWTSecret: secret})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
 	req.Header.Set("Authorization", "Bearer "+testsupport.GoTrueJWT(t, secret, "auth-sub", "linked@example.com"))
