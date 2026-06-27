@@ -29,7 +29,7 @@ func New(pr *postgrest.Client, rt http.RoundTripper) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	router.V1(mux).GET("/jobs/history", h.History)
+	router.V1(mux).GETExact("/jobs/history", h.History)
 }
 
 // History wraps get_job_history for poll fallback when SSE is unavailable.

@@ -41,6 +41,13 @@ func (g *Group) Handle(method, path string, fn http.HandlerFunc) {
 	}
 }
 
+// GETExact registers GET on the group-prefixed path without a trailing-slash alias.
+// Use for fixed paths that sit beside wildcard siblings (e.g. /jobs/history next to
+// /jobs/{jobId}/events) where a "/path/" prefix rule would overlap the wildcard.
+func (g *Group) GETExact(path string, fn http.HandlerFunc) {
+	g.mux.HandleFunc(http.MethodGet+" "+g.prefix+path, fn)
+}
+
 // GET registers a handler for GET requests on the group-prefixed path.
 func (g *Group) GET(path string, fn http.HandlerFunc) { g.Handle(http.MethodGet, path, fn) }
 
