@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
@@ -183,6 +184,38 @@ func TestBillingListActiveAddonsWithGoTrueToken(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBillingListActiveAddonsNoSubscription(t *testing.T) {
+	const secret = "gotrue-test-secret"
+	auth.ConfigureGoTrueAuth(secret)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rpc/get_active_addons" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":"P0001","message":"email do not have any subscription"}`))
+	}))
+	defer srv.Close()
+
+	pr := postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"})
+	h := New(pr, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/billing/addons", nil)
+	req.Header.Set("Authorization", "Bearer "+testsupport.GoTrueJWT(t, secret, "u1", "nosub@example.com"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"data":[]`) {
+		t.Fatalf("expected empty data array, got: %s", rec.Body.String())
 	}
 }
 

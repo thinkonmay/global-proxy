@@ -3,12 +3,14 @@ package billing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 )
 
 func (h *Handler) AddonCharges(w http.ResponseWriter, r *http.Request) {
@@ -39,10 +41,21 @@ func (h *Handler) ListActiveAddons(w http.ResponseWriter, r *http.Request) {
 
 	var rows json.RawMessage
 	if err := h.pr.RPC(ctx, "get_active_addons", map[string]any{"email": email}, &rows); err != nil {
+		if isNoActiveSubscriptionErr(err) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": json.RawMessage("[]")})
+			return
+		}
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rows})
+}
+
+func isNoActiveSubscriptionErr(err error) bool {
+	if pe, ok := errors.AsType[*postgrest.Error](err); ok {
+		return strings.Contains(string(pe.Body), "email do not have any subscription")
+	}
+	return strings.Contains(err.Error(), "email do not have any subscription")
 }
 
 func (h *Handler) SubscribeAddon(w http.ResponseWriter, r *http.Request) {
