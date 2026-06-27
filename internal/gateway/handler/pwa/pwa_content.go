@@ -161,15 +161,14 @@ func (h *Handler) Feedback(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Referrals(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email  string `json:"email"`
-		Issuer string `json:"issuer"`
+		Email string `json:"email"`
 	}
 	if err := httpx.ReadJSONBody(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.Email == "" || req.Issuer == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "Missing email or issuer")
+	if req.Email == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "Missing email")
 		return
 	}
 	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)

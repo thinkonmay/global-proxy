@@ -14,15 +14,14 @@ import (
 
 func (h *Handler) IsSuperuser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email  string `json:"email"`
-		Issuer string `json:"issuer"`
+		Email string `json:"email"`
 	}
 	if err := httpx.ReadJSONBody(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.Email == "" || req.Issuer == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "Missing email or issuer")
+	if req.Email == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "Missing email")
 		return
 	}
 	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
@@ -46,14 +45,13 @@ func (h *Handler) UpdateCodeName(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AppID    json.Number `json:"app_id"`
 		CodeName string      `json:"code_name"`
-		Issuer   string      `json:"issuer"`
 	}
 	if err := httpx.ReadJSONBody(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.CodeName == "" || req.Issuer == "" || req.AppID == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "Missing app_id, code_name, or issuer")
+	if req.CodeName == "" || req.AppID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "Missing app_id or code_name")
 		return
 	}
 	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
