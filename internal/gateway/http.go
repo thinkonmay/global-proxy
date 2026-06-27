@@ -44,10 +44,7 @@ const (
 	rateBurst = 100
 )
 
-var (
-	ipWhitelist = []string{}
-	ipBlacklist = []string{}
-)
+var ipBlacklist = []string{}
 
 func newMux(
 	h *handler.Handler,
@@ -177,7 +174,7 @@ func newMux(
 	chain := []guard.Middleware{
 		guard.Denylist(guard.IPSet(ipBlacklist...)),
 		cors.Middleware(cfg),
-		guard.Allowlist(guard.IPSet(ipWhitelist...)),
+		guard.Allowlist(guard.IPSet(cfg.WAF.AllowedIPs...)),
 		guard.RateLimit(guard.RateLimitConfig{RPS: rateRPS, Burst: rateBurst}),
 	}
 	if coraza != nil {

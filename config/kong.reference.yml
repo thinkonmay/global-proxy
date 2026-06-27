@@ -78,8 +78,8 @@ services:
 # Blocked: POST/GET /api/mcp → 403
 # auth-v1: GoTrue at http://auth:9999 — internal Kong + public gateway proxy (D28 / Track C1).
 
-# WAF (globalproxy parity): catalog read paths restricted to waf.allowedIPs in config.yaml.
-# Default paths: config/waf_defaults.go (mirrors globalproxy -waf-paths in planning.md).
+# WAF: OWASP Coraza at the public gateway edge (APP_WAF_CORAZA_*).
+# APP_WAF_ALLOWEDIPS: trusted client IPs that bypass inbound rate limits (ops/lab).
 
 consumers:
   - username: anon

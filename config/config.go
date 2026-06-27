@@ -172,11 +172,11 @@ type Supabase struct {
 	DashboardPassword string `mapstructure:"dashboardPassword"`
 }
 
-// WAF restricts public catalog read paths to allowed IPs (globalproxy parity).
+// WAF is OWASP Coraza at the gateway edge (D22). AllowedIPs marks trusted
+// client IPs that bypass inbound rate limits (ops / lab); not a public PostgREST allowlist.
 type WAF struct {
-	Coraza          Coraza   `mapstructure:"coraza"`
-	AllowedIPs      []string `mapstructure:"allowedIPs"`
-	PublicReadPaths []string `mapstructure:"publicReadPaths"`
+	Coraza     Coraza   `mapstructure:"coraza"`
+	AllowedIPs []string `mapstructure:"allowedIPs"`
 }
 
 // Coraza configures OWASP Coraza WAF (ModSecurity-compatible) at the edge.
@@ -307,9 +307,6 @@ func mergeSupabaseKeys(cfg *Config) {
 	}
 	if cfg.Supabase.ServiceKey == "" {
 		cfg.Supabase.ServiceKey = cfg.PostgREST.ServiceKey
-	}
-	if len(cfg.WAF.PublicReadPaths) == 0 {
-		cfg.WAF.PublicReadPaths = defaultPublicReadPaths()
 	}
 	mergeCorazaDefaults(&cfg.WAF.Coraza)
 	mergeUpstreamDefaults(&cfg.Upstreams)
