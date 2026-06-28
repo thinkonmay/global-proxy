@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	schedpersona "github.com/thinkonmay/global-proxy/api/internal/worker/persona"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/scheduler"
 )
@@ -23,6 +24,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	config.ApplyWorkerLLMConfig(cfg)
 	cfg.SetupLogger()
 
 	if !cfg.Scheduler.Enabled {
@@ -58,6 +60,11 @@ func main() {
 	} else if cfg.Scheduler.Enabled {
 		slog.Info("scheduler enabled but no jobs configured")
 	}
+
+	if err := schedpersona.StartSchedulerLoop(ctx, cfg, pr, slog.Default()); err != nil {
+		log.Fatalf("persona scheduler: %v", err)
+	}
+
 	<-ctx.Done()
 	slog.Info("scheduler stopped")
 }

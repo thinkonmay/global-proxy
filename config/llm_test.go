@@ -78,3 +78,19 @@ func TestApplyGatewayLLMConfigRespectsConfigYAMLProxyURL(t *testing.T) {
 		t.Fatalf("BaseURL = %q, want config.yaml proxy URL", cfg.LLM.BaseURL)
 	}
 }
+
+func TestApplyWorkerLLMConfigUsesWorkerKey(t *testing.T) {
+	litellmProxyBaseURL = "http://litellm:4000/v1"
+	t.Setenv("APP_LLM_APIKEY", "sk-worker-virtual")
+	t.Setenv("LLM_WORKER_API_KEY", "")
+
+	cfg := &Config{LLM: LLM{BaseURL: "https://api.deepseek.com/v1", APIKey: "ignored"}}
+	ApplyWorkerLLMConfig(cfg)
+
+	if cfg.LLM.BaseURL != "http://litellm:4000/v1" {
+		t.Fatalf("BaseURL = %q, want LiteLLM proxy", cfg.LLM.BaseURL)
+	}
+	if cfg.LLM.APIKey != "sk-worker-virtual" {
+		t.Fatalf("APIKey = %q, want worker virtual key", cfg.LLM.APIKey)
+	}
+}

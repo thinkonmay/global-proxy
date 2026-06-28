@@ -66,16 +66,15 @@ type UsageCollector struct {
 	SessionMinutes int    `mapstructure:"sessionMinutes"`
 }
 
-// Persona configures the global CDP interim worker (P1-C).
+// Persona configures the global CDP worker (P1-C / CDP-2).
 type Persona struct {
-	Enabled          bool   `mapstructure:"enabled"`
-	Every            string `mapstructure:"every"`
-	MaxBatch         int    `mapstructure:"maxBatch"`
-	Concurrent       int    `mapstructure:"concurrent"`
-	RybbitMinSpacing string `mapstructure:"rybbitMinSpacing"`
-	RybbitURL        string `mapstructure:"rybbitURL"`
-	RybbitAPIKey     string `mapstructure:"rybbitAPIKey"`
-	RybbitSiteDomain string `mapstructure:"rybbitSiteDomain"`
+	Enabled             bool   `mapstructure:"enabled"`
+	Every               string `mapstructure:"every"`
+	MaxBatch            int    `mapstructure:"maxBatch"`
+	Concurrent          int    `mapstructure:"concurrent"`
+	EnrichMinSpacing    string `mapstructure:"enrichMinSpacing"`
+	AppUsageDays        int    `mapstructure:"appUsageDays"`
+	ScheduleOnScheduler bool   `mapstructure:"scheduleOnScheduler"`
 }
 
 // Mail configures product/in-app mail delivery in the worker (F18).
@@ -245,7 +244,8 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("persona.every", "1m")
 	v.SetDefault("persona.maxBatch", 20)
 	v.SetDefault("persona.concurrent", 10)
-	v.SetDefault("persona.rybbitMinSpacing", "250ms")
+	v.SetDefault("persona.enrichMinSpacing", "250ms")
+	v.SetDefault("persona.appUsageDays", 30)
 	v.SetDefault("payment.enabled", false)
 	v.SetDefault("payment.pollEvery", "5m")
 	v.SetDefault("mail.enabled", true)
@@ -302,6 +302,7 @@ func NewConfig() (*Config, error) {
 	mergeLogsDefaults(&cfg)
 	mergeRoutingDefaults(&cfg)
 	mergeLLMDefaults(&cfg)
+	mergePersonaDefaults(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
 	}
@@ -335,6 +336,8 @@ func defaultCorazaSkipPaths() []string {
 		"/vault/v1/",
 		"/v1/metrics/push",
 		"/v1/logs/push",
+		"/v1/analytics/process/push",
+		"/v1/analytics/process/blacklist",
 		"/v1/cluster/routing/",
 		"/api/track",
 		"/api/identify",

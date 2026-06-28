@@ -43,6 +43,7 @@ ci_gateway_test_packages() {
 ./pkg/logingest
 ./pkg/idempotency
 ./pkg/memo
+./pkg/persona
 ./pkg/postgrest
 ./pkg/superuser
 ./pkg/scheduler

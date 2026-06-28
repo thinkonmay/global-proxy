@@ -61,6 +61,7 @@ func (b *SessionBuilder) Prepare(ctx context.Context, email string, session *per
 
 	b.attachEntitledAddons(ctx, session, email, domain)
 	b.attachKeepalive(session)
+	b.attachOwnerEmail(session, email)
 
 	volumeIDs, err := b.volumeIDsForCluster(ctx, email, clusterID)
 	if err != nil {
@@ -131,6 +132,17 @@ func (b *SessionBuilder) attachAppGrant(ctx context.Context, session *persistent
 	if session.App.Keepalive != nil && claim.KeepaliveID > 0 {
 		session.App.Keepalive.KeepaliveID = claim.KeepaliveID
 	}
+}
+
+// attachOwnerEmail stashes the authenticated user on the session for node-side CDP analytics.
+func (b *SessionBuilder) attachOwnerEmail(session *persistent.WorkerSession, email string) {
+	if session == nil || email == "" || session.Thinkmay == nil {
+		return
+	}
+	if session.App == nil {
+		session.App = &persistent.AppSession{}
+	}
+	session.App.Email = strings.TrimSpace(email)
 }
 
 func (b *SessionBuilder) attachKeepalive(session *persistent.WorkerSession) {

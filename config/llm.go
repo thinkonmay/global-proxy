@@ -79,6 +79,34 @@ func ApplyGatewayLLMConfig(cfg *Config) {
 	cfg.LLM.BaseURL = strings.TrimRight(baseURL, "/")
 }
 
+// ApplyWorkerLLMConfig routes worker persona/recommendation calls through LiteLLM
+// using LLM_WORKER_API_KEY (APP_LLM_APIKEY). Upstream provider URLs are blocked.
+func ApplyWorkerLLMConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	mergeLLMDefaults(cfg)
+
+	if v := strings.TrimSpace(os.Getenv("APP_LLM_APIKEY")); v != "" {
+		cfg.LLM.APIKey = v
+	} else if v := strings.TrimSpace(os.Getenv("LLM_WORKER_API_KEY")); v != "" {
+		cfg.LLM.APIKey = v
+	}
+
+	proxyURL := litellmProxyBaseURL
+	baseURL := strings.TrimSpace(cfg.LLM.BaseURL)
+	if baseURL == "" {
+		baseURL = proxyURL
+	} else if isDirectLLMProviderURL(baseURL) {
+		slog.Warn("worker llm baseURL points at an upstream provider; forcing LiteLLM proxy",
+			"configured", baseURL,
+			"litellm", proxyURL,
+		)
+		baseURL = proxyURL
+	}
+	cfg.LLM.BaseURL = strings.TrimRight(baseURL, "/")
+}
+
 func isDirectLLMProviderURL(raw string) bool {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" {

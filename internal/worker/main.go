@@ -28,6 +28,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	config.ApplyWorkerLLMConfig(cfg)
 	cfg.SetupLogger()
 
 	outbound := guard.New(nil, guard.Config{

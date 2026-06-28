@@ -32,7 +32,6 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.ClickHouse.Database, "APP_CLICKHOUSE_DATABASE")
 	setEnvString(&cfg.ClickHouse.Username, "APP_CLICKHOUSE_USERNAME")
 	setEnvString(&cfg.ClickHouse.Password, "APP_CLICKHOUSE_PASSWORD")
-	setEnvString(&cfg.Persona.RybbitAPIKey, "APP_PERSONA_RYBBITAPIKEY")
 	setEnvString(&cfg.Payment.Stripe.SecretKey, "APP_PAYMENT_STRIPE_SECRETKEY")
 	setEnvString(&cfg.Payment.Stripe.WebhookSecret, "APP_PAYMENT_STRIPE_WEBHOOKSECRET")
 	setEnvString(&cfg.Payment.PayOS.ClientID, "APP_PAYMENT_PAYOS_CLIENTID")

@@ -11,29 +11,35 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 )
 
 type Config struct {
 	Every            time.Duration
 	MaxBatch         int
 	Concurrent       int
-	RybbitMinSpacing time.Duration
-	Rybbit           RybbitConfig
+	EnrichMinSpacing time.Duration
+	AppUsageDays     int
+	Usage            *usage.Querier
 	LLM              LLMConfig
 }
 
 type Worker struct {
 	pr     *postgrest.Client
-	rybbit *Rybbit
+	usage  *usage.Querier
 	llm    *synthesizer
+	enrich *storeEnricher
 	cfg    Config
 	log    *slog.Logger
 
-	rybbitMu      sync.Mutex
-	lastRybbitHit time.Time
+	enrichMu      sync.Mutex
+	lastEnrichHit time.Time
 }
 
-func NewWorker(pr *postgrest.Client, cfg Config, log *slog.Logger) (*Worker, error) {
+func NewWorker(pr *postgrest.Client, usageQ *usage.Querier, cfg Config, log *slog.Logger) (*Worker, error) {
+	if usageQ == nil {
+		return nil, fmt.Errorf("persona requires clickhouse usage querier")
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -43,20 +49,21 @@ func NewWorker(pr *postgrest.Client, cfg Config, log *slog.Logger) (*Worker, err
 	if cfg.Concurrent <= 0 {
 		cfg.Concurrent = 10
 	}
-	if cfg.RybbitMinSpacing <= 0 {
-		cfg.RybbitMinSpacing = 250 * time.Millisecond
+	if cfg.EnrichMinSpacing <= 0 {
+		cfg.EnrichMinSpacing = 250 * time.Millisecond
 	}
-	rybbit, err := NewRybbit(cfg.Rybbit)
-	if err != nil {
-		return nil, err
+	if cfg.AppUsageDays <= 0 {
+		cfg.AppUsageDays = 30
 	}
-	return &Worker{
-		pr:     pr,
-		rybbit: rybbit,
-		llm:    newSynthesizer(cfg.LLM),
-		cfg:    cfg,
-		log:    log,
-	}, nil
+	w := &Worker{
+		pr:    pr,
+		usage: usageQ,
+		llm:   newSynthesizer(cfg.LLM),
+		cfg:   cfg,
+		log:   log,
+	}
+	w.enrich = newStoreEnricher(pr, cfg.LLM.HTTP, w.waitEnrichSlot)
+	return w, nil
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -66,7 +73,7 @@ func (w *Worker) Run(ctx context.Context) {
 		"every", w.cfg.Every,
 		"max_batch", w.cfg.MaxBatch,
 		"concurrent", w.cfg.Concurrent,
-		"rybbit_spacing", w.cfg.RybbitMinSpacing,
+		"app_usage_days", w.cfg.AppUsageDays,
 	)
 	for {
 		select {
@@ -126,12 +133,13 @@ func (w *Worker) refreshOne(ctx context.Context, c Candidate) error {
 		}
 	}
 
-	if err := w.waitRybbitSlot(ctx); err != nil {
-		return err
-	}
-	sessionsYAML, err := w.rybbit.FetchSessionYAML(ctx, pbUID)
+	apps, err := w.usage.AppUsageByEmail(ctx, c.Email, w.cfg.AppUsageDays, 30)
 	if err != nil {
 		_ = w.pr.RPC(ctx, "touch_persona_refresh", map[string]any{"p_email": c.Email}, nil)
+		return err
+	}
+	appUsageJSON, err := json.Marshal(apps)
+	if err != nil {
 		return err
 	}
 
@@ -140,10 +148,13 @@ func (w *Worker) refreshOne(ctx context.Context, c Candidate) error {
 		payments = nil
 	}
 
-	result, err := w.llm.Synthesize(ctx, sessionsYAML, payments)
+	result, err := w.llm.Synthesize(ctx, string(appUsageJSON), payments)
 	if err != nil {
 		_ = w.pr.RPC(ctx, "touch_persona_refresh", map[string]any{"p_email": c.Email}, nil)
 		return err
+	}
+	if err := w.enrich.enrichResult(ctx, result); err != nil {
+		w.log.Warn("persona store enrich partial failure", "email", c.Email, "err", err)
 	}
 
 	summary, _ := json.Marshal(result.UsageSummary)
@@ -151,19 +162,19 @@ func (w *Worker) refreshOne(ctx context.Context, c Candidate) error {
 	recs, _ := json.Marshal(result.UserRecommendation)
 
 	return w.pr.RPC(ctx, "upsert_persona", map[string]any{
-		"p_email":          c.Email,
-		"p_pb_user_id":     pbUID,
-		"p_summary":        json.RawMessage(summary),
-		"p_profile":        json.RawMessage(profile),
+		"p_email":           c.Email,
+		"p_pb_user_id":      pbUID,
+		"p_summary":         json.RawMessage(summary),
+		"p_profile":         json.RawMessage(profile),
 		"p_recommendations": json.RawMessage(recs),
 	}, nil)
 }
 
-func (w *Worker) waitRybbitSlot(ctx context.Context) error {
-	w.rybbitMu.Lock()
-	defer w.rybbitMu.Unlock()
-	if !w.lastRybbitHit.IsZero() {
-		wait := w.cfg.RybbitMinSpacing - time.Since(w.lastRybbitHit)
+func (w *Worker) waitEnrichSlot(ctx context.Context) error {
+	w.enrichMu.Lock()
+	defer w.enrichMu.Unlock()
+	if !w.lastEnrichHit.IsZero() {
+		wait := w.cfg.EnrichMinSpacing - time.Since(w.lastEnrichHit)
 		if wait > 0 {
 			timer := time.NewTimer(wait)
 			select {
@@ -174,7 +185,7 @@ func (w *Worker) waitRybbitSlot(ctx context.Context) error {
 			}
 		}
 	}
-	w.lastRybbitHit = time.Now()
+	w.lastEnrichHit = time.Now()
 	return nil
 }
 

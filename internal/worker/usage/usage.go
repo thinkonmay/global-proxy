@@ -40,6 +40,7 @@ func (h *Handler) Init(eventBus bus.Client) {
 		bus.WithDeliverNew(),
 		bus.WithoutDLQ(),
 	)
+	h.initAppUsageSink(eventBus)
 }
 
 // handleUsage batch-inserts usage events into ClickHouse. The bus buffers by

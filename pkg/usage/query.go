@@ -29,6 +29,37 @@ type DataUsageEntry struct {
 	SizeInGB  int64     `json:"size_in_gb" ch:"size_in_gb"`
 }
 
+// AppUsageEntry is one aggregated app row for persona / recommendations.
+type AppUsageEntry struct {
+	AppKey      string  `json:"app_key" ch:"app_key"`
+	DurationSec float64 `json:"duration_sec" ch:"duration_sec"`
+	LaunchCount uint64  `json:"launch_count" ch:"launch_count"`
+}
+
+// AppUsageByEmail returns top apps by dwell time for the last days (default 30).
+func (q *Querier) AppUsageByEmail(ctx context.Context, email string, days int, limit int) ([]AppUsageEntry, error) {
+	if days <= 0 {
+		days = 30
+	}
+	if limit <= 0 {
+		limit = 30
+	}
+	var rows []AppUsageEntry
+	err := q.ch.Select(ctx, &rows, `
+		SELECT
+			app_key,
+			sum(duration_sec) AS duration_sec,
+			sum(launch_count) AS launch_count
+		FROM session_app_usage
+		WHERE user_email = ?
+		  AND event_time >= now() - INTERVAL ? DAY
+		GROUP BY app_key
+		ORDER BY duration_sec DESC
+		LIMIT ?
+	`, email, days, limit)
+	return rows, err
+}
+
 // Heatmap returns daily session hours for the last days (default 365).
 func (q *Querier) Heatmap(ctx context.Context, email string, days int) ([]HeatmapEntry, error) {
 	if days <= 0 {

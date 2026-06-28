@@ -11,18 +11,20 @@ import (
 // silently breaks pub/sub routing, so pin them here.
 func TestTopicNames(t *testing.T) {
 	cases := map[string]string{
-		"payment": TopicPayment.Name,
-		"sse":     TopicSSE.Name,
-		"usage":   TopicUsage.Name,
-		"volume":  TopicVolumeJob.Name,
-		"mail":    TopicMailJob.Name,
+		"payment":   TopicPayment.Name,
+		"sse":       TopicSSE.Name,
+		"usage":     TopicUsage.Name,
+		"app_usage": TopicAppUsage.Name,
+		"volume":    TopicVolumeJob.Name,
+		"mail":      TopicMailJob.Name,
 	}
 	want := map[string]string{
-		"payment": "billing.payment.event",
-		"sse":     "sse",
-		"usage":   "usage.snapshot",
-		"volume":  "jobs.volume",
-		"mail":    "jobs.mail",
+		"payment":   "billing.payment.event",
+		"sse":       "sse",
+		"usage":     "usage.snapshot",
+		"app_usage": "usage.app_snapshot",
+		"volume":    "jobs.volume",
+		"mail":      "jobs.mail",
 	}
 	for k, got := range cases {
 		if got != want[k] {
@@ -100,6 +102,33 @@ func TestUsageMsgRoundTrip(t *testing.T) {
 	}
 	if out.Value != in.Value || out.Metric != in.Metric || out.UserEmail != in.UserEmail {
 		t.Errorf("round-trip mismatch: got %+v want %+v", out, in)
+	}
+}
+
+func TestAppUsageMsgRoundTrip(t *testing.T) {
+	ts := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
+	in := AppUsageMsg{
+		EventTime:        ts,
+		UserEmail:        "u@example.com",
+		RuntimeSessionID: "sess-1",
+		AppKey:           "game:elden-ring",
+		DurationSec:      120,
+		LaunchCount:      2,
+		Cluster:          "c1",
+		Node:             "n1",
+		FlushReason:      "interval",
+		FlushSeq:         1,
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out AppUsageMsg
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !out.EventTime.Equal(in.EventTime) || out.AppKey != in.AppKey || out.DurationSec != in.DurationSec {
+		t.Fatalf("round-trip mismatch: got %+v want %+v", out, in)
 	}
 }
 

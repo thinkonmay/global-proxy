@@ -1,7 +1,5 @@
 package persona
 
-import "encoding/json"
-
 type Candidate struct {
 	Email    string `json:"email"`
 	PBUserID string `json:"pb_user_id"`
@@ -20,19 +18,43 @@ type Profile struct {
 	Persona   string `json:"persona"`
 }
 
+type AppScore struct {
+	Name  string  `json:"name"`
+	Score float64 `json:"score"`
+}
+
 type Summary struct {
-	UserBatch          string          `json:"user_batch"`
-	UsageHabbit        string          `json:"usage_habbit"`
-	Frequency          string          `json:"frequency"`
-	RenewalBehavior    string          `json:"renewal_behavior"`
-	RenewalProbability string          `json:"renewal_probability"`
-	TopApps            json.RawMessage `json:"top_apps"`
+	UserBatch          string     `json:"user_batch"`
+	UsageHabbit        string     `json:"usage_habbit"`
+	Frequency          string     `json:"frequency"`
+	RenewalBehavior    string     `json:"renewal_behavior"`
+	RenewalProbability string     `json:"renewal_probability"`
+	TopApps            []AppScore `json:"top_apps"`
+}
+
+type RecommendedGame struct {
+	Name   string     `json:"name"`
+	Score  float64    `json:"score"`
+	ID     int        `json:"id,omitempty"`
+	Reason string     `json:"reason,omitempty"`
+	Info   *StoreGame `json:"info,omitempty"`
 }
 
 type GamePreference struct {
-	PlayedGame      string          `json:"played_game"`
-	Score           float64         `json:"score"`
-	Recommendations json.RawMessage `json:"recommendations"`
+	PlayedGame      string            `json:"played_game"`
+	Score           float64           `json:"score"`
+	Recommendations []RecommendedGame `json:"recommendations"`
+}
+
+type StoreGame struct {
+	ID               int64    `json:"id"`
+	Name             string   `json:"name"`
+	CodeName         string   `json:"code_name"`
+	ShortDescription string   `json:"short_description"`
+	HeaderImage      string   `json:"header_image"`
+	Genres           []string `json:"genres"`
+	Type             string   `json:"type"`
+	Rank             float64  `json:"rank"`
 }
 
 type Result struct {

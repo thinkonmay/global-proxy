@@ -25,6 +25,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/logingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
@@ -179,6 +180,7 @@ func Run() error {
 
 	logClient := eslog.NewClient(cfg.Logs.ElasticsearchURL, cfg.Logs.BulkMaxBytes)
 	logIngest := logingest.New(logClient)
+	processAnalyticsHTTP := processanalytics.New(eventBus, pr)
 
 	routingStore, err := initRoutingStore(cfg)
 	if err != nil {
@@ -192,7 +194,7 @@ func Run() error {
 	routingHTTP := clusterrouting.New(routingStore, eventBus, routingWatch)
 	routingHTTP.InitSubscriptions()
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	clientCAs, err := virtdaemonClientCAs(context.Background(), cfg)
 	if err != nil {

@@ -21,6 +21,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/logingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
@@ -66,6 +67,7 @@ func newMux(
 	mailH *mail.Handler,
 	jobsH *jobs.Handler,
 	metricsIngest *metricsingest.Handler,
+	processAnalytics *processanalytics.Handler,
 	logIngest *logingest.Handler,
 	routingHTTP *clusterrouting.Handler,
 	cfg *config.Config,
@@ -87,6 +89,9 @@ func newMux(
 	}
 	if metricsIngest != nil {
 		metricsIngest.Register(mux)
+	}
+	if processAnalytics != nil {
+		processAnalytics.Register(mux)
 	}
 	if logIngest != nil {
 		logIngest.Register(mux)
