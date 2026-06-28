@@ -52,9 +52,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		path   string
 		fn     http.HandlerFunc
 	}{
-		{http.MethodGet, "/app_info", h.AppInfo},
+		{http.MethodGet, "/app_info/{appID}", h.AppInfo},
 		{http.MethodGet, "/currency_rates", h.CurrencyRates},
-		{http.MethodGet, "/plans", h.Plans},
+		{http.MethodGet, "/plans/views/credit", h.PlansCredit},
+		{http.MethodGet, "/plans/{planName}/views/policy", h.PlanPolicy},
+		{http.MethodGet, "/plans/{planName}/views/price", h.PlanPrice},
 		{http.MethodPost, "/feedback", h.Feedback},
 		{http.MethodPost, "/referrals", h.Referrals},
 		{http.MethodPost, "/is_superuser", h.IsSuperuser},

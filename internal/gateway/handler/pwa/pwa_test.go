@@ -31,7 +31,7 @@ func TestPWAAppInfo(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/pwa/app_info?id=123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/pwa/app_info/123", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

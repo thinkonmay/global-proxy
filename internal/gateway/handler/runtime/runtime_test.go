@@ -64,7 +64,7 @@ func TestRuntimeKeepalive(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/runtime/keepalive?id=42", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/runtime/keepalive/42", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

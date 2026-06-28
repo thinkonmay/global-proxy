@@ -150,7 +150,7 @@ func (b *SessionBuilder) attachKeepalive(session *persistent.WorkerSession) {
 	if base == "" {
 		base = "https://thinkmay.net"
 	}
-	url := base + "/v1/runtime/keepalive"
+	url := base + "/v1/runtime/keepalive/"
 	if session.S3Bucket != nil {
 		session.S3Bucket.Keepalive = &persistent.Keepalive{
 			KeepaliveUrl:        url,

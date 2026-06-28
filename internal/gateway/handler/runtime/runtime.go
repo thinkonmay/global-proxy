@@ -60,10 +60,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.Handle(http.MethodPost, "/runtime/template", h.handleTemplate)
 	v1.Handle(http.MethodPost, "/runtime/resize", h.handleResize)
 	v1.Handle(http.MethodPost, "/runtime/assistant", h.handleAssistant)
-	v1.Handle(http.MethodGet, "/runtime/snapshots", h.handleListSnapshots)
+	v1.Handle(http.MethodGet, "/runtime/volumes/{volumeId}/snapshots", h.handleListVolumeSnapshots)
 	v1.Handle(http.MethodPost, "/runtime/snapshots", h.handleConfigureSnapshots)
 	v1.Handle(http.MethodPost, "/runtime/snapshots/restore", h.handleRestoreSnapshot)
-	v1.Handle(http.MethodPost, "/runtime/keepalive", h.handleKeepalive)
+	v1.Handle(http.MethodPost, "/runtime/keepalive/{keepaliveId}", h.handleKeepalive)
 	v1.Handle(http.MethodDelete, "/runtime/resource", h.handleResource)
 	v1.Handle(http.MethodGet, "/runtime/log", h.notImplemented)
 	v1.Handle(http.MethodGet, "/runtime/analytics", h.notImplemented)
@@ -334,7 +334,7 @@ func (h *Handler) handleTemplate(w http.ResponseWriter, r *http.Request) {
 	h.streamTemplate(w, r, clusterID, rename, allocate)
 }
 
-func (h *Handler) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleListVolumeSnapshots(w http.ResponseWriter, r *http.Request) {
 	if !h.requireDaemon(w) {
 		return
 	}
@@ -342,9 +342,9 @@ func (h *Handler) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	volID := strings.TrimSpace(r.URL.Query().Get("id"))
+	volID := strings.TrimSpace(r.PathValue("volumeId"))
 	if volID == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "id required")
+		httpx.WriteError(w, http.StatusBadRequest, "volume id required")
 		return
 	}
 	clusterID, err := cluster.ClusterForVolume(r.Context(), h.cfg.PostgREST, email, volID)
@@ -505,9 +505,9 @@ func (h *Handler) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) handleKeepalive(w http.ResponseWriter, r *http.Request) {
-	kaid := strings.TrimSpace(r.URL.Query().Get("id"))
+	kaid := strings.TrimSpace(r.PathValue("keepaliveId"))
 	if kaid == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "id required")
+		httpx.WriteError(w, http.StatusBadRequest, "keepalive id required")
 		return
 	}
 	n, err := strconv.ParseInt(kaid, 10, 32)

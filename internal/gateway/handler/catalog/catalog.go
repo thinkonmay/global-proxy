@@ -31,7 +31,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.GET("/catalog/banners", h.ListBanners)
 	v1.GET("/catalog/discounts", h.ListDiscounts)
 	v1.GET("/catalog/currency-rates", h.ListCurrencyRates)
-	v1.GET("/catalog/app-info", h.AppInfo)
+	v1.GET("/catalog/app-info/{appID}", h.AppInfo)
 	v1.GET("/catalog/genres", h.ListGenres)
 	v1.GET("/catalog/addons", h.ListAddons)
 	v1.GET("/catalog/blog", h.ListBlog)

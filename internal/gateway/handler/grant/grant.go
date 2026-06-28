@@ -34,6 +34,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1 := router.V1(mux)
 	v1.GET("/storage/grant", h.StorageGrant)
 	v1.GET("/app-access/claim", h.AppAccessClaim)
+	v1.GET("/app-access/claim/{appId}", h.AppAccessClaim)
 }
 
 func (h *Handler) resolveGrantDomain(ctx context.Context, r *http.Request, email string) (string, int, string) {
@@ -74,7 +75,7 @@ func (h *Handler) AppAccessClaim(w http.ResponseWriter, r *http.Request) {
 		auth.WriteAuthErr(w, status, msg)
 		return
 	}
-	appID := r.URL.Query().Get("app_id")
+	appID := strings.TrimSpace(r.PathValue("appId"))
 	ctx, cancel := context.WithTimeout(r.Context(), grantTimeout)
 	defer cancel()
 	domain, code, msg := h.resolveGrantDomain(ctx, r, email)
