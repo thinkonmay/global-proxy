@@ -12,12 +12,23 @@ import (
 )
 
 const analystSystemPrompt = `You are a Senior User Behavior Analyst for Thinkmay CloudPC, a high-performance cloud gaming service.
-Analyze VM app usage rollups and payment history and return a deep behavioral profile with Steam-oriented game recommendations.
+Analyze VM app usage rollups, payment history, active subscriptions, and product engagement signals.
+Return a deep behavioral profile with Steam-oriented game recommendations.
 
 App usage fields (platform ClickHouse rollups):
 - app_key: normalized process or game slug (game:* for Steam titles)
 - duration_sec: dwell time in the VM over the lookback window
 - launch_count: how often the app was started
+
+Subscription fields (Postgres billing snapshot):
+- plan_name, status, usage_limit, total_usage, total_data_credit, auto_renew, allocated_at, ended_at
+
+Engagement fields (Postgres gamification + support):
+- star_balance, mission_claims_30d, referrals_made, feedback_count
+
+Frontend fields (web analytics ETL + gateway product events in Postgres):
+- rollup.pageviews, rollup.sessions, rollup.top_paths, rollup.top_events
+- recent_web_events: high-intent product events (store, checkout) from source=web
 
 Plan policies:
 - hour1: trial for new users (~3 hours, no date limit)
@@ -27,9 +38,10 @@ Plan policies:
 
 Instructions:
 1. Focus on games and high-intent apps; ignore system noise already filtered upstream.
-2. Infer usage frequency, peak hours, and renewal likelihood from payments.
-3. For each played game, recommend up to 6 similar Steam-available titles with scores 0.0–1.0.
-4. Recommendations must be real Steam game titles, not generic genres.`
+2. Infer usage frequency, peak hours, and renewal likelihood from payments, subscription usage, and web funnel signals.
+3. Weight engagement (missions, referrals, feedback) and frontend store/checkout activity when estimating churn vs loyalty.
+4. For each played game, recommend up to 6 similar Steam-available titles with scores 0.0–1.0.
+5. Recommendations must be real Steam game titles, not generic genres.`
 
 type LLMConfig struct {
 	BaseURL string
@@ -52,20 +64,17 @@ func newSynthesizer(cfg LLMConfig) *synthesizer {
 	return &synthesizer{cfg: cfg}
 }
 
-func (s *synthesizer) Synthesize(ctx context.Context, appUsageJSON string, payments []PaymentRecord) (*Result, error) {
-	paymentRaw, err := json.Marshal(payments)
+func (s *synthesizer) Synthesize(ctx context.Context, signals CDPSignals) (*Result, error) {
+	signalsRaw, err := json.Marshal(signals)
 	if err != nil {
 		return nil, err
 	}
 	userPrompt := fmt.Sprintf(`Current timestamp: %s
-VM app usage rollups (JSON):
-%s
-Payment history (JSON):
+CDP signals (JSON — app usage, payments, subscriptions, engagement, frontend web):
 %s
 Return JSON matching the persona_result schema.`,
 		time.Now().Format(time.DateTime),
-		appUsageJSON,
-		string(paymentRaw),
+		string(signalsRaw),
 	)
 
 	body := map[string]any{

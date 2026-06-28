@@ -30,6 +30,7 @@ type Config struct {
 	Routing        Routing        `mapstructure:"routing"`
 	UsageCollector UsageCollector `mapstructure:"usageCollector"`
 	Persona        Persona        `mapstructure:"persona"`
+	CDP            CDP            `mapstructure:"cdp"`
 	Payment        Payment        `mapstructure:"payment"`
 	Mail           Mail           `mapstructure:"mail"`
 	Gateway        Gateway        `mapstructure:"gateway"`
@@ -75,6 +76,19 @@ type Persona struct {
 	EnrichMinSpacing    string `mapstructure:"enrichMinSpacing"`
 	AppUsageDays        int    `mapstructure:"appUsageDays"`
 	ScheduleOnScheduler bool   `mapstructure:"scheduleOnScheduler"`
+}
+
+// CDP configures Customer Data Platform batch ingest (CDP-3b frontend ETL).
+type CDP struct {
+	FrontendETL      CDPFrontendETL `mapstructure:"frontendETL"`
+	RybbitClickHouse ClickHouse     `mapstructure:"rybbitClickHouse"`
+	RybbitSiteID     int            `mapstructure:"rybbitSiteId"`
+}
+
+type CDPFrontendETL struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Every   string `mapstructure:"every"`
+	Days    int    `mapstructure:"days"`
 }
 
 // Mail configures product/in-app mail delivery in the worker (F18).
@@ -246,6 +260,10 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("persona.concurrent", 10)
 	v.SetDefault("persona.enrichMinSpacing", "250ms")
 	v.SetDefault("persona.appUsageDays", 30)
+	v.SetDefault("cdp.frontendETL.enabled", false)
+	v.SetDefault("cdp.frontendETL.every", "6h")
+	v.SetDefault("cdp.frontendETL.days", 30)
+	v.SetDefault("cdp.rybbitClickHouse.database", "analytics")
 	v.SetDefault("payment.enabled", false)
 	v.SetDefault("payment.pollEvery", "5m")
 	v.SetDefault("mail.enabled", true)
@@ -303,6 +321,7 @@ func NewConfig() (*Config, error) {
 	mergeRoutingDefaults(&cfg)
 	mergeLLMDefaults(&cfg)
 	mergePersonaDefaults(&cfg)
+	mergeCDPDefaults(&cfg)
 	if err := validator.Validate(&cfg); err != nil {
 		return nil, err
 	}

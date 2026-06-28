@@ -14,6 +14,11 @@ func TestLLMPromptUsesPlatformAppUsageCDP2(t *testing.T) {
 		"app_key",
 		"duration_sec",
 		"launch_count",
+		"subscription",
+		"star_balance",
+		"mission_claims_30d",
+		"frontend",
+		"top_paths",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q", want)

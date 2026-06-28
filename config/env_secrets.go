@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 // mergeEnvSecrets overlays compose-provided APP_* env vars onto cfg.
 // Viper AutomaticEnv does not populate nested keys during Unmarshal; secrets
@@ -32,6 +35,14 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.ClickHouse.Database, "APP_CLICKHOUSE_DATABASE")
 	setEnvString(&cfg.ClickHouse.Username, "APP_CLICKHOUSE_USERNAME")
 	setEnvString(&cfg.ClickHouse.Password, "APP_CLICKHOUSE_PASSWORD")
+	setEnvString(&cfg.CDP.RybbitClickHouse.Addr, "APP_RYBBIT_CLICKHOUSE_ADDR")
+	setEnvString(&cfg.CDP.RybbitClickHouse.Database, "APP_RYBBIT_CLICKHOUSE_DATABASE")
+	setEnvString(&cfg.CDP.RybbitClickHouse.Username, "APP_RYBBIT_CLICKHOUSE_USERNAME")
+	setEnvString(&cfg.CDP.RybbitClickHouse.Password, "APP_RYBBIT_CLICKHOUSE_PASSWORD")
+	setEnvInt(&cfg.CDP.RybbitSiteID, "APP_CDP_RYBBIT_SITE_ID")
+	setEnvBool(&cfg.CDP.FrontendETL.Enabled, "APP_CDP_FRONTEND_ETL_ENABLED")
+	setEnvString(&cfg.CDP.FrontendETL.Every, "APP_CDP_FRONTEND_ETL_EVERY")
+	setEnvInt(&cfg.CDP.FrontendETL.Days, "APP_CDP_FRONTEND_ETL_DAYS")
 	setEnvString(&cfg.Payment.Stripe.SecretKey, "APP_PAYMENT_STRIPE_SECRETKEY")
 	setEnvString(&cfg.Payment.Stripe.WebhookSecret, "APP_PAYMENT_STRIPE_WEBHOOKSECRET")
 	setEnvString(&cfg.Payment.PayOS.ClientID, "APP_PAYMENT_PAYOS_CLIENTID")
@@ -56,5 +67,21 @@ func mergeEnvSecrets(cfg *Config) {
 func setEnvString(dst *string, key string) {
 	if v := os.Getenv(key); v != "" {
 		*dst = v
+	}
+}
+
+func setEnvInt(dst *int, key string) {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			*dst = n
+		}
+	}
+}
+
+func setEnvBool(dst *bool, key string) {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			*dst = b
+		}
 	}
 }

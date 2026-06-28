@@ -105,6 +105,9 @@ func main() {
 	if err := h.StartPersonaWorker(ctx, cfg, slog.Default()); err != nil {
 		log.Fatalf("persona worker: %v", err)
 	}
+	if err := h.StartCDPFrontendETL(ctx, cfg, slog.Default()); err != nil {
+		log.Fatalf("cdp frontend etl: %v", err)
+	}
 
 	if cfg.Payment.Enabled {
 		every, err := time.ParseDuration(cfg.Payment.PollEvery)

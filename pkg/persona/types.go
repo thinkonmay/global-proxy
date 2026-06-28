@@ -1,5 +1,7 @@
 package persona
 
+import "encoding/json"
+
 type Candidate struct {
 	Email    string `json:"email"`
 	PBUserID string `json:"pb_user_id"`
@@ -10,6 +12,47 @@ type PaymentRecord struct {
 	CreatedAt string `json:"created_at"`
 	PlanName  string `json:"plan_name"`
 	Amount    int    `json:"amount"`
+}
+
+type SubscriptionRecord struct {
+	PlanName        string  `json:"plan_name"`
+	Status          string  `json:"status"`
+	AllocatedAt     *string `json:"allocated_at"`
+	EndedAt         *string `json:"ended_at"`
+	UsageLimit      *int64  `json:"usage_limit"`
+	TotalUsage      *int    `json:"total_usage"`
+	TotalDataCredit *int    `json:"total_data_credit"`
+	AutoRenew       bool    `json:"auto_renew"`
+	CancelledAt     *string `json:"cancelled_at"`
+}
+
+type EngagementContext struct {
+	StarBalance      int64 `json:"star_balance"`
+	MissionClaims30d int64 `json:"mission_claims_30d"`
+	ReferralsMade    int64 `json:"referrals_made"`
+	FeedbackCount    int64 `json:"feedback_count"`
+}
+
+type FrontendContext struct {
+	Rollup          json.RawMessage `json:"rollup"`
+	RecentWebEvents json.RawMessage `json:"recent_web_events"`
+}
+
+// CDPSignals is the merged LLM input snapshot stored in events.cdp_profiles (CDP-3).
+type CDPSignals struct {
+	AppUsageDays  int                   `json:"app_usage_days"`
+	AppUsage      []AppUsageEntry       `json:"app_usage"`
+	Payments      []PaymentRecord       `json:"payments"`
+	Subscriptions []SubscriptionRecord  `json:"subscriptions"`
+	Engagement    EngagementContext     `json:"engagement"`
+	Frontend      FrontendContext       `json:"frontend"`
+}
+
+// AppUsageEntry mirrors usage.AppUsageEntry without importing usage in types.go.
+type AppUsageEntry struct {
+	AppKey      string  `json:"app_key"`
+	DurationSec float64 `json:"duration_sec"`
+	LaunchCount uint64  `json:"launch_count"`
 }
 
 type Profile struct {

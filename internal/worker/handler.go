@@ -12,6 +12,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/internal/worker/cdp"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/jobpoller"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/payment"
@@ -33,6 +34,7 @@ type Handler struct {
 	payment  *payment.Handler
 	usage    *usage.Handler
 	persona  *persona.Handler
+	cdp      *cdp.Handler
 	mail     *mail.Handler
 }
 
@@ -44,6 +46,7 @@ func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr
 		payment:  payment.New(idem, pr),
 		usage:    usage.New(ch, pr, eventBus),
 		persona:  persona.New(pr),
+		cdp:      cdp.New(pr),
 		mail:     mail.New(idem, pr, cfg.Mail),
 	}
 }
@@ -62,6 +65,10 @@ func (h *Handler) StartUsageCollector(ctx context.Context, cfg *config.Config, l
 
 func (h *Handler) StartPersonaWorker(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	return h.persona.Start(ctx, cfg, log)
+}
+
+func (h *Handler) StartCDPFrontendETL(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	return h.cdp.Start(ctx, cfg, log)
 }
 
 func (h *Handler) StartPaymentPoller(ctx context.Context, reg *registry.Registry, every time.Duration) {

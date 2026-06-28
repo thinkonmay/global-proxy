@@ -15,13 +15,14 @@ import (
 )
 
 type Config struct {
-	Every            time.Duration
-	MaxBatch         int
-	Concurrent       int
-	EnrichMinSpacing time.Duration
-	AppUsageDays     int
-	Usage            *usage.Querier
-	LLM              LLMConfig
+	Every             time.Duration
+	MaxBatch          int
+	Concurrent        int
+	EnrichMinSpacing  time.Duration
+	AppUsageDays      int
+	MaxAppUsageItems  int
+	Usage             *usage.Querier
+	LLM               LLMConfig
 }
 
 type Worker struct {
@@ -54,6 +55,9 @@ func NewWorker(pr *postgrest.Client, usageQ *usage.Querier, cfg Config, log *slo
 	}
 	if cfg.AppUsageDays <= 0 {
 		cfg.AppUsageDays = 30
+	}
+	if cfg.MaxAppUsageItems <= 0 {
+		cfg.MaxAppUsageItems = defaultMaxAppUsageItems
 	}
 	w := &Worker{
 		pr:    pr,
@@ -133,22 +137,24 @@ func (w *Worker) refreshOne(ctx context.Context, c Candidate) error {
 		}
 	}
 
-	apps, err := w.usage.AppUsageByEmail(ctx, c.Email, w.cfg.AppUsageDays, 30)
+	apps, err := w.usage.AppUsageByEmail(ctx, c.Email, w.cfg.AppUsageDays, w.cfg.MaxAppUsageItems)
 	if err != nil {
 		_ = w.pr.RPC(ctx, "touch_persona_refresh", map[string]any{"p_email": c.Email}, nil)
 		return err
 	}
-	appUsageJSON, err := json.Marshal(apps)
-	if err != nil {
-		return err
-	}
+	apps = trimAppUsage(apps, w.cfg.MaxAppUsageItems)
 
 	var payments []PaymentRecord
 	if err := w.pr.RPC(ctx, "get_payment_history", map[string]any{"email": c.Email}, &payments); err != nil {
 		payments = nil
 	}
 
-	result, err := w.llm.Synthesize(ctx, string(appUsageJSON), payments)
+	subscriptions := fetchSubscriptionContext(ctx, w.pr, c.Email)
+	engagement := fetchEngagementContext(ctx, w.pr, c.Email)
+	frontend := fetchFrontendContext(ctx, w.pr, c.Email)
+	signals := buildCDPSignals(w.cfg.AppUsageDays, apps, payments, subscriptions, engagement, frontend)
+
+	result, err := w.llm.Synthesize(ctx, signals)
 	if err != nil {
 		_ = w.pr.RPC(ctx, "touch_persona_refresh", map[string]any{"p_email": c.Email}, nil)
 		return err
@@ -161,13 +167,27 @@ func (w *Worker) refreshOne(ctx context.Context, c Candidate) error {
 	profile, _ := json.Marshal(result.UserProfile)
 	recs, _ := json.Marshal(result.UserRecommendation)
 
-	return w.pr.RPC(ctx, "upsert_persona", map[string]any{
+	if err := w.pr.RPC(ctx, "upsert_persona", map[string]any{
 		"p_email":           c.Email,
 		"p_pb_user_id":      pbUID,
 		"p_summary":         json.RawMessage(summary),
 		"p_profile":         json.RawMessage(profile),
 		"p_recommendations": json.RawMessage(recs),
-	}, nil)
+	}, nil); err != nil {
+		return err
+	}
+
+	signalsRaw, err := json.Marshal(signals)
+	if err != nil {
+		return err
+	}
+	if err := w.pr.RPC(ctx, "upsert_cdp_profile", map[string]any{
+		"p_email":   c.Email,
+		"p_signals": json.RawMessage(signalsRaw),
+	}, nil); err != nil {
+		w.log.Warn("cdp profile snapshot failed", "email", c.Email, "err", err)
+	}
+	return nil
 }
 
 func (w *Worker) waitEnrichSlot(ctx context.Context) error {
