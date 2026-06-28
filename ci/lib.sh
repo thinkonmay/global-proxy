@@ -40,6 +40,7 @@ ci_gateway_test_packages() {
 ./pkg/gotrue
 ./pkg/certmanager
 ./pkg/guard
+./pkg/logingest
 ./pkg/idempotency
 ./pkg/memo
 ./pkg/postgrest
