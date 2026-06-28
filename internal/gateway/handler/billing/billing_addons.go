@@ -119,8 +119,9 @@ func (h *Handler) PayAddonCharges(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
-	var discard json.RawMessage
-	if err := h.pr.RPC(ctx, "pay_all_addon_charges", map[string]any{"email": email}, &discard); err != nil {
+	// pay_all_addon_charges returns void; PostgREST replies with an empty body,
+	// so pass nil dest to skip decoding (decoding empty JSON fails).
+	if err := h.pr.RPC(ctx, "pay_all_addon_charges", map[string]any{"email": email}, nil); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}

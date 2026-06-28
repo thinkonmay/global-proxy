@@ -137,6 +137,23 @@ func TestInsertUsesServiceKey(t *testing.T) {
 	}
 }
 
+func TestRPCVoidEmptyBodyWithDest(t *testing.T) {
+	// A void-returning RPC replies 2xx with an empty body. Passing a non-nil
+	// dest must not fail with "unexpected end of JSON input".
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK) // empty body
+	}))
+	defer srv.Close()
+
+	var discard json.RawMessage
+	if err := newTestClient(srv.URL).RPC(context.Background(), "pay_all_addon_charges", map[string]any{"email": "a@b.c"}, &discard); err != nil {
+		t.Fatalf("RPC void with empty body: %v", err)
+	}
+	if discard != nil {
+		t.Fatalf("dest = %q, want unchanged (nil) for empty body", discard)
+	}
+}
+
 func TestNon2xxIsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

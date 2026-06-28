@@ -186,7 +186,9 @@ func (c *Client) do(req *http.Request, dest any) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &Error{Status: resp.StatusCode, Method: req.Method, Path: req.URL.Path, Body: data}
 	}
-	if dest != nil {
+	// A void-returning RPC replies 2xx with an empty body; there is nothing to
+	// decode, so leave dest at its zero value instead of failing on empty input.
+	if dest != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, dest); err != nil {
 			return fmt.Errorf("decode %s: %w", req.URL.Path, err)
 		}
