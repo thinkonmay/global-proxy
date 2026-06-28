@@ -62,6 +62,7 @@ func mergeTLSHostsFromAdmin(cfg *Config) {
 		cfg.Admin.Hosts.Studio,
 		cfg.Admin.Hosts.Analytics,
 		cfg.Admin.Hosts.Grafana,
+		cfg.Admin.Hosts.Litellm,
 	} {
 		if h = trimHost(h); h != "" {
 			if _, ok := seen[h]; !ok {

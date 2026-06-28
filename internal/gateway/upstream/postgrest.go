@@ -19,7 +19,7 @@ const proxyTimeout = 5 * time.Second
 // transport rt. director runs after scheme/host are rewritten, for path rewrite
 // and header injection. Returns nil (route should be skipped) if rawURL is empty
 // or unparseable.
-func NewProxy(rawURL string, rt http.RoundTripper, director func(*http.Request)) *httputil.ReverseProxy {
+func NewProxy(rawURL string, rt http.RoundTripper, director func(*http.Request), modifiers ...ResponseModifier) *httputil.ReverseProxy {
 	if rawURL == "" {
 		return nil
 	}
@@ -28,6 +28,7 @@ func NewProxy(rawURL string, rt http.RoundTripper, director func(*http.Request))
 		slog.Error("invalid upstream url, route disabled", "url", rawURL, "err", err)
 		return nil
 	}
+	mods := append([]ResponseModifier{stripUpstreamCORS}, modifiers...)
 	return &httputil.ReverseProxy{
 		Transport: rt,
 		Director: func(req *http.Request) {
@@ -43,11 +44,20 @@ func NewProxy(rawURL string, rt http.RoundTripper, director func(*http.Request))
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			cors.StripUpstream(resp.Header)
+			for _, mod := range mods {
+				if err := mod(resp); err != nil {
+					return err
+				}
+			}
 			return nil
 		},
 		ErrorHandler: proxyError,
 	}
+}
+
+func stripUpstreamCORS(resp *http.Response) error {
+	cors.StripUpstream(resp.Header)
+	return nil
 }
 
 // proxyError maps a guard rejection to 503 {"global_unavailable":true} and any

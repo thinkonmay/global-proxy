@@ -3,10 +3,12 @@ package adminhost
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -115,6 +117,66 @@ func TestAdminLitellmHostSSO(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || rec.Body.String() != "litellm" {
 		t.Fatalf("expected litellm proxy after SSO, code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminLitellmHostRewritesRedirectLocation(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	cfg := &config.Config{
+		Admin: config.Admin{
+			Enabled:       true,
+			AllowedIPs:    []string{"203.0.113.1"},
+			AllowedEmails: []string{"ops@thinkmay.net"},
+			SigningSecret: "test-secret",
+			Redis:         config.Redis{URL: "redis://" + mr.Addr()},
+			Hosts: config.AdminHosts{
+				Public:  "thinkmay.net",
+				Litellm: "analytics.haiphong.thinkmay.net",
+			},
+			CookieDomain: ".haiphong.thinkmay.net",
+		},
+	}
+	var litellmSrv *httptest.Server
+	litellmSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamHost := ""
+		if u, err := url.Parse(litellmSrv.URL); err == nil {
+			upstreamHost = u.Host
+		}
+		w.Header().Set("Location", "http://"+upstreamHost+"/ui/")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer litellmSrv.Close()
+	cfg.Admin.Upstreams.Litellm = litellmSrv.URL
+
+	gate, err := InitGate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token := adminSSOCookie(t, gate)
+	public := http.NewServeMux()
+	router := admingate.NewHostRouter(cfg.Admin.Hosts.Public, public)
+	registerLitellmHost(router, cfg, gate)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui", nil)
+	req.Host = "analytics.haiphong.thinkmay.net:4433"
+	req.TLS = &tls.ConnectionState{}
+	req.RemoteAddr = "203.0.113.1:1234"
+	req.AddCookie(&http.Cookie{Name: "tm_admin_sso", Value: token})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected 307, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	want := "https://analytics.haiphong.thinkmay.net:4433/ui/"
+	if got := rec.Header().Get("Location"); got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
 	}
 }
 

@@ -95,13 +95,12 @@ func registerLitellmHost(router *admingate.HostRouter, cfg *config.Config, gate 
 	}
 	masterKey := strings.TrimSpace(cfg.Admin.LitellmMasterKey)
 	proxy := upstream.NewProxy(upstreamURL, http.DefaultTransport, func(req *http.Request) {
-		req.Header.Set("X-Forwarded-Proto", "https")
-		upstream.SetForwardedHeaders(req)
+		upstream.SetAdminForwardedHeaders(req)
 		// Gateway admin SSO replaces manual master-key entry in the LiteLLM UI.
 		if masterKey != "" {
 			req.Header.Set("Authorization", "Bearer "+masterKey)
 		}
-	})
+	}, upstream.LocationRewriteModifier(upstreamURL))
 	if proxy == nil {
 		slog.Error("admin upstream invalid", "host", host, "url", upstreamURL)
 		return
