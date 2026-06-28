@@ -33,7 +33,7 @@ func testJWT(t *testing.T) string {
 }
 
 func TestSearchMissingDescription(t *testing.T) {
-	h := New(config.Config{LLM: config.LLM{BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "test"}}, nil, nil, persona.New(nil, nil))
+	h := New(config.Config{LLM: config.LLM{BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "test"}}, nil, nil, persona.New(nil, nil), nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -50,7 +50,7 @@ func TestSearchNotConfigured(t *testing.T) {
 	auth.ConfigureGoTrueAuth("test-secret")
 	t.Cleanup(func() { auth.ConfigureGoTrueAuth("") })
 
-	h := New(config.Config{}, postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}), nil, persona.New(nil, nil))
+	h := New(config.Config{}, postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}), nil, persona.New(nil, nil), nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -69,7 +69,7 @@ func TestPwaSearchToolsIncludesGoogleWhenSerpAPIConfigured(t *testing.T) {
 	h := New(config.Config{
 		LLM:      config.LLM{BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "test"},
 		SerpAPI:  config.SerpAPI{APIKey: "serp-key"},
-	}, nil, nil, persona.New(nil, nil))
+	}, nil, nil, persona.New(nil, nil), nil, nil)
 	tools := h.pwaSearchTools()
 	if len(tools) != 2 {
 		t.Fatalf("tools=%d", len(tools))
@@ -83,7 +83,7 @@ func TestPwaSearchToolsIncludesGoogleWhenSerpAPIConfigured(t *testing.T) {
 func TestPwaSearchToolsOmitsGoogleWithoutSerpAPIKey(t *testing.T) {
 	h := New(config.Config{
 		LLM: config.LLM{BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "test"},
-	}, nil, nil, persona.New(nil, nil))
+	}, nil, nil, persona.New(nil, nil), nil, nil)
 	if len(h.pwaSearchTools()) != 1 {
 		t.Fatal("expected only search_steam")
 	}
@@ -123,7 +123,8 @@ func TestSearchV1RouteRegistered(t *testing.T) {
 		config.Config{LLM: config.LLM{BaseURL: llm.URL + "/v1", APIKey: "k", Model: "test"}},
 		postgrest.New(postgrest.Config{URL: pr.URL, ServiceKey: "svc"}),
 		nil,
-		persona.New(postgrest.New(postgrest.Config{URL: pr.URL, ServiceKey: "svc"}), nil),
+		persona.New(postgrest.New(postgrest.Config{URL: pr.URL, ServiceKey: "svc"}), nil), nil,
+		nil,
 	)
 	mux := http.NewServeMux()
 	h.Register(mux)

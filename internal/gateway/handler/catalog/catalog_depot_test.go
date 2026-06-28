@@ -19,7 +19,7 @@ func TestGetStoreDepotKeysSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := New(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}))
+	h := New(postgrest.New(postgrest.Config{URL: srv.URL, ServiceKey: "svc"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -40,7 +40,7 @@ func TestGetStoreDepotKeysSuccess(t *testing.T) {
 }
 
 func TestGetStoreDepotKeysInvalidID(t *testing.T) {
-	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}))
+	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

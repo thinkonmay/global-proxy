@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/thinkonmay/global-proxy/api/pkg/llmtrace"
 )
 
 const analystSystemPrompt = `You are a Senior User Behavior Analyst for Thinkmay CloudPC, a high-performance cloud gaming service.
@@ -68,6 +70,12 @@ func newSynthesizer(cfg LLMConfig) *synthesizer {
 }
 
 func (s *synthesizer) Synthesize(ctx context.Context, signals CDPSignals) (*Result, error) {
+	llmtrace.LogFeatureStart(llmtrace.FeaturePersonaCDP,
+		"app_usage_items", len(signals.AppUsage),
+		"payments", len(signals.Payments),
+		"subscriptions", len(signals.Subscriptions),
+	)
+
 	signalsRaw, err := json.Marshal(signals)
 	if err != nil {
 		return nil, err
@@ -97,23 +105,35 @@ Return JSON matching this schema:
 	}
 	raw, err := s.postChat(ctx, body)
 	if err != nil {
+		llmtrace.LogFeatureError(llmtrace.FeaturePersonaCDP, err)
 		return nil, err
 	}
 	var completion struct {
 		Choices []struct {
 			Message struct {
-				Content *string `json:"content"`
+				Content          *string `json:"content"`
+				ReasoningContent *string `json:"reasoning_content"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &completion); err != nil {
+		llmtrace.LogParseError(llmtrace.FeaturePersonaCDP, 0, err, raw)
 		return nil, err
 	}
-	if len(completion.Choices) == 0 || completion.Choices[0].Message.Content == nil {
-		return nil, fmt.Errorf("empty llm response")
+	if len(completion.Choices) == 0 {
+		err := fmt.Errorf("empty llm response")
+		llmtrace.LogFeatureError(llmtrace.FeaturePersonaCDP, err)
+		return nil, err
+	}
+	text := personaAssistantText(completion.Choices[0].Message.Content, completion.Choices[0].Message.ReasoningContent)
+	if text == "" {
+		err := fmt.Errorf("empty llm response")
+		llmtrace.LogFeatureError(llmtrace.FeaturePersonaCDP, err)
+		return nil, err
 	}
 	var result Result
-	if err := json.Unmarshal([]byte(strings.TrimSpace(*completion.Choices[0].Message.Content)), &result); err != nil {
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		llmtrace.LogDecodeError(llmtrace.FeaturePersonaCDP, err, text)
 		return nil, fmt.Errorf("decode persona llm: %w", err)
 	}
 	if len(result.UserRecommendation) == 0 {
@@ -122,36 +142,66 @@ Return JSON matching this schema:
 	if result.UsageSummary.TopApps == nil {
 		result.UsageSummary.TopApps = []AppScore{}
 	}
+	llmtrace.LogFeatureOK(llmtrace.FeaturePersonaCDP,
+		"recommendations", len(result.UserRecommendation),
+		"top_apps", len(result.UsageSummary.TopApps),
+	)
 	return &result, nil
+}
+
+func personaAssistantText(content, reasoning *string) string {
+	if content != nil {
+		if text := strings.TrimSpace(*content); text != "" {
+			return text
+		}
+	}
+	if reasoning != nil {
+		return strings.TrimSpace(*reasoning)
+	}
+	return ""
 }
 
 func (s *synthesizer) postChat(ctx context.Context, body map[string]any) ([]byte, error) {
 	if s.cfg.BaseURL == "" || s.cfg.APIKey == "" {
 		return nil, fmt.Errorf("llm not configured")
 	}
+	model, messages, tools := llmtrace.BodyMeta(body)
+	if model == "" {
+		model = s.cfg.Model
+	}
+	llmtrace.LogCallStart(llmtrace.FeaturePersonaCDP, model, 0, messages, tools)
+
+	start := time.Now()
 	payload, err := json.Marshal(body)
 	if err != nil {
+		llmtrace.LogCallTransportError(llmtrace.FeaturePersonaCDP, 0, err)
 		return nil, err
 	}
 	endpoint := strings.TrimRight(s.cfg.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
+		llmtrace.LogCallTransportError(llmtrace.FeaturePersonaCDP, 0, err)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
 	resp, err := s.cfg.HTTP.Do(req)
 	if err != nil {
+		llmtrace.LogCallTransportError(llmtrace.FeaturePersonaCDP, 0, err)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
+	elapsed := time.Since(start)
 	if err != nil {
+		llmtrace.LogCallTransportError(llmtrace.FeaturePersonaCDP, 0, err)
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		llmtrace.LogCallHTTPError(llmtrace.FeaturePersonaCDP, 0, elapsed, resp.StatusCode, raw)
 		return nil, fmt.Errorf("llm status %d: %s", resp.StatusCode, raw)
 	}
+	llmtrace.LogCallOK(llmtrace.FeaturePersonaCDP, 0, elapsed, llmtrace.SummarizeCompletion(raw))
 	return raw, nil
 }
 

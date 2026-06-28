@@ -10,7 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 )
 
@@ -23,6 +25,8 @@ type Config struct {
 	MaxAppUsageItems  int
 	Usage             *usage.Querier
 	LLM               LLMConfig
+	StoreIndex        *storeindex.Client
+	Bus               bus.Client
 }
 
 type Worker struct {
@@ -66,7 +70,7 @@ func NewWorker(pr *postgrest.Client, usageQ *usage.Querier, cfg Config, log *slo
 		cfg:   cfg,
 		log:   log,
 	}
-	w.enrich = newStoreEnricher(pr, cfg.LLM.HTTP, w.waitEnrichSlot)
+	w.enrich = newStoreEnricher(pr, cfg.LLM.HTTP, cfg.StoreIndex, cfg.Bus, w.waitEnrichSlot)
 	return w, nil
 }
 
@@ -154,11 +158,21 @@ func (w *Worker) refreshOne(ctx context.Context, c Candidate) error {
 	frontend := fetchFrontendContext(ctx, w.pr, c.Email)
 	signals := buildCDPSignals(w.cfg.AppUsageDays, apps, payments, subscriptions, engagement, frontend)
 
+	w.log.Debug("persona llm synthesize start",
+		"email", c.Email,
+		"app_usage_items", len(apps),
+		"payments", len(payments),
+	)
 	result, err := w.llm.Synthesize(ctx, signals)
 	if err != nil {
 		_ = w.pr.RPC(ctx, "touch_persona_refresh", map[string]any{"p_email": c.Email}, nil)
+		w.log.Warn("persona llm synthesize failed", "email", c.Email, "err", err)
 		return err
 	}
+	w.log.Debug("persona llm synthesize ok",
+		"email", c.Email,
+		"recommendations", len(result.UserRecommendation),
+	)
 	if err := w.enrich.enrichResult(ctx, result); err != nil {
 		w.log.Warn("persona store enrich partial failure", "email", c.Email, "err", err)
 	}

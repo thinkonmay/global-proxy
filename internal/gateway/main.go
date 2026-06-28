@@ -44,6 +44,7 @@ import (
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 	"github.com/thinkonmay/global-proxy/api/pkg/vaultpki"
@@ -103,7 +104,8 @@ func Run() error {
 	payReg := registry.NewRegistry(registry.ConfigFromGateway(cfg.Payment))
 	payRates := payment.NewRateService(pr)
 
-	catalogHTTP := catalog.New(pr)
+	storeIndex := storeindex.NewClient(cfg.Logs.ElasticsearchURL, "")
+	catalogHTTP := catalog.New(pr, storeIndex)
 	otaHTTP := ota.New(pr, cfg.PostgREST.ServiceKey)
 	gamificationHTTP := gamification.New(pr, bt, usageQ)
 	billingHTTP := billing.New(pr, bt, payReg, payRates)
@@ -146,7 +148,7 @@ func Run() error {
 	personaHTTP := persona.New(pr, bt)
 	nodeRuntimeHTTP := noderuntime.New(pr, cfg.PostgREST.ServiceKey)
 	vaultProxyHTTP := vaultproxy.New(cfg.Upstreams.Vault, cfg.PostgREST.ServiceKey, bt)
-	pwaHTTP := pwa.New(*cfg, pr, bt, personaHTTP)
+	pwaHTTP := pwa.New(*cfg, pr, bt, personaHTTP, storeIndex, eventBus)
 	jobsHTTP := jobs.New(pr, bt)
 	volumeHTTP := volume.New(pr, eventBus)
 	mailHTTP := mail.New(pr, eventBus, cfg.PostgREST.ServiceKey, bt)

@@ -17,6 +17,7 @@ func TestTopicNames(t *testing.T) {
 		"app_usage": TopicAppUsage.Name,
 		"volume":    TopicVolumeJob.Name,
 		"mail":      TopicMailJob.Name,
+		"catalog":   TopicCatalogStoreJob.Name,
 	}
 	want := map[string]string{
 		"payment":   "billing.payment.event",
@@ -25,6 +26,7 @@ func TestTopicNames(t *testing.T) {
 		"app_usage": "usage.app_snapshot",
 		"volume":    "jobs.volume",
 		"mail":      "jobs.mail",
+		"catalog":   "jobs.catalog.store",
 	}
 	for k, got := range cases {
 		if got != want[k] {
@@ -180,6 +182,25 @@ func TestMailJobMsgRoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.RequestID != in.RequestID || out.Email != in.Email || out.FinalHTML != in.FinalHTML {
+		t.Errorf("round-trip mismatch: got %+v want %+v", out, in)
+	}
+}
+
+func TestCatalogStoreJobMsgRoundTrip(t *testing.T) {
+	in := CatalogStoreJobMsg{
+		RequestID: "catalog-store-413150",
+		AppID:     413150,
+		Type:      "STEAM",
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out CatalogStoreJobMsg
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out != in {
 		t.Errorf("round-trip mismatch: got %+v want %+v", out, in)
 	}
 }

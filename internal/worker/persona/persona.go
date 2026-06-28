@@ -7,16 +7,18 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	corepersona "github.com/thinkonmay/global-proxy/api/pkg/persona"
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 )
 
 type Handler struct {
-	pr *postgrest.Client
+	pr  *postgrest.Client
+	bus bus.Client
 }
 
-func New(pr *postgrest.Client) *Handler {
-	return &Handler{pr: pr}
+func New(pr *postgrest.Client, bus bus.Client) *Handler {
+	return &Handler{pr: pr, bus: bus}
 }
 
 func (h *Handler) Start(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
@@ -31,7 +33,7 @@ func (h *Handler) Start(ctx context.Context, cfg *config.Config, log *slog.Logge
 	if err != nil {
 		return err
 	}
-	pcfg, err := BuildConfig(cfg)
+	pcfg, err := BuildConfig(cfg, h.bus)
 	if err != nil {
 		return err
 	}
@@ -58,7 +60,7 @@ func StartSchedulerLoop(ctx context.Context, cfg *config.Config, pr *postgrest.C
 	if err != nil {
 		return err
 	}
-	pcfg, err := BuildConfig(cfg)
+	pcfg, err := BuildConfig(cfg, nil)
 	if err != nil {
 		return err
 	}

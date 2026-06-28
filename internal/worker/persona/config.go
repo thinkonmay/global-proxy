@@ -6,10 +6,12 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	corepersona "github.com/thinkonmay/global-proxy/api/pkg/persona"
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
+	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
 )
 
 // BuildConfig maps gateway config + LiteLLM worker credentials into pkg/persona.Config.
-func BuildConfig(cfg *config.Config) (corepersona.Config, error) {
+func BuildConfig(cfg *config.Config, eventBus bus.Client) (corepersona.Config, error) {
 	pc := cfg.Persona
 	every, err := time.ParseDuration(pc.Every)
 	if err != nil {
@@ -29,6 +31,8 @@ func BuildConfig(cfg *config.Config) (corepersona.Config, error) {
 		Concurrent:       pc.Concurrent,
 		EnrichMinSpacing: spacing,
 		AppUsageDays:     days,
+		StoreIndex:       storeindex.NewClient(cfg.Logs.ElasticsearchURL, ""),
+		Bus:              eventBus,
 		LLM: corepersona.LLMConfig{
 			BaseURL: cfg.LLM.BaseURL,
 			APIKey:  cfg.LLM.APIKey,

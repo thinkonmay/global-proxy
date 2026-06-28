@@ -30,4 +30,7 @@ func TestNewHandlerWiresAllDomains(t *testing.T) {
 	if h.mail == nil {
 		t.Error("mail handler not wired")
 	}
+	if h.catalog == nil {
+		t.Error("catalog handler not wired")
+	}
 }

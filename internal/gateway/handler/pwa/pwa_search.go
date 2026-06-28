@@ -6,14 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/pkg/catalog"
+	"github.com/thinkonmay/global-proxy/api/pkg/llmtrace"
 	"github.com/thinkonmay/global-proxy/api/pkg/persona"
 	"github.com/thinkonmay/global-proxy/api/pkg/serpapi"
 )
@@ -48,6 +50,21 @@ type pwaUserProfile struct {
 	Persona   string `json:"persona"`
 }
 
+const pwaSearchMaxToolRounds = 8
+
+type pwaLLMMessage struct {
+	Content          *string `json:"content"`
+	ReasoningContent *string `json:"reasoning_content"`
+	ToolCalls        []struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	} `json:"tool_calls"`
+}
+
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	var req pwaSearchRequest
 	if err := httpx.ReadJSONBody(r, &req); err != nil {
@@ -69,15 +86,20 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 55*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
 	persona, _ := h.fetchPersonaProfile(ctx, req.Issuer, r.Header.Get("Authorization"), usr.UserID)
 	result, err := h.callLLMSearch(ctx, req.Description, persona)
 	if err != nil {
+		llmtrace.LogFeatureError(llmtrace.FeatureAISearch, err, "description_len", len(req.Description))
 		httpx.WriteError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
+	llmtrace.LogFeatureOK(llmtrace.FeatureAISearch,
+		"description_len", len(req.Description),
+		"games", len(result.Games),
+	)
 	if len(result.Games) == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"suggestion": result.Suggestion, "games": []any{}})
 		return
@@ -155,8 +177,13 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 		{"role": "user", "content": "Help me find game with following description: " + description},
 	}
 	tools := h.pwaSearchTools()
+	llmtrace.LogFeatureStart(llmtrace.FeatureAISearch,
+		"description_len", len(description),
+		"tools", len(tools),
+		"has_persona", persona != nil,
+	)
 
-	for round := 0; round < 5; round++ {
+	for round := 0; round < pwaSearchMaxToolRounds; round++ {
 		body := map[string]any{
 			"model":    h.llm.Model,
 			"messages": messages,
@@ -164,42 +191,45 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 			// deepseek-v4-flash supports json_object but not json_schema.
 			"response_format": map[string]any{"type": "json_object"},
 		}
-		raw, err := h.llmChat(ctx, body)
+		raw, err := h.llmChat(ctx, llmtrace.FeatureAISearch, round, body)
 		if err != nil {
 			return out, err
 		}
 		var completion struct {
 			Choices []struct {
-				FinishReason string `json:"finish_reason"`
-				Message      struct {
-					Content   *string `json:"content"`
-					ToolCalls []struct {
-						ID       string `json:"id"`
-						Type     string `json:"type"`
-						Function struct {
-							Name      string `json:"name"`
-							Arguments string `json:"arguments"`
-						} `json:"function"`
-					} `json:"tool_calls"`
-				} `json:"message"`
+				FinishReason string        `json:"finish_reason"`
+				Message      pwaLLMMessage `json:"message"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal(raw, &completion); err != nil {
+			llmtrace.LogParseError(llmtrace.FeatureAISearch, round, err, raw)
 			return out, err
 		}
 		if len(completion.Choices) == 0 {
+			llmtrace.LogFeatureError(llmtrace.FeatureAISearch, fmt.Errorf("empty llm response"), "round", round)
 			return out, fmt.Errorf("empty llm response")
 		}
 		choice := completion.Choices[0]
 		if choice.FinishReason == "tool_calls" && len(choice.Message.ToolCalls) > 0 {
+			slog.Debug("llm tool round",
+				"feature", llmtrace.FeatureAISearch,
+				"round", round,
+				"tool_calls", len(choice.Message.ToolCalls),
+			)
 			messages = append(messages, map[string]any{
 				"role":       "assistant",
 				"content":    choice.Message.Content,
 				"tool_calls": choice.Message.ToolCalls,
 			})
 			for _, tc := range choice.Message.ToolCalls {
+				llmtrace.LogToolInvoke(llmtrace.FeatureAISearch, round, tc.Function.Name, tc.Function.Arguments)
 				content, ok := h.runPWASearchTool(ctx, tc.Function.Name, tc.Function.Arguments)
 				if !ok {
+					slog.Debug("llm tool skipped",
+						"feature", llmtrace.FeatureAISearch,
+						"round", round,
+						"tool", tc.Function.Name,
+					)
 					continue
 				}
 				messages = append(messages, map[string]any{
@@ -210,20 +240,75 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 			}
 			continue
 		}
-		text := ""
-		if choice.Message.Content != nil {
-			text = strings.TrimSpace(*choice.Message.Content)
-		}
-		if text == "" {
-			return out, fmt.Errorf("empty llm content")
-		}
-		text = extractJSONBlob(text)
-		if err := json.Unmarshal([]byte(text), &out); err != nil {
+		text := assistantMessageText(choice.Message)
+		if err := parsePWASearchResponse(text, &out); err != nil {
+			llmtrace.LogDecodeError(llmtrace.FeatureAISearch, err, text, "round", round)
 			return out, err
 		}
 		return out, nil
 	}
-	return out, fmt.Errorf("too many tool call rounds")
+
+	slog.Debug("llm forcing final json",
+		"feature", llmtrace.FeatureAISearch,
+		"rounds", pwaSearchMaxToolRounds,
+	)
+	messages = append(messages, map[string]any{
+		"role":    "user",
+		"content": "Return the final JSON object now using the tool results above. Include 3-5 games. Do not call any tools.",
+	})
+	raw, err := h.llmChat(ctx, llmtrace.FeatureAISearch, pwaSearchMaxToolRounds, map[string]any{
+		"model":           h.llm.Model,
+		"messages":        messages,
+		"response_format": map[string]any{"type": "json_object"},
+	})
+	if err != nil {
+		return out, fmt.Errorf("too many tool call rounds: %w", err)
+	}
+	var completion struct {
+		Choices []struct {
+			Message pwaLLMMessage `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &completion); err != nil {
+		llmtrace.LogParseError(llmtrace.FeatureAISearch, pwaSearchMaxToolRounds, err, raw, "phase", "final")
+		return out, fmt.Errorf("too many tool call rounds: %w", err)
+	}
+	if len(completion.Choices) == 0 {
+		return out, fmt.Errorf("too many tool call rounds")
+	}
+	text := assistantMessageText(completion.Choices[0].Message)
+	if err := parsePWASearchResponse(text, &out); err != nil {
+		llmtrace.LogDecodeError(llmtrace.FeatureAISearch, err, text, "phase", "final")
+		return out, fmt.Errorf("too many tool call rounds: %w", err)
+	}
+	return out, nil
+}
+
+func assistantMessageText(msg pwaLLMMessage) string {
+	if msg.Content != nil {
+		if text := strings.TrimSpace(*msg.Content); text != "" {
+			return text
+		}
+	}
+	if msg.ReasoningContent != nil {
+		return strings.TrimSpace(*msg.ReasoningContent)
+	}
+	return ""
+}
+
+func parsePWASearchResponse(text string, out *struct {
+	Suggestion string          `json:"suggestion"`
+	Games      []pwaGameSearch `json:"games"`
+}) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("empty llm content")
+	}
+	text = extractJSONBlob(text)
+	if err := json.Unmarshal([]byte(text), out); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h *Handler) pwaSearchTools() []map[string]any {
@@ -284,26 +369,39 @@ func (h *Handler) runPWASearchTool(ctx context.Context, name, arguments string) 
 	}
 }
 
-func (h *Handler) llmChat(ctx context.Context, body map[string]any) ([]byte, error) {
+func (h *Handler) llmChat(ctx context.Context, feature string, round int, body map[string]any) ([]byte, error) {
+	model, messages, tools := llmtrace.BodyMeta(body)
+	if model == "" {
+		model = h.llm.Model
+	}
+	llmtrace.LogCallStart(feature, model, round, messages, tools)
+
+	start := time.Now()
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(h.llm.BaseURL, "/")+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
+		llmtrace.LogCallTransportError(feature, round, err)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.llm.APIKey)
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
+		llmtrace.LogCallTransportError(feature, round, err)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
+	elapsed := time.Since(start)
 	if err != nil {
+		llmtrace.LogCallTransportError(feature, round, err)
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		llmtrace.LogCallHTTPError(feature, round, elapsed, resp.StatusCode, data)
 		return nil, fmt.Errorf("llm: %s", data)
 	}
+	llmtrace.LogCallOK(feature, round, elapsed, llmtrace.SummarizeCompletion(data))
 	return data, nil
 }
 
@@ -315,8 +413,7 @@ func (h *Handler) enrichSearchGames(ctx context.Context, games []pwaGameSearch) 
 		}
 		info, err := h.searchStoreByID(ctx, int64(id))
 		if err != nil || info == nil || info.ID != int64(id) {
-			_ = h.pr.Insert(ctx, "stores", map[string]any{"id": id, "type": "STEAM"}, nil)
-			info, _ = h.searchStoreByID(ctx, int64(id))
+			info, err = h.searchStoreByID(ctx, int64(id))
 		}
 		if info != nil {
 			games[i].Info = info
@@ -325,12 +422,23 @@ func (h *Handler) enrichSearchGames(ctx context.Context, games []pwaGameSearch) 
 }
 
 func (h *Handler) searchStoreByID(ctx context.Context, id int64) (*pwaStoreGame, error) {
-	var rows []pwaStoreGame
-	if err := h.pr.RPC(ctx, "search_stores", map[string]any{"text": strconv.FormatInt(id, 10)}, &rows); err != nil {
+	rec, err := catalog.ResolveStore(ctx, catalog.StoreDeps{
+		PostgREST:  h.pr,
+		SteamHTTP:  h.httpClient,
+		StoreIndex: h.stores,
+		Bus:        h.bus,
+	}, id)
+	if err != nil || rec == nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	return &rows[0], nil
+	return &pwaStoreGame{
+		ID:               rec.ID,
+		Name:             rec.Name,
+		CodeName:         rec.CodeName,
+		ShortDescription: rec.ShortDescription,
+		HeaderImage:      rec.HeaderImage,
+		Genres:           rec.Genres,
+		Type:             rec.Type,
+		Rank:             rec.Rank,
+	}, nil
 }

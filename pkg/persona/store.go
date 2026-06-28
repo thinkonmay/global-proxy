@@ -3,23 +3,27 @@ package persona
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
+	"github.com/thinkonmay/global-proxy/api/pkg/catalog"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
 )
 
 type storeEnricher struct {
-	pr     *postgrest.Client
-	http   *http.Client
+	pr      *postgrest.Client
+	http    *http.Client
+	stores  *storeindex.Client
+	bus     bus.Client
 	spacing func(context.Context) error
 }
 
-func newStoreEnricher(pr *postgrest.Client, httpClient *http.Client, spacing func(context.Context) error) *storeEnricher {
+func newStoreEnricher(pr *postgrest.Client, httpClient *http.Client, stores *storeindex.Client, b bus.Client, spacing func(context.Context) error) *storeEnricher {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &storeEnricher{pr: pr, http: httpClient, spacing: spacing}
+	return &storeEnricher{pr: pr, http: httpClient, stores: stores, bus: b, spacing: spacing}
 }
 
 func (e *storeEnricher) enrichResult(ctx context.Context, result *Result) error {
@@ -65,8 +69,18 @@ func (e *storeEnricher) enrichOne(ctx context.Context, rec *RecommendedGame) err
 		return err
 	}
 	if info == nil {
-		_ = e.pr.Insert(ctx, "stores", map[string]any{"id": id, "type": "STEAM"}, nil)
-		info, _ = e.lookupStore(ctx, int64(id))
+		record, err := catalog.ResolveStore(ctx, catalog.StoreDeps{
+			PostgREST:  e.pr,
+			SteamHTTP:  e.http,
+			StoreIndex: e.stores,
+			Bus:        e.bus,
+		}, int64(id))
+		if err != nil {
+			return err
+		}
+		if record != nil {
+			info = storeGameFromRecord(record)
+		}
 	}
 	if info != nil {
 		rec.Info = info
@@ -75,12 +89,22 @@ func (e *storeEnricher) enrichOne(ctx context.Context, rec *RecommendedGame) err
 }
 
 func (e *storeEnricher) lookupStore(ctx context.Context, id int64) (*StoreGame, error) {
-	var rows []StoreGame
-	if err := e.pr.RPC(ctx, "search_stores", map[string]any{"text": strconv.FormatInt(id, 10)}, &rows); err != nil {
+	rec, err := catalog.LookupStore(ctx, e.pr, e.stores, id)
+	if err != nil || rec == nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return nil, nil
+	return storeGameFromRecord(rec), nil
+}
+
+func storeGameFromRecord(rec *catalog.StoreRecord) *StoreGame {
+	return &StoreGame{
+		ID:               rec.ID,
+		Name:             rec.Name,
+		CodeName:         rec.CodeName,
+		ShortDescription: rec.ShortDescription,
+		HeaderImage:      rec.HeaderImage,
+		Genres:           rec.Genres,
+		Type:             rec.Type,
+		Rank:             rec.Rank,
 	}
-	return &rows[0], nil
 }
