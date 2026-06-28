@@ -63,4 +63,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		legacyGroup.Handle(route.method, route.path, route.fn)
 	}
 	router.V1(mux).POST("/feedbacks", h.Feedback)
+	// Versioned AI store search (LLM + Steam tool calls + catalog enrich).
+	router.V1(mux).POST("/search/ai", h.Search)
 }
