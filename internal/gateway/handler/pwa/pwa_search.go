@@ -15,6 +15,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/persona"
+	"github.com/thinkonmay/global-proxy/api/pkg/serpapi"
 )
 
 type pwaSearchRequest struct {
@@ -153,34 +154,15 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 		{"role": "system", "content": system},
 		{"role": "user", "content": "Help me find game with following description: " + description},
 	}
-	tools := []map[string]any{{
-		"type": "function",
-		"function": map[string]any{
-			"name":        "search_steam",
-			"description": "Search Steam Store by game name. Returns top matching games with their Steam App ID.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"name": map[string]any{"type": "string", "description": "Game name to search on Steam"},
-				},
-				"required": []string{"name"},
-			},
-		},
-	}}
+	tools := h.pwaSearchTools()
 
 	for round := 0; round < 5; round++ {
 		body := map[string]any{
 			"model":    h.llm.Model,
 			"messages": messages,
 			"tools":    tools,
-			"response_format": map[string]any{
-				"type": "json_schema",
-				"json_schema": map[string]any{
-					"name":   "search_result",
-					"schema": pwaSearchResponseSchema(),
-					"strict": false,
-				},
-			},
+			// deepseek-v4-flash supports json_object but not json_schema.
+			"response_format": map[string]any{"type": "json_object"},
 		}
 		raw, err := h.llmChat(ctx, body)
 		if err != nil {
@@ -216,18 +198,14 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 				"tool_calls": choice.Message.ToolCalls,
 			})
 			for _, tc := range choice.Message.ToolCalls {
-				if !strings.HasPrefix(tc.Function.Name, "search_steam") {
+				content, ok := h.runPWASearchTool(ctx, tc.Function.Name, tc.Function.Arguments)
+				if !ok {
 					continue
 				}
-				var args struct {
-					Name string `json:"name"`
-				}
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-				result, _ := searchSteamStore(ctx, h.httpClient, args.Name)
 				messages = append(messages, map[string]any{
 					"role":         "tool",
 					"tool_call_id": tc.ID,
-					"content":      mustJSONString(result),
+					"content":      content,
 				})
 			}
 			continue
@@ -246,6 +224,64 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 		return out, nil
 	}
 	return out, fmt.Errorf("too many tool call rounds")
+}
+
+func (h *Handler) pwaSearchTools() []map[string]any {
+	tools := []map[string]any{{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "search_steam",
+			"description": "Search Steam Store by game name. Returns top matching games with their Steam App ID.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "description": "Game name to search on Steam"},
+				},
+				"required": []string{"name"},
+			},
+		},
+	}}
+	if h.serpAPIKey != "" {
+		tools = append(tools, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "google_search",
+				"description": "Search Google for game recommendations, reviews, and trending titles. Use before search_steam when the user describes a vibe, genre, or comparison rather than a specific game name.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query": map[string]any{"type": "string", "description": "Google search query"},
+					},
+					"required": []string{"query"},
+				},
+			},
+		})
+	}
+	return tools
+}
+
+func (h *Handler) runPWASearchTool(ctx context.Context, name, arguments string) (string, bool) {
+	switch {
+	case strings.HasPrefix(name, "search_steam"):
+		var args struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal([]byte(arguments), &args)
+		result, _ := searchSteamStore(ctx, h.httpClient, args.Name)
+		return mustJSONString(result), true
+	case strings.HasPrefix(name, "google_search"):
+		if h.serpAPIKey == "" {
+			return mustJSONString(map[string]any{"results": []any{}}), true
+		}
+		var args struct {
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal([]byte(arguments), &args)
+		result, _ := serpapi.GoogleSearch(ctx, h.httpClient, h.serpAPIKey, args.Query)
+		return mustJSONString(result), true
+	default:
+		return "", false
+	}
 }
 
 func (h *Handler) llmChat(ctx context.Context, body map[string]any) ([]byte, error) {

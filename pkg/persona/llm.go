@@ -72,12 +72,18 @@ func (s *synthesizer) Synthesize(ctx context.Context, signals CDPSignals) (*Resu
 	if err != nil {
 		return nil, err
 	}
+	schemaJSON, err := json.Marshal(personaResponseSchema())
+	if err != nil {
+		return nil, err
+	}
 	userPrompt := fmt.Sprintf(`Current timestamp: %s
 CDP signals (JSON — app usage, payments, subscriptions, engagement, frontend web):
 %s
-Return JSON matching the persona_result schema.`,
+Return JSON matching this schema:
+%s`,
 		time.Now().Format(time.DateTime),
 		string(signalsRaw),
+		string(schemaJSON),
 	)
 
 	body := map[string]any{
@@ -86,14 +92,8 @@ Return JSON matching the persona_result schema.`,
 			{"role": "system", "content": analystSystemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
-		"response_format": map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   "persona_result",
-				"schema": personaResponseSchema(),
-				"strict": false,
-			},
-		},
+		// deepseek-v4-flash supports json_object but not json_schema.
+		"response_format": map[string]any{"type": "json_object"},
 	}
 	raw, err := s.postChat(ctx, body)
 	if err != nil {

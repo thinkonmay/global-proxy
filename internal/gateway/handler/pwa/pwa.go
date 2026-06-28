@@ -17,6 +17,7 @@ type Handler struct {
 	pr         *postgrest.Client
 	persona    *personah.Handler
 	llm        config.LLM
+	serpAPIKey string
 	httpClient *http.Client
 	transport  http.RoundTripper
 }
@@ -26,9 +27,10 @@ func New(cfg config.Config, pr *postgrest.Client, rt http.RoundTripper, persona 
 		rt = http.DefaultTransport
 	}
 	return &Handler{
-		pr:      pr,
-		persona: persona,
-		llm:     cfg.LLM,
+		pr:         pr,
+		persona:    persona,
+		llm:        cfg.LLM,
+		serpAPIKey: cfg.SerpAPI.APIKey,
 		httpClient: &http.Client{
 			Timeout:   60 * time.Second,
 			Transport: rt,
