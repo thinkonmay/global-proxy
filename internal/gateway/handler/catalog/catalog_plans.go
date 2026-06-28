@@ -110,12 +110,12 @@ func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusNotFound, "price not found")
 			return
 		}
-		var val map[string]any
-		if err := json.Unmarshal(raw, &val); err != nil {
+		var amount float64
+		if err := json.Unmarshal(raw, &amount); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		httpx.WriteData(w, val)
+		httpx.WriteData(w, amount)
 	case "credit":
 		q := url.Values{}
 		q.Set("select", "credit,name")
