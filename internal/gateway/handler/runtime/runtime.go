@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
@@ -39,7 +38,6 @@ type Config struct {
 // Handler serves node runtime REST at /v1/runtime/* via virtdaemon gRPC only (D25).
 type Handler struct {
 	cfg      Config
-	tickets  *runtimepkg.Tickets
 	sessions *runtimepkg.SessionBuilder
 }
 
@@ -47,7 +45,6 @@ type Handler struct {
 func New(cfg Config) *Handler {
 	return &Handler{
 		cfg:      cfg,
-		tickets:  runtimepkg.NewTickets(),
 		sessions: runtimepkg.NewSessionBuilder(cfg.PostgREST, cfg.PublicURL, cfg.Storj),
 	}
 }
@@ -57,13 +54,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.Handle(http.MethodGet, "/runtime/info", h.handleInfo)
 	v1.Handle(http.MethodGet, "/runtime/info/sse", h.handleInfoSSE)
 	v1.Handle(http.MethodPost, "/runtime/new", h.handleNew)
-	v1.Handle(http.MethodGet, "/runtime/new/sse", h.handleNewSSE)
 	v1.Handle(http.MethodDelete, "/runtime/close", h.handleClose)
 	v1.Handle(http.MethodPost, "/runtime/restart", h.handleRestart)
 	v1.Handle(http.MethodPost, "/runtime/reallocate", h.handleReallocate)
-	v1.Handle(http.MethodGet, "/runtime/reallocate/sse", h.handleReallocateSSE)
 	v1.Handle(http.MethodPost, "/runtime/template", h.handleTemplate)
-	v1.Handle(http.MethodGet, "/runtime/template/sse", h.handleTemplateSSE)
 	v1.Handle(http.MethodPost, "/runtime/resize", h.handleResize)
 	v1.Handle(http.MethodPost, "/runtime/assistant", h.handleAssistant)
 	v1.Handle(http.MethodGet, "/runtime/snapshots", h.handleListSnapshots)
@@ -170,50 +164,7 @@ func (h *Handler) handleNew(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	id := h.tickets.IssueNew(prepared.ClusterID, prepared.Session, prepared.VolumeIDs)
-	httpx.WriteJSON(w, http.StatusOK, id)
-}
-
-func (h *Handler) handleNewSSE(w http.ResponseWriter, r *http.Request) {
-	if !h.requireDaemon(w) {
-		return
-	}
-	email, ok := h.requireUser(w, r)
-	if !ok {
-		return
-	}
-	sid := strings.TrimSpace(r.URL.Query().Get("id"))
-	if sid == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "id required")
-		return
-	}
-	if h.tickets.IsFinishedNew(sid) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	ticket, ok := h.tickets.TakeNew(sid)
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "session not found")
-		return
-	}
-	defer h.tickets.FinishNew(sid)
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	volID := runtimepkg.PrimaryVolumeID(ticket.Session)
-	if err := h.cfg.Daemon.EnsureVolumeAllocated(ctx, h.cfg.PostgREST, ticket.ClusterID, email, volID); err != nil {
-		runtimepkg.RollbackLeases(ctx, h.cfg.PostgREST, ticket.Session)
-		httpx.WriteError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	stream, err := h.cfg.Daemon.NewStream(ctx, ticket.ClusterID, ticket.Session)
-	if err != nil {
-		runtimepkg.RollbackLeases(ctx, h.cfg.PostgREST, ticket.Session)
-		httpx.WriteError(w, http.StatusBadGateway, "new stream unavailable")
-		return
-	}
-	if err := daemonclient.RelayNewStream(ctx, w, stream, ticket.VolumeIDs); err != nil {
-		runtimepkg.RollbackLeases(ctx, h.cfg.PostgREST, ticket.Session)
-	}
+	h.streamNew(w, r, prepared)
 }
 
 func (h *Handler) handleClose(w http.ResponseWriter, r *http.Request) {
@@ -327,9 +278,7 @@ func (h *Handler) handleReallocate(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadGateway, "failed to update volume template")
 			return
 		}
-		id := uuid.NewString()
-		h.tickets.MarkAllocFinished(id)
-		httpx.WriteJSON(w, http.StatusOK, id)
+		writeReallocateFinishedSSE(w)
 		return
 	}
 
@@ -343,40 +292,7 @@ func (h *Handler) handleReallocate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id := h.tickets.IssueAlloc(clusterID, email, req)
-	httpx.WriteJSON(w, http.StatusOK, id)
-}
-
-func (h *Handler) handleReallocateSSE(w http.ResponseWriter, r *http.Request) {
-	if !h.requireDaemon(w) {
-		return
-	}
-	sid := strings.TrimSpace(r.URL.Query().Get("id"))
-	if sid == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "id required")
-		return
-	}
-	if h.tickets.IsFinishedAlloc(sid) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	ticket, ok := h.tickets.TakeAlloc(sid)
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "session not found")
-		return
-	}
-	defer h.tickets.FinishAlloc(sid)
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	stream, err := h.cfg.Daemon.AllocateStream(ctx, ticket.ClusterID, ticket.Request)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadGateway, "allocate stream unavailable")
-		return
-	}
-	finished, _ := daemonclient.RelayAllocateStream(ctx, w, stream)
-	if finished && ticket.Request != nil && ticket.Request.Destination != nil && ticket.Request.Source != nil {
-		_ = volumeconfig.SetTemplateSource(ctx, h.cfg.PostgREST, ticket.Email, ticket.Request.Destination.Name, ticket.Request.Source.Name)
-	}
+	h.streamReallocate(w, r, clusterID, email, req)
 }
 
 func (h *Handler) handleTemplate(w http.ResponseWriter, r *http.Request) {
@@ -415,32 +331,7 @@ func (h *Handler) handleTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id := h.tickets.IssueTemplate(clusterID, rename, allocate)
-	httpx.WriteJSON(w, http.StatusOK, id)
-}
-
-func (h *Handler) handleTemplateSSE(w http.ResponseWriter, r *http.Request) {
-	if !h.requireDaemon(w) {
-		return
-	}
-	sid := strings.TrimSpace(r.URL.Query().Get("id"))
-	if sid == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "id required")
-		return
-	}
-	if h.tickets.IsFinishedTemplate(sid) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	ticket, ok := h.tickets.TakeTemplate(sid)
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "session not found")
-		return
-	}
-	defer h.tickets.FinishTemplate(sid)
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	_ = daemonclient.RelayTemplateStream(ctx, w, h.cfg.Daemon, ticket.ClusterID, ticket.Rename, ticket.Allocate)
+	h.streamTemplate(w, r, clusterID, rename, allocate)
 }
 
 func (h *Handler) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
