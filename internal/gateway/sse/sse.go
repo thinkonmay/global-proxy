@@ -55,46 +55,6 @@ func (h *Hub) Dispatch(_ context.Context, e model.SSERaw) error {
 	return nil
 }
 
-// ServeForFiltered streams events for recipient, optionally filtering by SSE
-// message type and a predicate on the raw Data payload.
-func (h *Hub) ServeForFiltered(w http.ResponseWriter, r *http.Request, recipient, wantType string, match func(json.RawMessage) bool) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	c := h.add(recipient)
-	defer h.remove(c)
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	ticker := time.NewTicker(sseHeartbeat)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case e := <-c.ch:
-			if wantType != "" && e.Type != wantType {
-				continue
-			}
-			if match != nil && !match(e.Data) {
-				continue
-			}
-			h.writeMsg(w, e)
-			flusher.Flush()
-		case <-ticker.C:
-			_, _ = fmt.Fprint(w, ":keepalive\n\n")
-			flusher.Flush()
-		}
-	}
-}
-
 // ServeFor holds the connection open and streams events for recipient until the
 // client disconnects. The caller derives recipient (e.g. from authentication) —
 // the hub stays a generic transport and does not inspect the request identity.

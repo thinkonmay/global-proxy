@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
@@ -120,8 +118,8 @@ func newMux(
 	}
 	webhook.RegisterPaymentWebhooks(mux, payReg, eventBus)
 
-	// SSE: one authenticated stream per user; clients filter on msg.type / ids.
-	// Per-resource paths are aliases that pre-filter the same hub (OpenAPI parity).
+	// SSE: one authenticated stream per user; clients discriminate by msg.type
+	// and any ids carried in the payload over this single connection.
 	sseHandler := func(w http.ResponseWriter, r *http.Request) {
 		auth.PromoteQueryToken(r)
 		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
@@ -131,53 +129,8 @@ func newMux(
 		}
 		hub.ServeFor(w, r, email)
 	}
-	paymentSSE := func(w http.ResponseWriter, r *http.Request) {
-		auth.PromoteQueryToken(r)
-		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
-		if !ok {
-			auth.WriteAuthErr(w, status, msg)
-			return
-		}
-		txnID := strings.TrimSpace(r.PathValue("transactionId"))
-		hub.ServeForFiltered(w, r, email, "payment", func(data json.RawMessage) bool {
-			if txnID == "" {
-				return true
-			}
-			var p struct {
-				TransactionID string `json:"transaction_id"`
-			}
-			if json.Unmarshal(data, &p) != nil {
-				return false
-			}
-			return p.TransactionID == txnID
-		})
-	}
-	jobSSE := func(w http.ResponseWriter, r *http.Request) {
-		auth.PromoteQueryToken(r)
-		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
-		if !ok {
-			auth.WriteAuthErr(w, status, msg)
-			return
-		}
-		jobID := strings.TrimSpace(r.PathValue("jobId"))
-		hub.ServeForFiltered(w, r, email, "job", func(data json.RawMessage) bool {
-			if jobID == "" {
-				return true
-			}
-			var p struct {
-				JobID int64 `json:"job_id"`
-			}
-			if json.Unmarshal(data, &p) != nil {
-				return false
-			}
-			return fmt.Sprint(p.JobID) == jobID
-		})
-	}
 	v1 := router.V1(mux)
 	v1.GET("/sse", sseHandler)
-	v1.GET("/payments/{transactionId}/events", paymentSSE)
-	v1.GET("/jobs/{jobId}/events", jobSSE)
-	mux.HandleFunc("GET /sse", sseHandler) // legacy alias for pre-/v1 clients
 
 	adminhost.RegisterInternalRoutes(mux, gate)
 	if gate != nil {

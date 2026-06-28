@@ -17,7 +17,6 @@ var gatewayAPIPrefixes = []string{
 	"/analytics/v1/",
 	"/api/",
 	"/v1/",
-	"/sse",
 	"/admin/",
 	"/vault/v1/",
 }
@@ -26,7 +25,6 @@ var gatewayAPIPrefixes = []string{
 var gatewayAPIExactPaths = []string{
 	"/health",
 	"/graphql/v1",
-	"/sse",
 }
 
 func stripLocalePrefix(path string) string {
