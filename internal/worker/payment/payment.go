@@ -101,8 +101,10 @@ func (h *Handler) handlePaymentEvent(ctx context.Context, ev model.PaymentMsg) e
 	switch ev.Kind {
 	case payment.EventSubActivated, payment.EventSubRenewed, payment.EventSubCanceled:
 		return h.settleSubscription(ctx, ev)
-	default:
+	case payment.EventCharge:
 		return h.settleCharge(ctx, ev)
+	default:
+		return fmt.Errorf("unhandled payment event kind %q", ev.Kind)
 	}
 }
 
