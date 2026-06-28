@@ -63,6 +63,61 @@ func TestAdminStudioHostSSOOnly(t *testing.T) {
 	}
 }
 
+func TestAdminLitellmHostSSO(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	cfg := &config.Config{
+		Admin: config.Admin{
+			Enabled:          true,
+			AllowedIPs:       []string{"203.0.113.1"},
+			AllowedEmails:    []string{"ops@thinkmay.net"},
+			SigningSecret:    "test-secret",
+			LitellmMasterKey: "sk-test-master",
+			Redis:            config.Redis{URL: "redis://" + mr.Addr()},
+			Hosts: config.AdminHosts{
+				Public:  "thinkmay.net",
+				Litellm: "litellm.thinkmay.net",
+			},
+			Upstreams: config.AdminUpstreams{
+				Litellm: "", // set below
+			},
+			CookieDomain: ".thinkmay.net",
+		},
+	}
+	litellm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-test-master" {
+			t.Errorf("Authorization = %q, want master key bearer", got)
+		}
+		_, _ = io.WriteString(w, "litellm")
+	}))
+	defer litellm.Close()
+	cfg.Admin.Upstreams.Litellm = litellm.URL
+
+	gate, err := InitGate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token := adminSSOCookie(t, gate)
+	public := http.NewServeMux()
+	router := admingate.NewHostRouter(cfg.Admin.Hosts.Public, public)
+	registerLitellmHost(router, cfg, gate)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui", nil)
+	req.Host = "litellm.thinkmay.net"
+	req.RemoteAddr = "203.0.113.1:1234"
+	req.AddCookie(&http.Cookie{Name: "tm_admin_sso", Value: token})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "litellm" {
+		t.Fatalf("expected litellm proxy after SSO, code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAdminStudioHostOptionalBasicAuth(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {

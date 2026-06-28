@@ -12,6 +12,7 @@ type Admin struct {
 	BasicAuthEnabled bool         `mapstructure:"basicAuthEnabled"`
 	BasicAuthUser    string       `mapstructure:"basicAuthUser"`
 	BasicAuthPass    string       `mapstructure:"basicAuthPassword"`
+	LitellmMasterKey string       `mapstructure:"-"` // APP_LITELLM_MASTERKEY — LiteLLM UI proxy auth only
 	Redis           Redis        `mapstructure:"redis"`
 	Resend          Resend       `mapstructure:"resend"`
 	Hosts           AdminHosts   `mapstructure:"hosts"`
@@ -33,6 +34,7 @@ type AdminHosts struct {
 	Studio    string `mapstructure:"studio"`
 	Analytics string `mapstructure:"analytics"`
 	Grafana   string `mapstructure:"grafana"`
+	Litellm   string `mapstructure:"litellm"`
 }
 
 type AdminIngest struct {
@@ -44,4 +46,5 @@ type AdminUpstreams struct {
 	RybbitClient  string `mapstructure:"rybbitClient"`
 	RybbitBackend string `mapstructure:"rybbitBackend"`
 	Grafana       string `mapstructure:"grafana"`
+	Litellm       string `mapstructure:"litellm"`
 }

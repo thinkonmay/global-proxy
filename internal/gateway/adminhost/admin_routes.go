@@ -57,6 +57,7 @@ func WrapHostRouter(public http.Handler, cfg *config.Config, gate *admingate.Gat
 	registerAdminHost(router, cfg.Admin.Hosts.Studio, cfg.Admin.Upstreams.Studio, gate, http.DefaultTransport)
 	registerAnalyticsHost(router, cfg, gate, rt)
 	registerGrafanaHost(router, cfg, gate)
+	registerLitellmHost(router, cfg, gate)
 	return router
 }
 
@@ -84,6 +85,28 @@ func registerGrafanaHost(router *admingate.HostRouter, cfg *config.Config, gate 
 	}
 	upstream := newGrafanaSessionMiddleware(upstreamURL, proxyUser, proxy)
 	router.Register(host, newAdminHostHandler(gate, upstream))
+}
+
+func registerLitellmHost(router *admingate.HostRouter, cfg *config.Config, gate *admingate.Gate) {
+	host := cfg.Admin.Hosts.Litellm
+	upstreamURL := cfg.Admin.Upstreams.Litellm
+	if host == "" || upstreamURL == "" {
+		return
+	}
+	masterKey := strings.TrimSpace(cfg.Admin.LitellmMasterKey)
+	proxy := upstream.NewProxy(upstreamURL, http.DefaultTransport, func(req *http.Request) {
+		req.Header.Set("X-Forwarded-Proto", "https")
+		upstream.SetForwardedHeaders(req)
+		// Gateway admin SSO replaces manual master-key entry in the LiteLLM UI.
+		if masterKey != "" {
+			req.Header.Set("Authorization", "Bearer "+masterKey)
+		}
+	})
+	if proxy == nil {
+		slog.Error("admin upstream invalid", "host", host, "url", upstreamURL)
+		return
+	}
+	router.Register(host, newAdminHostHandler(gate, proxy))
 }
 
 func registerAdminHost(router *admingate.HostRouter, host, upstreamURL string, gate *admingate.Gate, rt http.RoundTripper) {

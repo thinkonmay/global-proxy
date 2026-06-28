@@ -16,6 +16,7 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.Admin.SigningSecret, "APP_ADMIN_SIGNINGSECRET")
 	setEnvString(&cfg.Admin.Resend.APIKey, "APP_ADMIN_RESEND_APIKEY")
 	setEnvString(&cfg.Admin.Resend.From, "APP_ADMIN_RESEND_FROM")
+	setEnvString(&cfg.Admin.LitellmMasterKey, "APP_LITELLM_MASTERKEY")
 	setEnvString(&cfg.Runtime.Grpc.HomeIssuerHost, "CLUSTER_HOME_DOMAIN")
 	if cfg.Runtime.Grpc.HomeIssuerHost == "" {
 		setEnvString(&cfg.Runtime.Grpc.HomeIssuerHost, "GATEWAY_PUBLIC_HOST")
