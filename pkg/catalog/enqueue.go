@@ -46,7 +46,18 @@ func ResolveStore(ctx context.Context, deps StoreDeps, appID int64) (*StoreRecor
 		if err := EnqueueEnsureSteamStore(ctx, deps.Bus, appID); err != nil {
 			return nil, err
 		}
-		return waitLookup(ctx, deps, appID)
+		rec, err := waitLookup(ctx, deps, appID)
+		if err != nil {
+			return nil, err
+		}
+		if rec != nil {
+			return rec, nil
+		}
+		// Worker did not finish in time (slow Steam fetch or worker offline).
+		if err := EnsureSteamStore(ctx, deps.PostgREST, deps.SteamHTTP, deps.StoreIndex, appID); err != nil {
+			return nil, err
+		}
+		return LookupStore(ctx, deps.PostgREST, deps.StoreIndex, appID)
 	}
 	if err := EnsureSteamStore(ctx, deps.PostgREST, deps.SteamHTTP, deps.StoreIndex, appID); err != nil {
 		return nil, err

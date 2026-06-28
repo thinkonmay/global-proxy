@@ -132,6 +132,7 @@ func TestSearchV1RouteRegistered(t *testing.T) {
 	body := bytes.NewBufferString(`{"description":"relaxing puzzle games"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/search/ai", body)
 	req.Header.Set("Authorization", "Bearer "+testJWT(t))
+	req.Header.Set("Accept", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

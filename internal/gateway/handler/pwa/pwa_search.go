@@ -18,6 +18,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/llmtrace"
 	"github.com/thinkonmay/global-proxy/api/pkg/persona"
 	"github.com/thinkonmay/global-proxy/api/pkg/serpapi"
+	"github.com/thinkonmay/global-proxy/api/pkg/sse"
 )
 
 type pwaSearchRequest struct {
@@ -89,8 +90,16 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
-	persona, _ := h.fetchPersonaProfile(ctx, req.Issuer, r.Header.Get("Authorization"), usr.UserID)
-	result, err := h.callLLMSearch(ctx, req.Description, persona)
+	if wantsSearchSSE(r) {
+		h.searchSSE(w, ctx, req, usr, r.Header.Get("Authorization"))
+		return
+	}
+	h.searchJSON(w, ctx, req, usr, r.Header.Get("Authorization"))
+}
+
+func (h *Handler) searchJSON(w http.ResponseWriter, ctx context.Context, req pwaSearchRequest, usr auth.PWAUser, authHeader string) {
+	persona, _ := h.fetchPersonaProfile(ctx, req.Issuer, authHeader, usr.UserID, usr.Email)
+	result, err := h.callLLMSearch(ctx, req.Description, persona, nil)
 	if err != nil {
 		llmtrace.LogFeatureError(llmtrace.FeatureAISearch, err, "description_len", len(req.Description))
 		httpx.WriteError(w, http.StatusInternalServerError, "Internal server error")
@@ -104,11 +113,78 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"suggestion": result.Suggestion, "games": []any{}})
 		return
 	}
-	h.enrichSearchGames(ctx, result.Games)
+	h.enrichSearchGames(ctx, result.Games, nil)
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
-func (h *Handler) fetchPersonaProfile(ctx context.Context, issuer, authHeader, uid string) (*pwaUserProfile, error) {
+func (h *Handler) searchSSE(w http.ResponseWriter, ctx context.Context, req pwaSearchRequest, usr auth.PWAUser, authHeader string) {
+	sse.WriteHeaders(w)
+	seq := 0
+	emit := func(evt pwaSearchSSEEvent) bool {
+		if err := emitSearchEvent(w, &seq, evt); err != nil {
+			return false
+		}
+		return true
+	}
+
+	if !emit(pwaSearchSSEEvent{
+		Type:    "progress",
+		Phase:   searchPhaseStarting,
+		Message: "Starting AI search...",
+	}) {
+		return
+	}
+
+	report := func(evt pwaSearchSSEEvent) {
+		_ = emit(evt)
+	}
+
+	if !emit(pwaSearchSSEEvent{
+		Type:    "progress",
+		Phase:   searchPhasePersona,
+		Message: "Loading your preferences...",
+	}) {
+		return
+	}
+	persona, _ := h.fetchPersonaProfile(ctx, req.Issuer, authHeader, usr.UserID, usr.Email)
+
+	result, err := h.callLLMSearch(ctx, req.Description, persona, report)
+	if err != nil {
+		llmtrace.LogFeatureError(llmtrace.FeatureAISearch, err, "description_len", len(req.Description))
+		_ = emit(pwaSearchSSEEvent{Type: "error", Error: "search failed"})
+		return
+	}
+
+	if len(result.Games) > 0 {
+		reportSearchProgress(report, searchPhaseEnriching, "Loading game details...", 0, "")
+		h.enrichSearchGames(ctx, result.Games, report)
+	}
+
+	llmtrace.LogFeatureOK(llmtrace.FeatureAISearch,
+		"description_len", len(req.Description),
+		"games", len(result.Games),
+	)
+	games := result.Games
+	if games == nil {
+		games = []pwaGameSearch{}
+	}
+	_ = emit(pwaSearchSSEEvent{
+		Type:       "result",
+		Suggestion: result.Suggestion,
+		Games:      games,
+	})
+}
+
+func (h *Handler) fetchPersonaProfile(ctx context.Context, issuer, authHeader, uid, email string) (*pwaUserProfile, error) {
+	if h.pr != nil && email != "" {
+		profile, err := persona.FetchProfile(ctx, h.pr, strings.ToLower(email))
+		if err == nil && profile != nil {
+			var out pwaUserProfile
+			if json.Unmarshal(profile, &out) == nil {
+				return &out, nil
+			}
+		}
+	}
 	if h.pr != nil && issuer != "" && authHeader != "" {
 		usr, _, _ := auth.PWAAuthFromRequest(ctx, h.transport, &http.Request{
 			Header: http.Header{"Authorization": []string{authHeader}},
@@ -162,7 +238,7 @@ func (h *Handler) fetchPersonaProfile(ctx context.Context, issuer, authHeader, u
 	return &profile, nil
 }
 
-func (h *Handler) callLLMSearch(ctx context.Context, description string, persona *pwaUserProfile) (struct {
+func (h *Handler) callLLMSearch(ctx context.Context, description string, persona *pwaUserProfile, report searchProgressReporter) (struct {
 	Suggestion string          `json:"suggestion"`
 	Games      []pwaGameSearch `json:"games"`
 }, error) {
@@ -184,6 +260,7 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 	)
 
 	for round := 0; round < pwaSearchMaxToolRounds; round++ {
+		reportSearchProgress(report, searchPhaseThinking, "Analyzing your request...", round, "")
 		body := map[string]any{
 			"model":    h.llm.Model,
 			"messages": messages,
@@ -223,6 +300,7 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 			})
 			for _, tc := range choice.Message.ToolCalls {
 				llmtrace.LogToolInvoke(llmtrace.FeatureAISearch, round, tc.Function.Name, tc.Function.Arguments)
+				reportSearchProgress(report, searchPhaseTool, toolProgressMessage(tc.Function.Name, tc.Function.Arguments), round, tc.Function.Name)
 				content, ok := h.runPWASearchTool(ctx, tc.Function.Name, tc.Function.Arguments)
 				if !ok {
 					slog.Debug("llm tool skipped",
@@ -252,6 +330,7 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 		"feature", llmtrace.FeatureAISearch,
 		"rounds", pwaSearchMaxToolRounds,
 	)
+	reportSearchProgress(report, searchPhaseFinalizing, "Composing your recommendations...", pwaSearchMaxToolRounds, "")
 	messages = append(messages, map[string]any{
 		"role":    "user",
 		"content": "Return the final JSON object now using the tool results above. Include 3-5 games. Do not call any tools.",
@@ -405,15 +484,38 @@ func (h *Handler) llmChat(ctx context.Context, feature string, round int, body m
 	return data, nil
 }
 
-func (h *Handler) enrichSearchGames(ctx context.Context, games []pwaGameSearch) {
+func (h *Handler) resolveGameSteamID(ctx context.Context, game *pwaGameSearch) int64 {
+	if game == nil {
+		return 0
+	}
+	if game.ID > 0 {
+		return int64(game.ID)
+	}
+	name := strings.TrimSpace(game.Name)
+	if name == "" {
+		return 0
+	}
+	id, ok := persona.ResolveSteamAppID(ctx, h.httpClient, name)
+	if !ok {
+		slog.Debug("ai search: could not resolve steam app id", "name", name)
+		return 0
+	}
+	game.ID = int(id)
+	return id
+}
+
+func (h *Handler) enrichSearchGames(ctx context.Context, games []pwaGameSearch, report searchProgressReporter) {
 	for i := range games {
-		id := games[i].ID
+		id := h.resolveGameSteamID(ctx, &games[i])
 		if id <= 0 {
 			continue
 		}
-		info, err := h.searchStoreByID(ctx, int64(id))
-		if err != nil || info == nil || info.ID != int64(id) {
-			info, err = h.searchStoreByID(ctx, int64(id))
+		if report != nil && games[i].Name != "" {
+			reportSearchProgress(report, searchPhaseEnriching, fmt.Sprintf("Loading details for %s...", games[i].Name), 0, "")
+		}
+		info, err := h.searchStoreByID(ctx, id)
+		if err != nil || info == nil || info.ID != id {
+			info, err = h.searchStoreByID(ctx, id)
 		}
 		if info != nil {
 			games[i].Info = info

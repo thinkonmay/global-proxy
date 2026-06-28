@@ -39,6 +39,19 @@ type steamSearchHit struct {
 	Name string `json:"name"`
 }
 
+// ResolveSteamAppID resolves a game title to a Steam App ID via storesearch.
+func ResolveSteamAppID(ctx context.Context, client *http.Client, name string) (int64, bool) {
+	hits, err := searchSteamStore(ctx, client, name)
+	if err != nil || len(hits) == 0 {
+		return 0, false
+	}
+	id, ok := bestSteamMatch(hits, name)
+	if !ok || id <= 0 {
+		return 0, false
+	}
+	return int64(id), true
+}
+
 func bestSteamMatch(hits []steamSearchHit, name string) (int, bool) {
 	if len(hits) == 0 {
 		return 0, false

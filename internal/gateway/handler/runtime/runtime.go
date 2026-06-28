@@ -124,6 +124,19 @@ func (h *Handler) handleInfoSSE(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if h.cfg.PostgREST != nil {
+		checkCtx, checkCancel := context.WithTimeout(r.Context(), 5*time.Second)
+		eligible, err := cluster.UserEligibleForRuntimeStream(checkCtx, h.cfg.PostgREST, email)
+		checkCancel()
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadGateway, "runtime eligibility check failed")
+			return
+		}
+		if !eligible {
+			httpx.WriteError(w, http.StatusForbidden, "no active subscription or volume")
+			return
+		}
+	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	if err := h.cfg.Daemon.RelayInfoStream(ctx, w, email); err != nil && ctx.Err() == nil {

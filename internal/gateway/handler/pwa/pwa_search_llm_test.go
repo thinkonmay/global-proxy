@@ -84,7 +84,7 @@ func TestCallLLMSearchFinalizesAfterToolRoundBudget(t *testing.T) {
 		LLM: config.LLM{BaseURL: llm.URL + "/v1", APIKey: "k", Model: "test"},
 	}, nil, nil, nil, nil, nil)
 
-	out, err := h.callLLMSearch(context.Background(), "racing games", nil)
+	out, err := h.callLLMSearch(context.Background(), "racing games", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
