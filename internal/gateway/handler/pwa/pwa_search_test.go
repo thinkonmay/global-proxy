@@ -65,6 +65,30 @@ func TestSearchNotConfigured(t *testing.T) {
 	}
 }
 
+func TestPwaSearchToolsIncludesGoogleWhenSerpAPIConfigured(t *testing.T) {
+	h := New(config.Config{
+		LLM:      config.LLM{BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "test"},
+		SerpAPI:  config.SerpAPI{APIKey: "serp-key"},
+	}, nil, nil, persona.New(nil, nil))
+	tools := h.pwaSearchTools()
+	if len(tools) != 2 {
+		t.Fatalf("tools=%d", len(tools))
+	}
+	fn, _ := tools[1]["function"].(map[string]any)
+	if fn["name"] != "google_search" {
+		t.Fatalf("name=%v", fn["name"])
+	}
+}
+
+func TestPwaSearchToolsOmitsGoogleWithoutSerpAPIKey(t *testing.T) {
+	h := New(config.Config{
+		LLM: config.LLM{BaseURL: "http://127.0.0.1:1", APIKey: "k", Model: "test"},
+	}, nil, nil, persona.New(nil, nil))
+	if len(h.pwaSearchTools()) != 1 {
+		t.Fatal("expected only search_steam")
+	}
+}
+
 func TestSearchV1RouteRegistered(t *testing.T) {
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {

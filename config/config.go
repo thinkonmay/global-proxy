@@ -37,6 +37,7 @@ type Config struct {
 	Runtime        Runtime        `mapstructure:"runtime"`
 	Storj          Storj          `mapstructure:"storj"`
 	LLM            LLM            `mapstructure:"llm"`
+	SerpAPI        SerpAPI        `mapstructure:"serpapi"`
 	TLS            TLS            `mapstructure:"tls"`
 }
 

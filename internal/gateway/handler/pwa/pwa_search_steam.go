@@ -45,7 +45,10 @@ func pwaSearchSystemPrompt(persona *pwaUserProfile) string {
 	base := `You are a Game search engine
 Your task is to analyze user persona and find games for the user.
 Ensure returned games are available on Steam
-Do google search if necessary
+
+[Tools]
+- Use google_search to discover candidate game titles from the web when the user describes mood, genre, comparisons, or vague preferences.
+- Use search_steam to resolve each candidate title to a Steam App ID before returning results.
 
 [Rules]
 - If user enter a game's name, that game must be in number 1 of the list with highest score

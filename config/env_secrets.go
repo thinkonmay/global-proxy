@@ -27,6 +27,10 @@ func mergeEnvSecrets(cfg *Config) {
 	setEnvString(&cfg.LLM.BaseURL, "APP_LLM_BASEURL")
 	setEnvString(&cfg.LLM.APIKey, "APP_LLM_APIKEY")
 	setEnvString(&cfg.LLM.Model, "APP_LLM_MODEL")
+	setEnvString(&cfg.SerpAPI.APIKey, "APP_SERPAPI_APIKEY")
+	if cfg.SerpAPI.APIKey == "" {
+		setEnvString(&cfg.SerpAPI.APIKey, "SERPAPI_API_KEY")
+	}
 	setEnvString(&cfg.Storj.AccessGrant, "APP_STORJ_ACCESSGRANT")
 	setEnvString(&cfg.Runtime.Grpc.VaultPassword, "VAULT_VIRTDAEMON_PASSWORD")
 	setEnvString(&cfg.Runtime.Grpc.HomeOverride, "APP_RUNTIME_GRPC_HOME")
