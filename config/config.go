@@ -256,7 +256,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("logs.bulkMaxBytes", 1048576)
 	v.SetDefault("routing.redisUrl", "redis://redis:6379/2")
 	v.SetDefault("llm.baseURL", "http://litellm:4000/v1")
-	v.SetDefault("llm.model", "gpt-4o")
+	v.SetDefault("llm.model", "deepseek-v4-flash")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err

@@ -28,7 +28,7 @@ type synthesizer struct {
 
 func newSynthesizer(cfg LLMConfig) *synthesizer {
 	if cfg.Model == "" {
-		cfg.Model = "gpt-4o"
+		cfg.Model = "deepseek-v4-flash"
 	}
 	if cfg.HTTP == nil {
 		cfg.HTTP = &http.Client{Timeout: 120 * time.Second}

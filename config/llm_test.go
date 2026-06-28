@@ -10,6 +10,8 @@ func TestIsDirectLLMProviderURL(t *testing.T) {
 		{"https://api.openai.com/v1", true},
 		{"https://myorg.openai.azure.com/openai/deployments/gpt-4o", true},
 		{"https://generativelanguage.googleapis.com/v1beta", true},
+		{"https://api.deepseek.com/chat/completions", true},
+		{"https://api.deepseek.com", true},
 		{"http://litellm:4000/v1", false},
 		{"http://litellm:4000", false},
 		{"", false},

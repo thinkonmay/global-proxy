@@ -10,9 +10,12 @@ import (
 // litellmProxyBaseURL is llm.baseURL from config.yaml (captured before APP_LLM_* env overrides).
 var litellmProxyBaseURL string
 
+const defaultLLMModel = "deepseek-v4-flash"
+
 // directProviderHosts are upstream LLM endpoints the gateway must never call.
 var directProviderHosts = map[string]struct{}{
 	"api.openai.com":                    {},
+	"api.deepseek.com":                  {},
 	"openai.azure.com":                  {},
 	"api.anthropic.com":                 {},
 	"generativelanguage.googleapis.com": {},
@@ -36,7 +39,7 @@ func captureLiteLLMProxyBaseURL(cfg Config, fallback string) {
 
 func mergeLLMDefaults(cfg *Config) {
 	if cfg.LLM.Model == "" {
-		cfg.LLM.Model = "gpt-4o"
+		cfg.LLM.Model = defaultLLMModel
 	}
 	if cfg.LLM.BaseURL == "" {
 		cfg.LLM.BaseURL = litellmProxyBaseURL
