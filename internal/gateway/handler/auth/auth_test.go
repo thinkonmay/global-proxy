@@ -32,19 +32,19 @@ func testGoTrueJWT(t *testing.T, secret, userID, email string) string {
 }
 
 func TestPromoteQueryToken(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/new/sse?id=abc&token=raw-jwt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/info/sse?token=raw-jwt", nil)
 	PromoteQueryToken(req)
 	if got := req.Header.Get("Authorization"); got != "Bearer raw-jwt" {
 		t.Fatalf("Authorization = %q", got)
 	}
 
-	req2 := httptest.NewRequest(http.MethodGet, "/v1/runtime/new/sse?id=abc&token=Bearer+prefixed", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/runtime/info/sse?token=Bearer+prefixed", nil)
 	PromoteQueryToken(req2)
 	if got := req2.Header.Get("Authorization"); got != "Bearer prefixed" {
 		t.Fatalf("Authorization = %q", got)
 	}
 
-	req3 := httptest.NewRequest(http.MethodGet, "/v1/runtime/new/sse?id=abc", nil)
+	req3 := httptest.NewRequest(http.MethodGet, "/v1/runtime/info/sse", nil)
 	req3.Header.Set("Authorization", "Bearer existing")
 	PromoteQueryToken(req3)
 	if got := req3.Header.Get("Authorization"); got != "Bearer existing" {

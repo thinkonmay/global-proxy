@@ -14,7 +14,7 @@ import (
 )
 
 func (h *Handler) AppInfo(w http.ResponseWriter, r *http.Request) {
-	appID := strings.TrimSpace(r.URL.Query().Get("id"))
+	appID := strings.TrimSpace(r.PathValue("appID"))
 	if appID == "" {
 		httpx.WriteJSON(w, http.StatusBadRequest, nil)
 		return
@@ -57,89 +57,90 @@ func (h *Handler) CurrencyRates(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteData(w, rows)
 }
 
-func (h *Handler) Plans(w http.ResponseWriter, r *http.Request) {
-	typ := strings.TrimSpace(r.URL.Query().Get("type"))
-	planName := strings.TrimSpace(r.URL.Query().Get("plan_name"))
+func (h *Handler) PlansCredit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), pwaQueryTimeout)
 	defer cancel()
-
-	switch typ {
-	case "policy":
-		if planName == "" {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid type")
-			return
-		}
-		q := url.Values{}
-		q.Set("select", "total_days,disk:configuration->>disk")
-		q.Set("active", "eq.true")
-		q.Set("name", "eq."+planName)
-		q.Set("limit", "1")
-		var rows []struct {
-			TotalDays *float64 `json:"total_days"`
-			Disk      *string  `json:"disk"`
-		}
-		if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
-			httpx.WriteError(w, http.StatusOK, err.Error())
-			return
-		}
-		if len(rows) == 0 {
-			httpx.WriteError(w, http.StatusOK, fmt.Sprintf("plan %s not found", planName))
-			return
-		}
-		disk := float64(0)
-		if rows[0].Disk != nil {
-			disk, _ = strconv.ParseFloat(*rows[0].Disk, 64)
-		}
-		httpx.WriteData(w, map[string]any{"total_days": rows[0].TotalDays, "disk": disk})
-	case "price":
-		currency := strings.TrimSpace(r.URL.Query().Get("currency"))
-		if planName == "" || currency == "" {
-			httpx.WriteError(w, http.StatusBadRequest, "missing currency")
-			return
-		}
-		q := url.Values{}
-		q.Set("select", fmt.Sprintf("price->%s", currency))
-		q.Set("active", "eq.true")
-		q.Set("name", "eq."+planName)
-		q.Set("limit", "1")
-		var rows []map[string]json.RawMessage
-		if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
-			httpx.WriteError(w, http.StatusOK, err.Error())
-			return
-		}
-		if len(rows) == 0 {
-			httpx.WriteError(w, http.StatusOK, fmt.Sprintf("plan %s not found", planName))
-			return
-		}
-		raw, ok := rows[0][currency]
-		if !ok || len(raw) == 0 || string(raw) == "null" {
-			httpx.WriteError(w, http.StatusOK, "price not found")
-			return
-		}
-		// price->{currency} is a MAJOR-unit number; return it as-is (FE formats + adds symbol).
-		var amount float64
-		if err := json.Unmarshal(raw, &amount); err != nil {
-			httpx.WriteError(w, http.StatusOK, err.Error())
-			return
-		}
-		httpx.WriteData(w, amount)
-	case "credit":
-		q := url.Values{}
-		q.Set("select", "credit,name")
-		q.Set("active", "eq.true")
-		var rows []map[string]any
-		if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
-			httpx.WriteError(w, http.StatusOK, err.Error())
-			return
-		}
-		if len(rows) == 0 {
-			httpx.WriteError(w, http.StatusOK, "no plan available")
-			return
-		}
-		httpx.WriteData(w, rows)
-	default:
-		httpx.WriteError(w, http.StatusBadRequest, "invalid type")
+	q := url.Values{}
+	q.Set("select", "credit,name")
+	q.Set("active", "eq.true")
+	var rows []map[string]any
+	if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
+		httpx.WriteError(w, http.StatusOK, err.Error())
+		return
 	}
+	if len(rows) == 0 {
+		httpx.WriteError(w, http.StatusOK, "no plan available")
+		return
+	}
+	httpx.WriteData(w, rows)
+}
+
+func (h *Handler) PlanPolicy(w http.ResponseWriter, r *http.Request) {
+	planName := strings.TrimSpace(r.PathValue("planName"))
+	if planName == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid type")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), pwaQueryTimeout)
+	defer cancel()
+	q := url.Values{}
+	q.Set("select", "total_days,disk:configuration->>disk")
+	q.Set("active", "eq.true")
+	q.Set("name", "eq."+planName)
+	q.Set("limit", "1")
+	var rows []struct {
+		TotalDays *float64 `json:"total_days"`
+		Disk      *string  `json:"disk"`
+	}
+	if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
+		httpx.WriteError(w, http.StatusOK, err.Error())
+		return
+	}
+	if len(rows) == 0 {
+		httpx.WriteError(w, http.StatusOK, fmt.Sprintf("plan %s not found", planName))
+		return
+	}
+	disk := float64(0)
+	if rows[0].Disk != nil {
+		disk, _ = strconv.ParseFloat(*rows[0].Disk, 64)
+	}
+	httpx.WriteData(w, map[string]any{"total_days": rows[0].TotalDays, "disk": disk})
+}
+
+func (h *Handler) PlanPrice(w http.ResponseWriter, r *http.Request) {
+	planName := strings.TrimSpace(r.PathValue("planName"))
+	currency := strings.TrimSpace(r.URL.Query().Get("currency"))
+	if planName == "" || currency == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "missing currency")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), pwaQueryTimeout)
+	defer cancel()
+	q := url.Values{}
+	q.Set("select", fmt.Sprintf("price->%s", currency))
+	q.Set("active", "eq.true")
+	q.Set("name", "eq."+planName)
+	q.Set("limit", "1")
+	var rows []map[string]json.RawMessage
+	if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
+		httpx.WriteError(w, http.StatusOK, err.Error())
+		return
+	}
+	if len(rows) == 0 {
+		httpx.WriteError(w, http.StatusOK, fmt.Sprintf("plan %s not found", planName))
+		return
+	}
+	raw, ok := rows[0][currency]
+	if !ok || len(raw) == 0 || string(raw) == "null" {
+		httpx.WriteError(w, http.StatusOK, "price not found")
+		return
+	}
+	var amount float64
+	if err := json.Unmarshal(raw, &amount); err != nil {
+		httpx.WriteError(w, http.StatusOK, err.Error())
+		return
+	}
+	httpx.WriteData(w, amount)
 }
 
 func (h *Handler) Feedback(w http.ResponseWriter, r *http.Request) {

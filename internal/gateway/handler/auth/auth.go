@@ -57,8 +57,8 @@ func IssuerFromRequest(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("issuer"))
 }
 
-// PromoteQueryToken copies ?token= into Authorization when the client cannot set
-// headers (browser EventSource).
+// PromoteQueryToken copies deprecated ?token= into Authorization for legacy
+// EventSource clients. New clients must send Authorization directly.
 func PromoteQueryToken(r *http.Request) {
 	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
 		return

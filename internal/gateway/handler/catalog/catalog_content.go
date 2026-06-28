@@ -52,7 +52,7 @@ func (h *Handler) ListCurrencyRates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) AppInfo(w http.ResponseWriter, r *http.Request) {
-	appID := strings.TrimSpace(r.URL.Query().Get("id"))
+	appID := strings.TrimSpace(r.PathValue("appID"))
 	if appID == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "id required")
 		return
