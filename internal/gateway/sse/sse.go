@@ -15,7 +15,7 @@ import (
 
 const (
 	sseClientBuffer = 16               // per-client queue; full => event dropped for that client
-	sseHeartbeat    = 25 * time.Second // keepalive comment so idle conns/proxies stay open
+	sseHeartbeat    = 10 * time.Second // keepalive comment so idle conns/proxies stay open
 )
 
 // sseClient is one connected SSE stream: a queue drained by its own Serve loop.
