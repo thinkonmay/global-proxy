@@ -15,9 +15,16 @@ import (
 type fakeBatch struct {
 	appendErr error
 	sendErr   error
+	rows      [][]any
 }
 
-func (f *fakeBatch) Append(_ ...any) error           { return f.appendErr }
+func (f *fakeBatch) Append(v ...any) error {
+	if f.appendErr != nil {
+		return f.appendErr
+	}
+	f.rows = append(f.rows, v)
+	return nil
+}
 func (f *fakeBatch) AppendStruct(_ any) error        { return nil }
 func (f *fakeBatch) Column(_ int) driver.BatchColumn { return nil }
 func (f *fakeBatch) Columns() []column.Interface     { return nil }
@@ -25,7 +32,7 @@ func (f *fakeBatch) Flush() error                    { return nil }
 func (f *fakeBatch) Send() error                     { return f.sendErr }
 func (f *fakeBatch) Abort() error                    { return nil }
 func (f *fakeBatch) IsSent() bool                    { return false }
-func (f *fakeBatch) Rows() int                       { return 0 }
+func (f *fakeBatch) Rows() int                       { return len(f.rows) }
 func (f *fakeBatch) Close() error                    { return nil }
 
 type fakeCH struct {
@@ -77,5 +84,56 @@ func TestHandleUsagePrepareBatchError(t *testing.T) {
 	errs := h.handleUsage(context.Background(), []model.UsageMsg{{Metric: "x"}})
 	if len(errs) != 1 || errs[0] != want {
 		t.Fatalf("errs: %v", errs)
+	}
+}
+
+func TestHandleAppUsageSinkCDP1(t *testing.T) {
+	batch := &fakeBatch{}
+	h := &Handler{ch: &fakeCH{batch: batch}}
+	ts := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	events := []model.AppUsageMsg{
+		{
+			EventTime:        ts,
+			UserEmail:        "u@example.com",
+			RuntimeSessionID: "sess-1",
+			AppKey:           "game:elden-ring",
+			DurationSec:      120,
+			LaunchCount:      2,
+			Cluster:          "c1",
+			Node:             "n1",
+			FlushReason:      "interval",
+			FlushSeq:         3,
+		},
+		{
+			EventTime:        ts,
+			UserEmail:        "u@example.com",
+			RuntimeSessionID: "sess-1",
+			AppKey:           "fivem",
+			DurationSec:      30,
+			Cluster:          "c1",
+		},
+	}
+
+	errs := h.handleAppUsage(context.Background(), events)
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("event %d: %v", i, err)
+		}
+	}
+	if len(batch.rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(batch.rows))
+	}
+	row := batch.rows[0]
+	if len(row) != 11 {
+		t.Fatalf("column count = %d, want 11", len(row))
+	}
+	if row[3] != "game:elden-ring" || row[4] != 120.0 || row[5] != uint32(2) {
+		t.Fatalf("first row = %#v", row)
+	}
+	if row[10] != "process_analytics" {
+		t.Fatalf("default source = %v, want process_analytics", row[10])
+	}
+	if batch.rows[1][5] != uint32(1) {
+		t.Fatalf("zero launch_count should default to 1, got %v", batch.rows[1][5])
 	}
 }

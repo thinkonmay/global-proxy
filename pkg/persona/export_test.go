@@ -11,3 +11,5 @@ func BestSteamMatchForTest(hits []SteamHitForTest, name string) (int, bool) {
 }
 
 func ResponseSchemaForTest() map[string]any { return personaResponseSchema() }
+
+func AnalystSystemPromptForTest() string { return analystSystemPrompt }

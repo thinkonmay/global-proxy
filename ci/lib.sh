@@ -21,6 +21,7 @@ ci_gateway_test_packages() {
 ./internal/gateway
 ./internal/gateway/handler
 ./internal/worker
+./internal/worker/usage
 ./pkg/bus
 ./pkg/bus/memory
 ./pkg/bus/nats
