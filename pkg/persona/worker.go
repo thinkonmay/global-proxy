@@ -10,7 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 )
 
@@ -23,6 +25,8 @@ type Config struct {
 	MaxAppUsageItems  int
 	Usage             *usage.Querier
 	LLM               LLMConfig
+	StoreIndex        *storeindex.Client
+	Bus               bus.Client
 }
 
 type Worker struct {
@@ -66,7 +70,7 @@ func NewWorker(pr *postgrest.Client, usageQ *usage.Querier, cfg Config, log *slo
 		cfg:   cfg,
 		log:   log,
 	}
-	w.enrich = newStoreEnricher(pr, cfg.LLM.HTTP, w.waitEnrichSlot)
+	w.enrich = newStoreEnricher(pr, cfg.LLM.HTTP, cfg.StoreIndex, cfg.Bus, w.waitEnrichSlot)
 	return w, nil
 }
 

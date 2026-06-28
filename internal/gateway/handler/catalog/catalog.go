@@ -6,17 +6,19 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
+	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
 )
 
 const catalogQueryTimeout = 5 * time.Second
 
 // Handler serves public /v1/catalog/* reads (D20 / P1-G).
 type Handler struct {
-	pr *postgrest.Client
+	pr     *postgrest.Client
+	stores *storeindex.Client
 }
 
-func New(pr *postgrest.Client) *Handler {
-	return &Handler{pr: pr}
+func New(pr *postgrest.Client, stores *storeindex.Client) *Handler {
+	return &Handler{pr: pr, stores: stores}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {

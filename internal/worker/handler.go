@@ -7,12 +7,14 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/cdp"
+	catalogworker "github.com/thinkonmay/global-proxy/api/internal/worker/catalog"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/jobpoller"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/worker/payment"
@@ -25,6 +27,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
+	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
 )
 
 type Handler struct {
@@ -36,18 +39,22 @@ type Handler struct {
 	persona  *persona.Handler
 	cdp      *cdp.Handler
 	mail     *mail.Handler
+	catalog  *catalogworker.Handler
 }
 
 func NewHandler(idem *idempotency.Guard, eventBus bus.Client, ch driver.Conn, pr *postgrest.Client, dc *daemonclient.Client, st *storj.Client, cfg *config.Config) *Handler {
+	storeIndex := storeindex.NewClient(cfg.Logs.ElasticsearchURL, "")
+	steamHTTP := &http.Client{Timeout: 60 * time.Second}
 	return &Handler{
 		eventBus: eventBus,
 		pr:       pr,
 		volume:   volume.New(idem, pr, dc, st, eventBus),
 		payment:  payment.New(idem, pr),
 		usage:    usage.New(ch, pr, eventBus),
-		persona:  persona.New(pr),
+		persona:  persona.New(pr, eventBus),
 		cdp:      cdp.New(pr),
 		mail:     mail.New(idem, pr, cfg.Mail),
+		catalog:  catalogworker.New(idem, pr, steamHTTP, storeIndex),
 	}
 }
 
@@ -57,6 +64,7 @@ func (h *Handler) Init() {
 	h.usage.Init(h.eventBus)
 	h.payment.Init(h.eventBus)
 	h.mail.Init(h.eventBus)
+	h.catalog.Init(h.eventBus)
 }
 
 func (h *Handler) StartUsageCollector(ctx context.Context, cfg *config.Config, log *slog.Logger) error {

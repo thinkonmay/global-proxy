@@ -10,7 +10,7 @@ import (
 )
 
 func TestSearchStoresBatchEmptyTexts(t *testing.T) {
-	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}))
+	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -29,7 +29,7 @@ func TestSearchStoresBatchEmptyTexts(t *testing.T) {
 }
 
 func TestSearchStoresBatchMissingTextsField(t *testing.T) {
-	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}))
+	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -43,7 +43,7 @@ func TestSearchStoresBatchMissingTextsField(t *testing.T) {
 }
 
 func TestSearchStoresBatchMalformedBody(t *testing.T) {
-	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}))
+	h := New(postgrest.New(postgrest.Config{URL: "http://127.0.0.1:1", ServiceKey: "svc"}), nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

@@ -8,12 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/pkg/catalog"
 	"github.com/thinkonmay/global-proxy/api/pkg/persona"
 	"github.com/thinkonmay/global-proxy/api/pkg/serpapi"
 )
@@ -315,8 +315,7 @@ func (h *Handler) enrichSearchGames(ctx context.Context, games []pwaGameSearch) 
 		}
 		info, err := h.searchStoreByID(ctx, int64(id))
 		if err != nil || info == nil || info.ID != int64(id) {
-			_ = h.pr.Insert(ctx, "stores", map[string]any{"id": id, "type": "STEAM"}, nil)
-			info, _ = h.searchStoreByID(ctx, int64(id))
+			info, err = h.searchStoreByID(ctx, int64(id))
 		}
 		if info != nil {
 			games[i].Info = info
@@ -325,12 +324,23 @@ func (h *Handler) enrichSearchGames(ctx context.Context, games []pwaGameSearch) 
 }
 
 func (h *Handler) searchStoreByID(ctx context.Context, id int64) (*pwaStoreGame, error) {
-	var rows []pwaStoreGame
-	if err := h.pr.RPC(ctx, "search_stores", map[string]any{"text": strconv.FormatInt(id, 10)}, &rows); err != nil {
+	rec, err := catalog.ResolveStore(ctx, catalog.StoreDeps{
+		PostgREST:  h.pr,
+		SteamHTTP:  h.httpClient,
+		StoreIndex: h.stores,
+		Bus:        h.bus,
+	}, id)
+	if err != nil || rec == nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	return &rows[0], nil
+	return &pwaStoreGame{
+		ID:               rec.ID,
+		Name:             rec.Name,
+		CodeName:         rec.CodeName,
+		ShortDescription: rec.ShortDescription,
+		HeaderImage:      rec.HeaderImage,
+		Genres:           rec.Genres,
+		Type:             rec.Type,
+		Rank:             rec.Rank,
+	}, nil
 }
