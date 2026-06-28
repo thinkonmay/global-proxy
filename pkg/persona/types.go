@@ -27,10 +27,25 @@ type SubscriptionRecord struct {
 }
 
 type EngagementContext struct {
-	StarBalance      int64 `json:"star_balance"`
-	MissionClaims30d int64 `json:"mission_claims_30d"`
-	ReferralsMade    int64 `json:"referrals_made"`
-	FeedbackCount    int64 `json:"feedback_count"`
+	StarBalance      int64           `json:"star_balance"`
+	MissionClaims30d int64           `json:"mission_claims_30d"`
+	ReferralsMade    int64           `json:"referrals_made"`
+	FeedbackCount    int64           `json:"feedback_count"`
+	Feedbacks        FeedbackSummary `json:"feedbacks"`
+}
+
+type FeedbackSummary struct {
+	Count30d          int64              `json:"count_30d"`
+	AvgOverallAllTime *float64           `json:"avg_overall_all_time,omitempty"`
+	AvgOverall30d     *float64           `json:"avg_overall_30d,omitempty"`
+	AvgDimensions30d  map[string]float64 `json:"avg_dimensions_30d,omitempty"`
+	Recent            []FeedbackRecent   `json:"recent"`
+}
+
+type FeedbackRecent struct {
+	CreatedAt     string   `json:"created_at"`
+	OverallRating *float64 `json:"overall_rating,omitempty"`
+	Feedback      string   `json:"feedback,omitempty"`
 }
 
 type FrontendContext struct {

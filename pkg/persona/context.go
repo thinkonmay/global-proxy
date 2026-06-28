@@ -39,6 +39,9 @@ func buildCDPSignals(days int, apps []usage.AppUsageEntry, payments []PaymentRec
 	if subs == nil {
 		subs = []SubscriptionRecord{}
 	}
+	if engagement.Feedbacks.Recent == nil {
+		engagement.Feedbacks.Recent = []FeedbackRecent{}
+	}
 	if frontend.Rollup == nil {
 		frontend.Rollup = json.RawMessage("{}")
 	}
@@ -68,13 +71,17 @@ func fetchSubscriptionContext(ctx context.Context, pr *postgrest.Client, email s
 }
 
 func fetchEngagementContext(ctx context.Context, pr *postgrest.Client, email string) EngagementContext {
+	empty := EngagementContext{Feedbacks: FeedbackSummary{Recent: []FeedbackRecent{}}}
 	var raw json.RawMessage
 	if err := pr.RPC(ctx, "get_cdp_engagement_context", map[string]any{"email": email}, &raw); err != nil {
-		return EngagementContext{}
+		return empty
 	}
 	var out EngagementContext
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return EngagementContext{}
+		return empty
+	}
+	if out.Feedbacks.Recent == nil {
+		out.Feedbacks.Recent = []FeedbackRecent{}
 	}
 	return out
 }

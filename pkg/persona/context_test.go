@@ -33,6 +33,9 @@ func TestBuildCDPSignalsDefaultsCDP3(t *testing.T) {
 	if signals.Payments == nil || signals.Subscriptions == nil {
 		t.Fatal("expected non-nil empty slices for payments and subscriptions")
 	}
+	if signals.Engagement.Feedbacks.Recent == nil {
+		t.Fatal("expected non-nil recent feedback slice")
+	}
 	if len(signals.Payments) != 0 || len(signals.Subscriptions) != 0 {
 		t.Fatal("expected empty slices")
 	}

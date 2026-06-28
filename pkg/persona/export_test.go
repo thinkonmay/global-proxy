@@ -25,3 +25,5 @@ func TrimAppUsageForTest(apps []usage.AppUsageEntry, maxItems int) []usage.AppUs
 func BuildCDPSignalsForTest(days int, apps []usage.AppUsageEntry, payments []PaymentRecord, subs []SubscriptionRecord, engagement EngagementContext, frontend FrontendContext) CDPSignals {
 	return buildCDPSignals(days, apps, payments, subs, engagement, frontend)
 }
+
+type EngagementContextForTest = EngagementContext

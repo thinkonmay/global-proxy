@@ -25,6 +25,9 @@ Subscription fields (Postgres billing snapshot):
 
 Engagement fields (Postgres gamification + support):
 - star_balance, mission_claims_30d, referrals_made, feedback_count
+- feedbacks.count_30d, avg_overall_all_time, avg_overall_30d
+- feedbacks.avg_dimensions_30d: latency, image_quality, easy_to_control, stability, uiux, overall_rating (1-6 scale)
+- feedbacks.recent: up to 3 latest submissions with overall_rating and short feedback text
 
 Frontend fields (web analytics ETL + gateway product events in Postgres):
 - rollup.pageviews, rollup.sessions, rollup.top_paths, rollup.top_events

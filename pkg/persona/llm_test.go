@@ -17,6 +17,8 @@ func TestLLMPromptUsesPlatformAppUsageCDP2(t *testing.T) {
 		"subscription",
 		"star_balance",
 		"mission_claims_30d",
+		"feedbacks.recent",
+		"avg_dimensions_30d",
 		"frontend",
 		"top_paths",
 	} {
