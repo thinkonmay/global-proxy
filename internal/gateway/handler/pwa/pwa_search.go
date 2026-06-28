@@ -173,14 +173,8 @@ func (h *Handler) callLLMSearch(ctx context.Context, description string, persona
 			"model":    h.llm.Model,
 			"messages": messages,
 			"tools":    tools,
-			"response_format": map[string]any{
-				"type": "json_schema",
-				"json_schema": map[string]any{
-					"name":   "search_result",
-					"schema": pwaSearchResponseSchema(),
-					"strict": false,
-				},
-			},
+			// deepseek-v4-flash supports json_object but not json_schema.
+			"response_format": map[string]any{"type": "json_object"},
 		}
 		raw, err := h.llmChat(ctx, body)
 		if err != nil {

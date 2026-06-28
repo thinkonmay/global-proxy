@@ -41,6 +41,7 @@ func searchSteamStore(ctx context.Context, client *http.Client, name string) (ma
 }
 
 func pwaSearchSystemPrompt(persona *pwaUserProfile) string {
+	schemaJSON, _ := json.Marshal(pwaSearchResponseSchema())
 	base := `You are a Game search engine
 Your task is to analyze user persona and find games for the user.
 Ensure returned games are available on Steam
@@ -49,14 +50,14 @@ Do google search if necessary
 [Rules]
 - If user enter a game's name, that game must be in number 1 of the list with highest score
 - Score must be calculate based on similarity of the game, then user's persona
-- CRITICAL: Once you found 3 to 5 matching games from Steam, STOP searching immediately and return the final JSON schema. Do not endlessly call tools!
+- CRITICAL: Once you found 3 to 5 matching games from Steam, STOP searching immediately and return the final JSON object. Do not endlessly call tools!
 
 [User Persona]
 `
 	if persona != nil {
 		base += fmt.Sprintf("\n- Objective: %s\n- Gamer Type: %s\n- Persona: %s", persona.Objective, persona.GamerType, persona.Persona)
 	}
-	base += "\n\nCRITICAL RULE: You MUST return your final response strictly matching the JSON schema."
+	base += "\n\nCRITICAL RULE: Return JSON matching this schema:\n" + string(schemaJSON)
 	return base
 }
 
