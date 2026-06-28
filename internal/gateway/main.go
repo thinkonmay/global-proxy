@@ -59,6 +59,7 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	config.ApplyGatewayLLMConfig(cfg)
 	cfg.SetupLogger()
 
 	bt := guard.New(nil, guard.Config{MaxFailures: 5, Cooldown: 30 * time.Second, MaxConcurrent: 64})

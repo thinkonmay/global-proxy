@@ -255,6 +255,8 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("logs.elasticsearchUrl", "http://elasticsearch:9200")
 	v.SetDefault("logs.bulkMaxBytes", 1048576)
 	v.SetDefault("routing.redisUrl", "redis://redis:6379/2")
+	v.SetDefault("llm.baseURL", "http://litellm:4000/v1")
+	v.SetDefault("llm.model", "gpt-4o")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -264,6 +266,7 @@ func NewConfig() (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}
+	captureLiteLLMProxyBaseURL(cfg, v.GetString("llm.baseURL"))
 	if cfg.RPC.Password1 == "" {
 		cfg.RPC.Password1 = "thinkmay protect your data"
 	}
