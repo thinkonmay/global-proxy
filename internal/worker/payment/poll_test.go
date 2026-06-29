@@ -74,11 +74,11 @@ func TestPollUsesStoredChargeID(t *testing.T) {
 	}
 }
 
-// An expired transaction the provider still reports non-terminal must settle as failed,
-// so it does not linger forever once it falls past expire_at.
+// A transaction past expire_at by more than failExpireGrace, still reported non-terminal
+// by the provider, must settle as failed so it does not linger forever.
 func TestPollFailsExpiredPending(t *testing.T) {
 	var settled []string
-	expired := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	expired := time.Now().UTC().Add(-(failExpireGrace + time.Minute)).Format(time.RFC3339)
 	h := &Handler{
 		idem: idempotency.New(idempotency.NewMemStore()),
 		settleRPC: func(_ context.Context, _ string, args map[string]any) error {
@@ -153,6 +153,32 @@ func TestPollSubsSkipsPending(t *testing.T) {
 	}
 	if settled {
 		t.Fatal("pending subscription must not settle")
+	}
+}
+
+// A transaction expired within failExpireGrace must NOT be force-failed yet: the poller
+// keeps trusting the provider so a late-recorded payment (settle lag) is still captured.
+func TestPollKeepsRecentlyExpiredWithinFailGrace(t *testing.T) {
+	var settled []string
+	recent := time.Now().UTC().Add(-(failExpireGrace - 2*time.Minute)).Format(time.RFC3339)
+	h := &Handler{
+		idem: idempotency.New(idempotency.NewMemStore()),
+		settleRPC: func(_ context.Context, _ string, args map[string]any) error {
+			settled = append(settled, fmt.Sprint(args["p_status"]))
+			return nil
+		},
+		listPending: func(_ context.Context) ([]pendingTxn, error) {
+			return []pendingTxn{{ID: 12, Provider: "payos", ExpireAt: recent}}, nil
+		},
+	}
+	reg := registry.NewRegistryWith(map[string]payment.Client{
+		"payos": fakeGetCharger{st: payment.StatusPending},
+	})
+	if err := h.pollOnce(context.Background(), reg); err != nil {
+		t.Fatal(err)
+	}
+	if len(settled) != 0 {
+		t.Fatalf("settled = %v, want [] (within failExpireGrace)", settled)
 	}
 }
 

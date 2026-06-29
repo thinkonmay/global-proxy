@@ -19,6 +19,14 @@ import (
 // missed) still gets captured, and abandoned ones get a terminal 'failed'.
 const pollGrace = 15 * time.Minute
 
+// failExpireGrace delays the local-clock "failed" inference past expire_at. Within
+// this window the poller keeps trusting the provider's live status (GetCharge), so a
+// payment the provider records slightly after the link expiry (bank/QR settle lag) is
+// still captured as success instead of being force-failed by our clock — which would
+// be dropped by settle_transaction's terminal guard when the late webhook arrives.
+// Must stay below pollGrace so a now-failable txn is still inside the listing window.
+const failExpireGrace = 10 * time.Minute
+
 type pendingTxn struct {
 	ID       int64           `json:"id"`
 	Provider string          `json:"provider"`
@@ -44,8 +52,11 @@ func (t pendingTxn) chargeID() string {
 	return d.ChargeID
 }
 
-// expired reports whether the transaction is past its expire_at.
-func (t pendingTxn) expired(now time.Time) bool {
+// failExpired reports whether the transaction is past expire_at by more than
+// failExpireGrace — old enough to force a local 'failed' when the provider still
+// won't return a terminal status. Within failExpireGrace of expiry it returns false
+// so the poller keeps trusting GetCharge (absorbing provider settle lag).
+func (t pendingTxn) failExpired(now time.Time) bool {
 	if t.ExpireAt == "" {
 		return false
 	}
@@ -53,7 +64,7 @@ func (t pendingTxn) expired(now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	return now.After(exp)
+	return now.After(exp.Add(failExpireGrace))
 }
 
 func (h *Handler) defaultListPending(ctx context.Context) ([]pendingTxn, error) {
@@ -102,7 +113,7 @@ func (h *Handler) pollOnce(ctx context.Context, reg *registry.Registry) error {
 			st = s
 		}
 		if st == "" {
-			if t.expired(now) {
+			if t.failExpired(now) {
 				st = "failed"
 			} else {
 				continue
