@@ -49,6 +49,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 	"github.com/thinkonmay/global-proxy/api/pkg/vaultpki"
+	"github.com/thinkonmay/global-proxy/api/pkg/vaultsecrets"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
@@ -65,6 +66,13 @@ func Run() error {
 	}
 	config.ApplyGatewayLLMConfig(cfg)
 	cfg.SetupLogger()
+
+	if jwtSecret, err := vaultsecrets.LoadGoTrueJWTSecret(context.Background(), cfg.Upstreams.Vault); err != nil {
+		return fmt.Errorf("vault gotrue jwt: %w", err)
+	} else if jwtSecret != "" {
+		cfg.Supabase.JWTSecret = jwtSecret
+		slog.Info("loaded GoTrue JWT secret from Vault AppRole")
+	}
 
 	bt := guard.New(nil, guard.Config{MaxFailures: 5, Cooldown: 30 * time.Second, MaxConcurrent: 64})
 
