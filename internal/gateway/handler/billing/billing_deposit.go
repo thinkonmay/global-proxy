@@ -126,6 +126,7 @@ func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, method string) (
 		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
 		Money:          money,
 		Description:    txn.Email,
+		CustomerEmail:  txn.Email,
 		ReturnURL:      returnURLForTxn(txn),
 		CancelURL:      cancelURLForTxn(txn),
 		Method:         method,

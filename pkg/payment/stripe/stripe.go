@@ -74,6 +74,7 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 		SuccessURL:         stripesdk.String(returnURL),
 		CancelURL:          stripesdk.String(cancelURL),
 		ClientReferenceID:  stripesdk.String(args.IdempotencyKey),
+		CustomerEmail:      optString(args.CustomerEmail),
 		PaymentMethodTypes: []*string{stripesdk.String("card")},
 		LineItems: []*stripesdk.CheckoutSessionCreateLineItemParams{{
 			Quantity: stripesdk.Int64(1),
