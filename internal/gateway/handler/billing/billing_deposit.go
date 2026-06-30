@@ -140,20 +140,20 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Amount       float64        `json:"amount"`
-		Currency     string         `json:"currency"`
-		Provider     string         `json:"provider"`
-		Metadata     map[string]any `json:"metadata"`
-		DiscountCode string         `json:"discount_code"`
-		Method       string         `json:"method"` // optional provider channel (e.g. "OVO"/"DANA")
-		Credit       *int64         `json:"credit"` // fixed CREDIT to grant; nil = amount*rate top-up
+		PlanName        string         `json:"plan_name"`
+		Provider        string         `json:"provider"`
+		Currency        string         `json:"currency"`
+		PocketDeduction bool           `json:"pocket_deduction"` // apply existing wallet balance toward the cost
+		DiscountCode    string         `json:"discount_code"`
+		Method          string         `json:"method"`   // optional provider channel (e.g. "OVO"/"DANA")
+		Metadata        map[string]any `json:"metadata"` // return_url/cancel_url etc. (carries plan_name for the success page)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.Amount <= 0 || body.Currency == "" || body.Provider == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "amount, currency, and provider required")
+	if body.PlanName == "" || body.Currency == "" || body.Provider == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "plan_name, currency, and provider required")
 		return
 	}
 	if body.DiscountCode == "" {
@@ -166,31 +166,48 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingDepositTimeout)
 	defer cancel()
 
-	// Website/catalog amounts are MAJOR units; convert to provider minor once here
-	// (single boundary) so transactions.amount_minor stays canonical minor everywhere.
-	// When a fixed CREDIT grant is requested (plan purchase), the fiat charge is derived
-	// SERVER-SIDE from that credit at the catalog FX rate — never from the client amount —
-	// so a tampered client cannot mint more CREDIT than the charge actually funds.
-	var amountMinor int64
-	if body.Credit != nil {
-		rate, rerr := h.rates.Load(ctx, body.Currency)
-		if rerr != nil {
-			httpx.WriteUpstreamErr(w, rerr)
-			return
-		}
-		charge, cerr := payment.ToMoney(float64(*body.Credit), body.Currency, rate)
-		if cerr != nil {
-			httpx.WriteError(w, http.StatusBadRequest, cerr.Error())
-			return
-		}
-		amountMinor = charge.Minor()
-	} else {
-		amountMinor = payment.FromMajor(body.Amount, body.Currency).Minor()
+	// The client sends ONLY the plan it wants — never an amount or credit, both of which a
+	// tampered client could lower to underpay. The fiat charge AND the granted CREDIT are
+	// computed SERVER-SIDE from the plan catalog, the user's wallet balance, and pending
+	// addon charges (mirrors the website IdentifyAmount): the wallet covers the cost first,
+	// the deposit funds only the shortfall. Discounts reduce the fiat inside the RPC.
+	planCredit, priceMajor, err := h.planCatalog(ctx, body.PlanName, body.Currency)
+	if err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
+	}
+	rate, err := h.rates.Load(ctx, body.Currency)
+	if err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
+	}
+	balance, err := h.walletBalance(ctx, email)
+	if err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
+	}
+	addonCredit, err := h.addonChargeTotal(ctx, email)
+	if err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
 	}
 
-	// A deposit always tops up the wallet (create_pocket_deposit_v4); plan purchase is a
-	// separate wallet step (POST /v1/billing/payments → create_or_replace_payment). credit
-	// optionally fixes the granted CREDIT (e.g. exact plan price); nil = amount*rate top-up.
+	chargeMajor, creditGrant := computePlanDeposit(planDepositInput{
+		PlanCredit:   planCredit,
+		PriceMajor:   priceMajor,
+		AddonCredit:  addonCredit,
+		Balance:      balance,
+		Rate:         rate,
+		PocketDeduct: body.PocketDeduction,
+	})
+	if creditGrant <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "wallet balance already covers this plan; no deposit required")
+		return
+	}
+	amountMinor := payment.FromMajor(chargeMajor, body.Currency).Minor()
+
+	// A deposit only tops up the wallet (create_pocket_deposit_v4); buying the plan from the
+	// topped-up balance is a separate step (POST /v1/billing/payments → create_or_replace_payment).
 	var rpcResult json.RawMessage
 	depositArgs := map[string]any{
 		"email":         email,
@@ -199,9 +216,7 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		"provider":      body.Provider,
 		"metadata":      body.Metadata,
 		"discount_code": body.DiscountCode,
-	}
-	if body.Credit != nil {
-		depositArgs["credit_grant"] = *body.Credit
+		"credit_grant":  creditGrant,
 	}
 	if err := h.pr.RPC(ctx, "create_pocket_deposit_v4", depositArgs, &rpcResult); err != nil {
 		httpx.WriteUpstreamErr(w, err)
@@ -407,4 +422,115 @@ func (h *Handler) ValidateDiscount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rows})
+}
+
+// planCatalog returns the plan's CREDIT and its MAJOR-unit fiat price for the currency,
+// read from the authoritative billing.plans catalog. Errors if the plan is missing,
+// inactive, or has no price for the currency.
+func (h *Handler) planCatalog(ctx context.Context, planName, currency string) (int64, float64, error) {
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	q := url.Values{}
+	q.Set("select", "credit,price->"+currency)
+	q.Set("active", "eq.true")
+	q.Set("name", "eq."+planName)
+	q.Set("limit", "1")
+	var rows []map[string]json.RawMessage
+	if err := h.pr.SelectService(ctx, "plans", q, &rows); err != nil {
+		return 0, 0, err
+	}
+	if len(rows) == 0 {
+		return 0, 0, fmt.Errorf("plan %q not found or inactive", planName)
+	}
+	var credit int64
+	if raw, ok := rows[0]["credit"]; ok && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &credit); err != nil {
+			return 0, 0, fmt.Errorf("plan %q malformed credit: %w", planName, err)
+		}
+	}
+	priceRaw, ok := rows[0][currency]
+	if !ok || len(priceRaw) == 0 || string(priceRaw) == "null" {
+		return 0, 0, fmt.Errorf("plan %q has no %s price", planName, currency)
+	}
+	var priceMajor float64
+	if err := json.Unmarshal(priceRaw, &priceMajor); err != nil {
+		return 0, 0, fmt.Errorf("plan %q malformed %s price: %w", planName, currency, err)
+	}
+	if credit <= 0 || priceMajor <= 0 {
+		return 0, 0, fmt.Errorf("plan %q has non-positive credit or price", planName)
+	}
+	return credit, priceMajor, nil
+}
+
+// walletBalance returns the caller's current CREDIT balance (0 if no wallet yet).
+func (h *Handler) walletBalance(ctx context.Context, email string) (int64, error) {
+	var rows []struct {
+		Amount int64 `json:"amount"`
+	}
+	if err := h.pr.RPC(ctx, "get_pocket_balance", map[string]any{"email": email}, &rows); err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	return rows[0].Amount, nil
+}
+
+// addonChargeTotal returns the sum of the caller's pending addon charges, in CREDIT.
+func (h *Handler) addonChargeTotal(ctx context.Context, email string) (int64, error) {
+	var rows []struct {
+		TotalAmount int64 `json:"total_amount"`
+	}
+	if err := h.pr.RPC(ctx, "list_addon_charges_v2", map[string]any{"input_email": email}, &rows); err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, r := range rows {
+		total += r.TotalAmount
+	}
+	return total, nil
+}
+
+// planDepositInput is the catalog + account state needed to size a plan-purchase deposit.
+type planDepositInput struct {
+	PlanCredit   int64   // plans.credit (CREDIT the plan costs)
+	PriceMajor   float64 // plans.price[currency], MAJOR fiat units
+	AddonCredit  int64   // pending addon charges, CREDIT
+	Balance      int64   // wallet balance, CREDIT
+	Rate         float64 // currency_rates.rate_to_system_credit (CREDIT per MAJOR fiat unit)
+	PocketDeduct bool    // apply existing balance toward the cost
+}
+
+// computePlanDeposit mirrors the website IdentifyAmount: the wallet balance covers the
+// plan first then addons, and the deposit funds only the remaining shortfall. It returns
+// the fiat to charge (MAJOR units) and the CREDIT the deposit must mint. The plan portion
+// is priced from the catalog fiat price (price * shortfall/credit); the addon portion is
+// converted from CREDIT at the FX rate. Pure function — no I/O — so it is unit-tested.
+func computePlanDeposit(in planDepositInput) (chargeMajor float64, creditGrant int64) {
+	planCov := int64(0)
+	if in.PocketDeduct {
+		planCov = minInt64(in.Balance, in.PlanCredit)
+	}
+	planShort := in.PlanCredit - planCov
+	addonCov := int64(0)
+	if in.PocketDeduct {
+		addonCov = minInt64(in.Balance-planCov, in.AddonCredit)
+	}
+	addonShort := in.AddonCredit - addonCov
+
+	var planFiat float64
+	if in.PlanCredit > 0 {
+		planFiat = in.PriceMajor * float64(planShort) / float64(in.PlanCredit)
+	}
+	var addonFiat float64
+	if in.Rate > 0 {
+		addonFiat = float64(addonShort) / in.Rate
+	}
+	return planFiat + addonFiat, planShort + addonShort
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
