@@ -390,6 +390,29 @@ func (g *Gate) SessionFromRequest(r *http.Request) (Session, bool) {
 	return g.sessionFromRequest(r)
 }
 
+// SessionFromBearer returns the SSO session from tm_admin_sso cookie or Authorization: Bearer token.
+func (g *Gate) SessionFromBearer(r *http.Request) (Session, bool) {
+	if sess, ok := g.sessionFromRequest(r); ok {
+		return sess, true
+	}
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return Session{}, false
+	}
+	token := strings.TrimSpace(auth[7:])
+	if token == "" {
+		return Session{}, false
+	}
+	sess, err := parseSession(token, g.secret)
+	if err != nil {
+		return Session{}, false
+	}
+	if !g.emailAllowed(sess.Email) {
+		return Session{}, false
+	}
+	return sess, true
+}
+
 // SaveOTP stores an OTP for tests and integration bootstrap.
 func (g *Gate) SaveOTP(ctx context.Context, email, code string, ttl time.Duration) error {
 	return g.otp.Save(ctx, email, code, ttl)

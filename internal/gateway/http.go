@@ -22,6 +22,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ops"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
@@ -51,6 +52,7 @@ func newMux(
 	h *handler.Handler,
 	hub *sse.Hub,
 	catalogH *catalog.Handler,
+	opsH *ops.Handler,
 	otaH *ota.Handler,
 	gamificationH *gamification.Handler,
 	billingH *billing.Handler,
@@ -103,6 +105,9 @@ func newMux(
 		routingHTTP.Register(mux)
 	}
 	catalogH.Register(mux)
+	if opsH != nil {
+		opsH.Register(mux)
+	}
 	otaH.Register(mux)
 	gamificationH.Register(mux)
 	billingH.Register(mux)
