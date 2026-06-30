@@ -62,6 +62,7 @@ type SubscribeParams struct {
 	Interval       string // billing interval: "month" | "year"
 	PlanRef        string // local plan name (e.g. month1/month2); echoed in provider metadata
 	CustomerEmail  string // billed customer's email
+	CustomerID     string // bind checkout to an existing provider customer (Stripe test clocks); honored only in test mode
 	Description    string
 	ReturnURL      string
 }

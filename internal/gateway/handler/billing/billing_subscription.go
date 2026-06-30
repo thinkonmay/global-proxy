@@ -36,6 +36,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		Currency      string         `json:"currency"`
 		Interval      string         `json:"interval"`
 		Metadata      map[string]any `json:"metadata"`
+		CustomerID    string         `json:"customer_id"` // test-only: bind to a Stripe test-clock customer (ignored unless test mode)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -95,6 +96,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		Interval:       body.Interval,
 		PlanRef:        body.PlanName,
 		CustomerEmail:  email,
+		CustomerID:     body.CustomerID,
 		Description:    body.PlanName,
 		ReturnURL:      buildRedirectURL(rawJSON(body.Metadata), metaReturnURL, "subscription_id", strconv.FormatInt(subID, 10)),
 	})

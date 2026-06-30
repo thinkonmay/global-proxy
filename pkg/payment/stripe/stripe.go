@@ -137,12 +137,11 @@ func (c *Client) Subscribe(ctx context.Context, args payment.SubscribeParams) (p
 	if returnURL == "" {
 		returnURL = defaultReturnURL
 	}
-	sess, err := c.sc.V1CheckoutSessions.Create(ctx, &stripesdk.CheckoutSessionCreateParams{
+	params := &stripesdk.CheckoutSessionCreateParams{
 		Mode:              stripesdk.String(string(stripesdk.CheckoutSessionModeSubscription)),
 		SuccessURL:        stripesdk.String(returnURL),
 		CancelURL:         stripesdk.String(returnURL),
 		ClientReferenceID: stripesdk.String(args.IdempotencyKey),
-		CustomerEmail:     optString(args.CustomerEmail),
 		LineItems: []*stripesdk.CheckoutSessionCreateLineItemParams{{
 			Quantity: stripesdk.Int64(1),
 			PriceData: &stripesdk.CheckoutSessionCreateLineItemPriceDataParams{
@@ -162,7 +161,16 @@ func (c *Client) Subscribe(ctx context.Context, args payment.SubscribeParams) (p
 				"plan":       args.PlanRef,
 			},
 		},
-	})
+	}
+	// Test-clock support: bind checkout to a pre-created customer so the resulting
+	// subscription lives on that clock and can be advanced. Honored only with a test
+	// secret key, so a client-supplied id can never bind a live customer in production.
+	if args.CustomerID != "" && strings.HasPrefix(c.secretKey, "sk_test_") {
+		params.Customer = stripesdk.String(args.CustomerID)
+	} else {
+		params.CustomerEmail = optString(args.CustomerEmail)
+	}
+	sess, err := c.sc.V1CheckoutSessions.Create(ctx, params)
 	if err != nil {
 		return payment.Subscription{}, err
 	}
