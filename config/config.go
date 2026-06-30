@@ -140,6 +140,16 @@ type Gateway struct {
 type Runtime struct {
 	// Grpc enables mTLS virtdaemon gRPC for GET /v1/runtime/info (D25/D26).
 	Grpc RuntimeGrpc `mapstructure:"grpc"`
+	// Ops configures SSO-gated tooling certificates (the-red).
+	Ops RuntimeOps `mapstructure:"ops"`
+}
+
+// RuntimeOps configures gateway-side Vault PKI issuance for the-red team mTLS.
+type RuntimeOps struct {
+	VaultUsername string `mapstructure:"vaultUsername"`
+	VaultPassword string `mapstructure:"vaultPassword"`
+	PKIRole       string `mapstructure:"pkiRole"`
+	CertTTL       string `mapstructure:"certTTL"`
 }
 
 // RuntimeGrpc configures gateway→cluster-master persistent.Daemon gRPC.

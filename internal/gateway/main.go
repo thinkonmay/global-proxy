@@ -28,6 +28,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ops"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
@@ -169,6 +170,16 @@ func Run() error {
 		defer func() { _ = gate.Close() }()
 	}
 
+	opsHTTP := ops.New(ops.Config{
+		VaultURL:      cfg.Upstreams.Vault,
+		VaultUsername: cfg.Runtime.Ops.VaultUsername,
+		VaultPassword: cfg.Runtime.Ops.VaultPassword,
+		PKIMount:      cfg.Runtime.Grpc.PKIMount,
+		PKIRole:       cfg.Runtime.Ops.PKIRole,
+		CertTTL:       cfg.Runtime.Ops.CertTTL,
+		Gate:          gate,
+	})
+
 	metricsStack, err := initMetricsStack(cfg)
 	if err != nil {
 		return err
@@ -198,7 +209,7 @@ func Run() error {
 	routingHTTP := clusterrouting.New(routingStore, eventBus, routingWatch)
 	routingHTTP.InitSubscriptions()
 
-	mux := newMux(h, hub, catalogHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	mux := newMux(h, hub, catalogHTTP, opsHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
 
 	clientCAs, err := virtdaemonClientCAs(context.Background(), cfg)
 	if err != nil {

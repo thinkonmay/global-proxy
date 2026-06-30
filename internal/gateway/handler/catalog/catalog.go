@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/thinkonmay/global-proxy/api/pkg/metricsagg"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
 	"github.com/thinkonmay/global-proxy/api/pkg/storeindex"
@@ -11,7 +12,8 @@ import (
 
 const catalogQueryTimeout = 5 * time.Second
 
-// Handler serves public /v1/catalog/* reads (D20 / P1-G).
+// Handler serves public /v1/catalog/* reads (D20 / P1-G) and the-red mTLS-protected
+// catalog writes for ops tooling.
 type Handler struct {
 	pr     *postgrest.Client
 	stores *storeindex.Client
@@ -41,4 +43,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.GET("/catalog/promo-banners", h.ListPromoBanners)
 	v1.GET("/search/stores", h.SearchStores)
 	v1.POST("/search/stores", h.SearchStoresBatch)
+	v1.POST("/catalog/stores/{storeID}", metricsagg.RequireTheRedMTLS(h.EnsureStore))
+	v1.PUT("/catalog/stores/{storeID}/depot-keys", metricsagg.RequireTheRedMTLS(h.PutStoreDepotKeys))
+	v1.PATCH("/catalog/stores/{storeID}/downloads", metricsagg.RequireTheRedMTLS(h.PatchStoreDownloads))
 }

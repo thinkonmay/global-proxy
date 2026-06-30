@@ -33,6 +33,10 @@ func mergeEnvSecrets(cfg *Config) {
 	}
 	setEnvString(&cfg.Storj.AccessGrant, "APP_STORJ_ACCESSGRANT")
 	setEnvString(&cfg.Runtime.Grpc.VaultPassword, "VAULT_VIRTDAEMON_PASSWORD")
+	setEnvString(&cfg.Runtime.Ops.VaultUsername, "VAULT_GATEWAY_OPS_USERNAME")
+	setEnvString(&cfg.Runtime.Ops.VaultPassword, "VAULT_GATEWAY_OPS_PASSWORD")
+	setEnvString(&cfg.Runtime.Ops.PKIRole, "VAULT_THE_RED_PKI_ROLE")
+	setEnvString(&cfg.Runtime.Ops.CertTTL, "VAULT_THE_RED_CERT_TTL")
 	setEnvString(&cfg.Runtime.Grpc.HomeOverride, "APP_RUNTIME_GRPC_HOME")
 	setEnvString(&cfg.Runtime.Grpc.HomeServerName, "APP_RUNTIME_GRPC_SERVERNAME")
 	setEnvString(&cfg.ClickHouse.Addr, "APP_CLICKHOUSE_ADDR")

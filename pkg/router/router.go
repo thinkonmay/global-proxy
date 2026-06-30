@@ -57,5 +57,8 @@ func (g *Group) POST(path string, fn http.HandlerFunc) { g.Handle(http.MethodPos
 // PUT registers a handler for PUT requests on the group-prefixed path.
 func (g *Group) PUT(path string, fn http.HandlerFunc) { g.Handle(http.MethodPut, path, fn) }
 
+// PATCH registers a handler for PATCH requests on the group-prefixed path.
+func (g *Group) PATCH(path string, fn http.HandlerFunc) { g.Handle(http.MethodPatch, path, fn) }
+
 // DELETE registers a handler for DELETE requests on the group-prefixed path.
 func (g *Group) DELETE(path string, fn http.HandlerFunc) { g.Handle(http.MethodDelete, path, fn) }
