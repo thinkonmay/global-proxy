@@ -168,7 +168,25 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 
 	// Website/catalog amounts are MAJOR units; convert to provider minor once here
 	// (single boundary) so transactions.amount_minor stays canonical minor everywhere.
-	amountMinor := payment.FromMajor(body.Amount, body.Currency).Minor()
+	// When a fixed CREDIT grant is requested (plan purchase), the fiat charge is derived
+	// SERVER-SIDE from that credit at the catalog FX rate — never from the client amount —
+	// so a tampered client cannot mint more CREDIT than the charge actually funds.
+	var amountMinor int64
+	if body.Credit != nil {
+		rate, rerr := h.rates.Load(ctx, body.Currency)
+		if rerr != nil {
+			httpx.WriteUpstreamErr(w, rerr)
+			return
+		}
+		charge, cerr := payment.ToMoney(float64(*body.Credit), body.Currency, rate)
+		if cerr != nil {
+			httpx.WriteError(w, http.StatusBadRequest, cerr.Error())
+			return
+		}
+		amountMinor = charge.Minor()
+	} else {
+		amountMinor = payment.FromMajor(body.Amount, body.Currency).Minor()
+	}
 
 	// A deposit always tops up the wallet (create_pocket_deposit_v4); plan purchase is a
 	// separate wallet step (POST /v1/billing/payments → create_or_replace_payment). credit
@@ -252,7 +270,7 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DepositStatus(w http.ResponseWriter, r *http.Request) {
-	_, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
+	email, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
 	if !ok {
 		auth.WriteAuthErr(w, status, msg)
 		return
@@ -265,8 +283,10 @@ func (h *Handler) DepositStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
+	// p_email scopes the lookup to the caller's own transaction (the RPC runs as
+	// service_role, so ownership is enforced in the function, not via RLS).
 	var out json.RawMessage
-	if err := h.pr.RPC(ctx, "get_transaction_status", map[string]any{"id": txID}, &out); err != nil {
+	if err := h.pr.RPC(ctx, "get_transaction_status", map[string]any{"id": txID, "p_email": email}, &out); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
@@ -274,7 +294,7 @@ func (h *Handler) DepositStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CancelDeposit(w http.ResponseWriter, r *http.Request) {
-	_, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
+	email, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
 	if !ok {
 		auth.WriteAuthErr(w, status, msg)
 		return
@@ -287,8 +307,10 @@ func (h *Handler) CancelDeposit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
+	// p_email scopes the cancel to the caller's own transaction; the RPC raises
+	// not-found on a mismatch so a user cannot cancel another user's checkout.
 	var out json.RawMessage
-	if err := h.pr.RPC(ctx, "cancel_transaction", map[string]any{"id": txID}, &out); err != nil {
+	if err := h.pr.RPC(ctx, "cancel_transaction", map[string]any{"id": txID, "p_email": email}, &out); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
