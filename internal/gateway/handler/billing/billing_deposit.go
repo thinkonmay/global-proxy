@@ -14,21 +14,6 @@ import (
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 )
 
-// planDepositArgs is the typed argument set for the create_plan_deposit_v1 RPC; json tags match
-// the SQL named parameters so the plan-purchase intent stays type-safe end to end (no jsonb).
-type planDepositArgs struct {
-	Email         string `json:"email"`
-	PlanName      string `json:"plan_name"`
-	ClusterDomain string `json:"cluster_domain"`
-	Template      string `json:"template"`
-	Provider      string `json:"provider"`
-	Currency      string `json:"currency"`
-	Amount        int64  `json:"amount"`
-	CreditGrant   int64  `json:"credit_grant"`
-	PocketCover   int64  `json:"pocket_cover"`
-	DiscountCode  string `json:"discount_code"`
-}
-
 // txnRow mirrors the transactions table columns used by billing.
 type txnRow struct {
 	ID       int64           `json:"id"`
@@ -154,17 +139,13 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Amount        float64        `json:"amount"`
-		Currency      string         `json:"currency"`
-		Provider      string         `json:"provider"`
-		Metadata      map[string]any `json:"metadata"`
-		DiscountCode  string         `json:"discount_code"`
-		Method        string         `json:"method"` // optional provider channel (e.g. "OVO"/"DANA")
-		Credit        *int64         `json:"credit"` // fixed CREDIT to grant (plan purchase); nil = legacy amount*rate top-up
-		PlanName      string         `json:"plan_name"`      // set => plan purchase (J1), provisioned atomically on settle
-		ClusterDomain string         `json:"cluster_domain"` // optional; gateway resolves a placement when empty
-		Template      *string        `json:"template"`       // guest image; SQL defaults to win11
-		PocketCover   int64          `json:"pocket_cover"`   // CREDIT paid from existing wallet balance (held until settle)
+		Amount       float64        `json:"amount"`
+		Currency     string         `json:"currency"`
+		Provider     string         `json:"provider"`
+		Metadata     map[string]any `json:"metadata"`
+		DiscountCode string         `json:"discount_code"`
+		Method       string         `json:"method"` // optional provider channel (e.g. "OVO"/"DANA")
+		Credit       *int64         `json:"credit"` // fixed CREDIT to grant; nil = amount*rate top-up
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -188,48 +169,24 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	// (single boundary) so transactions.amount_minor stays canonical minor everywhere.
 	amountMinor := payment.FromMajor(body.Amount, body.Currency).Minor()
 
-	// A plan purchase (plan_name set) creates the subscription + entitlement linked to the
-	// transaction so settle_transaction provisions atomically (J1); a bare deposit is a wallet
-	// top-up. Both return the same {id, data} rows for the checkout fill below.
+	// A deposit always tops up the wallet (create_pocket_deposit_v4); plan purchase is a
+	// separate wallet step (POST /v1/billing/payments → create_or_replace_payment). credit
+	// optionally fixes the granted CREDIT (e.g. exact plan price); nil = amount*rate top-up.
 	var rpcResult json.RawMessage
-	if body.PlanName != "" {
-		if body.Credit == nil {
-			httpx.WriteError(w, http.StatusBadRequest, "credit required for plan purchase")
-			return
-		}
-		clusterDomain, err := h.resolveClusterDomain(ctx, body.ClusterDomain)
-		if err != nil {
-			httpx.WriteUpstreamErr(w, err)
-			return
-		}
-		template := "win11"
-		if body.Template != nil && *body.Template != "" {
-			template = *body.Template
-		}
-		if err := h.pr.RPC(ctx, "create_plan_deposit_v1", planDepositArgs{
-			Email: email, PlanName: body.PlanName, ClusterDomain: clusterDomain, Template: template,
-			Provider: body.Provider, Currency: body.Currency, Amount: amountMinor,
-			CreditGrant: *body.Credit, PocketCover: body.PocketCover, DiscountCode: body.DiscountCode,
-		}, &rpcResult); err != nil {
-			httpx.WriteUpstreamErr(w, err)
-			return
-		}
-	} else {
-		depositArgs := map[string]any{
-			"email":         email,
-			"amount":        amountMinor,
-			"currency":      body.Currency,
-			"provider":      body.Provider,
-			"metadata":      body.Metadata,
-			"discount_code": body.DiscountCode,
-		}
-		if body.Credit != nil {
-			depositArgs["credit_grant"] = *body.Credit
-		}
-		if err := h.pr.RPC(ctx, "create_pocket_deposit_v4", depositArgs, &rpcResult); err != nil {
-			httpx.WriteUpstreamErr(w, err)
-			return
-		}
+	depositArgs := map[string]any{
+		"email":         email,
+		"amount":        amountMinor,
+		"currency":      body.Currency,
+		"provider":      body.Provider,
+		"metadata":      body.Metadata,
+		"discount_code": body.DiscountCode,
+	}
+	if body.Credit != nil {
+		depositArgs["credit_grant"] = *body.Credit
+	}
+	if err := h.pr.RPC(ctx, "create_pocket_deposit_v4", depositArgs, &rpcResult); err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
 	}
 
 	// Parse the returned rows — each has {id, data}.
