@@ -1,18 +1,17 @@
-package pwa
+package catalog
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/pkg/superuser"
 )
 
-func (h *Handler) IsSuperuser(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CheckSuperuser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -24,56 +23,60 @@ func (h *Handler) IsSuperuser(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "Missing email")
 		return
 	}
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
-	if code != 0 {
-		httpx.WriteError(w, code, msg)
+	email, ok, status, msg := auth.RequireUser(r.Context(), r, nil)
+	if !ok {
+		auth.WriteAuthErr(w, status, msg)
 		return
 	}
-	if c, m := auth.PWAEmailMatch(usr, req.Email); c != 0 {
-		httpx.WriteError(w, c, m)
+	if !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(req.Email)) {
+		httpx.WriteError(w, http.StatusForbidden, "email mismatch")
 		return
 	}
-	ok, err := h.isSuperuserEmail(r.Context(), req.Email)
+	isSuper, err := superuser.IsEmail(r.Context(), h.pr, email)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"isSuperuser": ok})
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"isSuperuser": isSuper})
 }
 
-func (h *Handler) UpdateCodeName(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) PatchStoreCodeName(w http.ResponseWriter, r *http.Request) {
+	storeID := strings.TrimSpace(r.PathValue("storeID"))
+	if storeID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "store id required")
+		return
+	}
 	var req struct {
-		AppID    json.Number `json:"app_id"`
-		CodeName string      `json:"code_name"`
+		CodeName string `json:"code_name"`
 	}
 	if err := httpx.ReadJSONBody(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.CodeName == "" || req.AppID == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "Missing app_id or code_name")
+	if req.CodeName == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "Missing code_name")
 		return
 	}
-	usr, code, msg := auth.PWAAuthFromRequest(r.Context(), h.transport, r)
-	if code != 0 {
-		httpx.WriteError(w, code, msg)
+	email, ok, status, msg := auth.RequireUser(r.Context(), r, nil)
+	if !ok {
+		auth.WriteAuthErr(w, status, msg)
 		return
 	}
-	ok, err := h.isSuperuserEmail(r.Context(), usr.Email)
+	isSuper, err := superuser.IsEmail(r.Context(), h.pr, email)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !ok {
+	if !isSuper {
 		httpx.WriteError(w, http.StatusForbidden, "Unauthorized: Not a superuser")
 		return
 	}
 
 	sanitized := sanitizeCodeName(req.CodeName)
-	ctx, cancel := context.WithTimeout(r.Context(), pwaQueryTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), catalogQueryTimeout)
 	defer cancel()
 	q := url.Values{}
-	q.Set("id", "eq."+req.AppID.String())
+	q.Set("id", "eq."+storeID)
 	if err := h.pr.Update(ctx, "stores", q, map[string]any{"code_name": sanitized}, nil); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -97,12 +100,4 @@ func sanitizeCodeName(raw string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_")
-}
-
-func quoteInFilter(values []string) string {
-	quoted := make([]string, 0, len(values))
-	for _, v := range values {
-		quoted = append(quoted, fmt.Sprintf("%q", v))
-	}
-	return strings.Join(quoted, ",")
 }

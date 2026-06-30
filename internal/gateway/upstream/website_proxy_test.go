@@ -13,8 +13,7 @@ func TestIsGatewayAPIPath(t *testing.T) {
 		"/graphql/v1",
 		"/storage/v1/object/public/x",
 		"/pg/tables",
-		"/api/pwa/plans",
-		"/api/plans",
+		"/v1/catalog/plans",
 		"/v1/billing/wallet",
 		"/v1/files/list/foo",
 		"/v1/volumes/snapshots",
@@ -54,7 +53,7 @@ func TestWrapWebsiteFallbackRoutesAPI(t *testing.T) {
 	})
 	h := WrapWebsiteFallback(primary, website)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/pwa/plans", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/catalog/plans", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if !apiHit || webHit {

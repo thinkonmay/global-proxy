@@ -13,6 +13,11 @@ import (
 )
 
 func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.URL.Query().Get("view")) == "credit" {
+		h.listPlansCredit(w, r)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), catalogQueryTimeout)
 	defer cancel()
 
@@ -42,6 +47,24 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	var rows []map[string]any
 	if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
 		httpx.WritePostgrestErr(w, err)
+		return
+	}
+	httpx.WriteData(w, rows)
+}
+
+func (h *Handler) listPlansCredit(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), catalogQueryTimeout)
+	defer cancel()
+	q := url.Values{}
+	q.Set("select", "credit,name")
+	q.Set("active", "eq.true")
+	var rows []map[string]any
+	if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
+		httpx.WritePostgrestErr(w, err)
+		return
+	}
+	if len(rows) == 0 {
+		httpx.WriteError(w, http.StatusNotFound, "no plan available")
 		return
 	}
 	httpx.WriteData(w, rows)
