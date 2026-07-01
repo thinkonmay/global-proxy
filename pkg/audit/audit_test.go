@@ -32,6 +32,22 @@ func TestMiddlewareRequestID(t *testing.T) {
 	}
 }
 
+func TestStatusWriterImplementsFlusher(t *testing.T) {
+	rec := NewRecorder("")
+	var flusherOK bool
+	h := Middleware(rec)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, flusherOK = w.(http.Flusher)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sse", nil)
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, req)
+
+	if !flusherOK {
+		t.Fatal("statusWriter must implement http.Flusher for SSE streaming handlers")
+	}
+}
+
 func TestMiddlewareGeneratesRequestID(t *testing.T) {
 	rec := NewRecorder("")
 	var seenID string

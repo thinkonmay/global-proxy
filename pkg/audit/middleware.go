@@ -20,6 +20,12 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // Middleware attaches request_id, records http.access audit events, and propagates
 // correlation ids on the request context (OC2).
 func Middleware(rec *Recorder) func(http.Handler) http.Handler {
