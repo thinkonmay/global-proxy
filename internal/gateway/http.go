@@ -28,6 +28,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/streammtls"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/vaultproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/webhook"
@@ -61,6 +62,7 @@ func newMux(
 	grants *grant.Handler,
 	filesH *files.Handler,
 	runtimeH *runtime.Handler,
+	streamMTLSH *streammtls.Handler,
 	personaHTTP *persona.Handler,
 	nodeRuntime *noderuntime.Handler,
 	vaultProxy *vaultproxy.Handler,
@@ -118,6 +120,9 @@ func newMux(
 	grants.Register(mux)
 	filesH.Register(mux)
 	runtimeH.Register(mux)
+	if streamMTLSH != nil {
+		streamMTLSH.Register(mux)
+	}
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)
 	if vaultProxy != nil {

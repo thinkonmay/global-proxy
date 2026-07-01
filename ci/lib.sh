@@ -28,6 +28,7 @@ ci_gateway_test_packages() {
 ./pkg/cache
 ./pkg/cache/memory
 ./pkg/audit
+./pkg/streammtls
 ./pkg/admingate
 ./pkg/metricsagg
 ./pkg/usage

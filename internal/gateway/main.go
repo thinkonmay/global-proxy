@@ -34,6 +34,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/streammtls"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/vaultproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
@@ -221,7 +222,18 @@ func Run() error {
 	auditRec := audit.NewRecorder(cfg.Logs.ElasticsearchURL)
 	defer auditRec.Close()
 
-	mux := newMux(h, hub, catalogHTTP, opsHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus, auditRec)
+	streamMTLSHTTP := streammtls.New(streammtls.Config{
+		VaultURL:      cfg.Upstreams.Vault,
+		VaultUsername: cfg.Runtime.Ops.VaultUsername,
+		VaultPassword: cfg.Runtime.Ops.VaultPassword,
+		PKIMount:      cfg.Runtime.Grpc.PKIMount,
+		PKIRole:       cfg.Runtime.Stream.PKIRole,
+		CertTTL:       cfg.Runtime.Stream.CertTTL,
+		Recorder:      auditRec,
+		Transport:     bt,
+	})
+
+	mux := newMux(h, hub, catalogHTTP, opsHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, streamMTLSHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus, auditRec)
 
 	clientCAs, err := virtdaemonClientCAs(context.Background(), cfg)
 	if err != nil {

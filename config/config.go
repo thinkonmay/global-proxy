@@ -142,6 +142,14 @@ type Runtime struct {
 	Grpc RuntimeGrpc `mapstructure:"grpc"`
 	// Ops configures SSO-gated tooling certificates (the-red).
 	Ops RuntimeOps `mapstructure:"ops"`
+	// Stream configures desktop QUIC mTLS issuance at /v1/stream/mtls/issue.
+	Stream RuntimeStream `mapstructure:"stream"`
+}
+
+// RuntimeStream configures Vault PKI for desktop streaming client certs.
+type RuntimeStream struct {
+	PKIRole string `mapstructure:"pkiRole"`
+	CertTTL string `mapstructure:"certTTL"`
 }
 
 // RuntimeOps configures gateway-side Vault PKI issuance for the-red team mTLS.
@@ -286,6 +294,8 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("routing.redisUrl", "redis://redis:6379/2")
 	v.SetDefault("llm.baseURL", "http://litellm:4000/v1")
 	v.SetDefault("llm.model", "deepseek-v4-flash")
+	v.SetDefault("runtime.stream.pkiRole", "desktop-client")
+	v.SetDefault("runtime.stream.certTTL", "2h")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
