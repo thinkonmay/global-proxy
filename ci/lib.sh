@@ -20,6 +20,7 @@ ci_gateway_test_packages() {
 ./config
 ./internal/gateway
 ./internal/gateway/handler
+./internal/gateway/handler/streammtls
 ./internal/worker
 ./internal/worker/usage
 ./pkg/bus
