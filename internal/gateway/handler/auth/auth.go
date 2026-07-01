@@ -13,6 +13,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
 	"github.com/thinkonmay/global-proxy/api/pkg/gotrue"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
@@ -168,4 +169,26 @@ func linkAuthUser(ctx context.Context, authUserID, email string) {
 // WriteAuthErr renders an auth error as JSON.
 func WriteAuthErr(w http.ResponseWriter, status int, msg string) {
 	httpx.WriteError(w, status, msg)
+}
+
+// AttachUserFromRequest validates Authorization when present and attaches the
+// user email to ctx for audit/trace (OC2). Handlers still must call RequireUser
+// to enforce auth; this is best-effort enrichment for access logging.
+func AttachUserFromRequest(ctx context.Context, r *http.Request, rt http.RoundTripper) context.Context {
+	email, _, status, _ := ValidateRequest(ctx, r, rt)
+	if status == 0 && email != "" {
+		return audit.WithUserEmail(ctx, email)
+	}
+	return ctx
+}
+
+// UserContextMiddleware attaches authenticated user email to the request context
+// when a valid GoTrue JWT is present (audit/trace only).
+func UserContextMiddleware(rt http.RoundTripper) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := AttachUserFromRequest(r.Context(), r, rt)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

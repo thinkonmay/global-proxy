@@ -27,6 +27,7 @@ ci_gateway_test_packages() {
 ./pkg/bus/nats
 ./pkg/cache
 ./pkg/cache/memory
+./pkg/audit
 ./pkg/admingate
 ./pkg/metricsagg
 ./pkg/usage

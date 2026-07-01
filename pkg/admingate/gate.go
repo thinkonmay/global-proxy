@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	"github.com/thinkonmay/global-proxy/api/pkg/supabase/auth"
 )
@@ -36,6 +37,7 @@ type Gate struct {
 	secret  []byte
 	ipMatch guard.Match
 	emails  map[string]struct{}
+	rec     *audit.Recorder
 }
 
 // NewGate builds an admin gate. allowedEmails map is normalized to lowercase.
@@ -67,6 +69,13 @@ var errSigningSecret = &gateError{msg: "admin signing secret required"}
 type gateError struct{ msg string }
 
 func (e *gateError) Error() string { return e.msg }
+
+// SetRecorder attaches the gateway audit recorder (C5 admin trace).
+func (g *Gate) SetRecorder(rec *audit.Recorder) {
+	if g != nil {
+		g.rec = rec
+	}
+}
 
 func (g *Gate) emailAllowed(email string) bool {
 	if len(g.emails) == 0 {
@@ -124,6 +133,7 @@ func (g *Gate) Protect(next http.Handler) http.Handler {
 			return
 		}
 		if !g.ipAllowed(r) {
+			audit.RecordAdmin(g.rec, r, "admin.access_denied", "", "ip not allowed")
 			writeJSON(w, http.StatusForbidden, `{"message":"forbidden"}`)
 			return
 		}
@@ -206,6 +216,7 @@ func (g *Gate) processOTPRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if !g.emailAllowed(email) {
+		audit.RecordAdmin(g.rec, r, "admin.otp_denied", email, "email not allowed")
 		writeJSON(w, http.StatusForbidden, `{"message":"email not allowed"}`)
 		return
 	}
@@ -226,6 +237,7 @@ func (g *Gate) processOTPRequest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, `{"message":"failed to send otp"}`)
 		return
 	}
+	audit.RecordAdmin(g.rec, r, "admin.otp_sent", email, "")
 	writeJSON(w, http.StatusOK, `{"message":"otp sent"}`)
 }
 
@@ -270,6 +282,7 @@ func (g *Gate) finishOTPVerify(w http.ResponseWriter, r *http.Request, email, co
 		return
 	}
 	if !ok {
+		audit.RecordAdmin(g.rec, r, "admin.otp_failed", email, "invalid or expired code")
 		writeJSON(w, http.StatusUnauthorized, `{"message":"invalid or expired code"}`)
 		return
 	}
@@ -297,6 +310,7 @@ func (g *Gate) finishOTPVerify(w http.ResponseWriter, r *http.Request, email, co
 			writeJSON(w, http.StatusServiceUnavailable, `{"message":"failed to authorize ip"}`)
 			return
 		}
+		audit.RecordAdmin(g.rec, r, "admin.ip_granted", email, clientIP)
 		body, _ := json.Marshal(map[string]string{
 			"message": "ok",
 			"ip":      clientIP,
@@ -306,6 +320,7 @@ func (g *Gate) finishOTPVerify(w http.ResponseWriter, r *http.Request, email, co
 		return
 	}
 
+	audit.RecordAdmin(g.rec, r, "admin.sso_session", email, "")
 	writeJSON(w, http.StatusOK, `{"message":"ok","next":`+jsonString(next)+`}`)
 }
 

@@ -17,7 +17,7 @@ func kongTestCfg(kongURL string) *config.Config {
 
 func TestPublicRestV1Denied(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport, nil)
 
 	for _, path := range []string{
 		"/rest/v1/plans",
@@ -39,7 +39,7 @@ func TestPublicRestV1Denied(t *testing.T) {
 
 func TestKongRemovedRoutesReturn404(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport, nil)
 
 	for _, path := range []string{"/auth/v1/token", "/realtime/v1/websocket", "/functions/v1/hello"} {
 		rec := httptest.NewRecorder()
@@ -60,7 +60,7 @@ func TestKongGoTrueProxiesViaKong(t *testing.T) {
 	defer kong.Close()
 
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(kong.URL), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(kong.URL), http.DefaultTransport, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/v1/token", strings.NewReader(`{"grant_type":"password"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -79,7 +79,7 @@ func TestKongGoTrueRejectsDirectAuthUpstream(t *testing.T) {
 	mux := http.NewServeMux()
 	cfg := kongTestCfg("")
 	cfg.Upstreams.Kong = "http://auth:9999"
-	RegisterKong(mux, cfg, http.DefaultTransport)
+	RegisterKong(mux, cfg, http.DefaultTransport, nil)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/v1/health", nil))
@@ -90,7 +90,7 @@ func TestKongGoTrueRejectsDirectAuthUpstream(t *testing.T) {
 
 func TestKongMCPBlocked(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport, nil)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/mcp", nil))
@@ -101,7 +101,7 @@ func TestKongMCPBlocked(t *testing.T) {
 
 func TestKongPublicRPCRemoved(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport)
+	RegisterKong(mux, kongTestCfg(""), http.DefaultTransport, nil)
 
 	for _, path := range []string{"/v1/rpc", "/rest/v1/rpc/get_all_rank_rewards"} {
 		rec := httptest.NewRecorder()

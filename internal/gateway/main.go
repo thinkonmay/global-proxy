@@ -39,6 +39,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	eslog "github.com/thinkonmay/global-proxy/api/pkg/logingest"
@@ -217,7 +218,10 @@ func Run() error {
 	routingHTTP := clusterrouting.New(routingStore, eventBus, routingWatch)
 	routingHTTP.InitSubscriptions()
 
-	mux := newMux(h, hub, catalogHTTP, opsHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	auditRec := audit.NewRecorder(cfg.Logs.ElasticsearchURL)
+	defer auditRec.Close()
+
+	mux := newMux(h, hub, catalogHTTP, opsHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus, auditRec)
 
 	clientCAs, err := virtdaemonClientCAs(context.Background(), cfg)
 	if err != nil {

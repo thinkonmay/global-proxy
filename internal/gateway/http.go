@@ -34,6 +34,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/upstream"
 	"github.com/thinkonmay/global-proxy/api/pkg/admingate"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
@@ -78,6 +79,7 @@ func newMux(
 	gate *admingate.Gate,
 	payReg *registry.Registry,
 	eventBus bus.Client,
+	auditRec *audit.Recorder,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -139,12 +141,15 @@ func newMux(
 
 	adminhost.RegisterInternalRoutes(mux, gate)
 	if gate != nil {
+		gate.SetRecorder(auditRec)
 		gate.RegisterPublicAccessRoutes(mux)
 	}
 	upstream.RegisterRybbitIngest(mux, cfg, rt)
-	upstream.RegisterKong(mux, cfg, rt)
+	upstream.RegisterKong(mux, cfg, rt, auditRec)
 
 	chain := []guard.Middleware{
+		audit.Middleware(auditRec),
+		auth.UserContextMiddleware(rt),
 		guard.Denylist(guard.IPSet(ipBlacklist...)),
 		cors.Middleware(cfg),
 		guard.Allowlist(guard.IPSet(cfg.WAF.AllowedIPs...)),
