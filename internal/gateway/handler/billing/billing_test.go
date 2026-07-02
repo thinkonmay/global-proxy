@@ -26,7 +26,7 @@ func (fakeCharger) Charge(_ context.Context, a payment.ChargeParams) (payment.Ch
 func TestFillCheckoutReturnsURL(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
 	h := &Handler{registry: reg}
-	ch, err := h.fillCheckout(context.Background(), txnRow{ID: 7, Provider: "payos", Currency: "VND", Amount: 100}, "")
+	ch, err := h.fillCheckout(context.Background(), txnRow{ID: 7, Provider: "payos", Currency: "VND", AmountMinor: 100}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +45,8 @@ func TestCreateDepositRowLoopDataShape(t *testing.T) {
 	reg := registry.NewRegistryWith(map[string]payment.Client{"payos": fakeCharger{}})
 	h := &Handler{registry: reg}
 
-	txn := txnRow{ID: 42, Provider: "payos", Currency: "VND", Amount: 200}
-	ch, err := h.fillCheckout(context.Background(), txn, "")
+	txn := txnRow{ID: 42, Provider: "payos", Currency: "VND", AmountMinor: 200}
+	ch, err := h.fillCheckout(context.Background(), txn, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,13 +162,14 @@ func TestBillingListActiveAddonsWithGoTrueToken(t *testing.T) {
 	auth.ConfigureGoTrueAuth(secret)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rpc/get_active_addons" {
+		switch r.URL.Path {
+		case "/rpc/get_machines":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "plan_id": "month1", "status": "active"}})
+		case "/rpc/get_machine_addons":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"addon_id": 1, "name": "llm", "unit_count": 2}})
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"type": "llm", "units": 2},
-		})
 	}))
 	defer srv.Close()
 
@@ -192,12 +193,11 @@ func TestBillingListActiveAddonsNoSubscription(t *testing.T) {
 	auth.ConfigureGoTrueAuth(secret)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rpc/get_active_addons" {
+		if r.URL.Path != "/rpc/get_machines" {
 			http.NotFound(w, r)
 			return
 		}
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"code":"P0001","message":"email do not have any subscription"}`))
+		_ = json.NewEncoder(w).Encode([]map[string]any{}) // no machines -> empty addon list
 	}))
 	defer srv.Close()
 

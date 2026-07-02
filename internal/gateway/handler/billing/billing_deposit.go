@@ -14,43 +14,17 @@ import (
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 )
 
-// txnRow mirrors the transactions table columns used by billing.
+// txnRow mirrors the requests table columns used by billing.
 type txnRow struct {
-	ID       int64           `json:"id"`
-	Email    string          `json:"email"`
-	Amount   float64         `json:"amount"`
-	Currency string          `json:"currency"`
-	Provider string          `json:"provider"`
-	Data     json.RawMessage `json:"data"`
-	Metadata json.RawMessage `json:"metadata"`
-	ExpireAt string          `json:"expire_at"`
-}
-
-func dataIsEmpty(raw json.RawMessage) bool {
-	if len(raw) == 0 || string(raw) == "null" {
-		return true
-	}
-	var m map[string]any
-	if json.Unmarshal(raw, &m) != nil {
-		return false
-	}
-	return len(m) == 0
-}
-
-// loadTransaction fetches a single transaction row by ID.
-func (h *Handler) loadTransaction(ctx context.Context, id int64) (txnRow, error) {
-	var rows []txnRow
-	q := url.Values{}
-	q.Set("select", "id,email,amount,currency,provider,data,metadata,expire_at")
-	q.Set("id", "eq."+strconv.FormatInt(id, 10))
-	q.Set("limit", "1")
-	if err := h.pr.SelectService(ctx, "transactions", q, &rows); err != nil {
-		return txnRow{}, err
-	}
-	if len(rows) == 0 {
-		return txnRow{}, fmt.Errorf("transaction %d not found", id)
-	}
-	return rows[0], nil
+	ID          int64           `json:"id"`
+	UserEmail   string          `json:"user_email"`
+	PlanID      string          `json:"plan_id"`
+	Currency    string          `json:"currency"`
+	AmountMinor float64         `json:"amount_minor"`
+	Provider    string          `json:"provider"`
+	Data        json.RawMessage `json:"data"`
+	Status      string          `json:"status"`
+	ExpireAt    string          `json:"expire_at"`
 }
 
 // Metadata keys consumed as redirect targets — never echoed back as query params.
@@ -99,20 +73,11 @@ func buildRedirectURL(raw json.RawMessage, baseKey, idKey, idVal string) string 
 	return base + sep + enc
 }
 
-// returnURLForTxn builds the deposit success URL, tagging it with the txn id.
-func returnURLForTxn(txn txnRow) string {
-	return buildRedirectURL(txn.Metadata, metaReturnURL, "transaction_id", strconv.FormatInt(txn.ID, 10))
-}
-
-// cancelURLForTxn builds the deposit cancel URL. No txn id is appended — a
-// cancelled checkout has nothing to verify; the user just returns to the picker.
-func cancelURLForTxn(txn txnRow) string {
-	return buildRedirectURL(txn.Metadata, metaCancelURL, "", "")
-}
-
 // fillCheckout converts the amount, calls the provider, and returns the Charge.
+// redirectMeta is the raw metadata JSON used to resolve return/cancel URLs
+// (from the original deposit request body since the requests table has no metadata column).
 // method optionally pre-selects a provider payment channel (e.g. PayerMax "OVO"/"DANA").
-func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, method string) (payment.Charge, error) {
+func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, redirectMeta json.RawMessage, method string) (payment.Charge, error) {
 	if h.registry == nil {
 		return payment.Charge{}, fmt.Errorf("payment registry not configured")
 	}
@@ -120,15 +85,17 @@ func (h *Handler) fillCheckout(ctx context.Context, txn txnRow, method string) (
 	if !ok {
 		return payment.Charge{}, fmt.Errorf("unsupported provider %q", txn.Provider)
 	}
-	// transactions.amount_minor is already the fiat charge in provider minor units.
-	money := payment.Money{Amount: int64(txn.Amount), Currency: strings.ToUpper(txn.Currency)}
+	// requests.amount_minor is already the fiat charge in provider minor units.
+	money := payment.Money{Amount: int64(txn.AmountMinor), Currency: strings.ToUpper(txn.Currency)}
+	returnURL := buildRedirectURL(redirectMeta, metaReturnURL, "transaction_id", strconv.FormatInt(txn.ID, 10))
+	cancelURL := buildRedirectURL(redirectMeta, metaCancelURL, "", "")
 	return client.Charge(ctx, payment.ChargeParams{
 		IdempotencyKey: strconv.FormatInt(txn.ID, 10),
 		Money:          money,
-		Description:    txn.Email,
-		CustomerEmail:  txn.Email,
-		ReturnURL:      returnURLForTxn(txn),
-		CancelURL:      cancelURLForTxn(txn),
+		Description:    txn.UserEmail,
+		CustomerEmail:  txn.UserEmail,
+		ReturnURL:      returnURL,
+		CancelURL:      cancelURL,
 		Method:         method,
 	})
 }
@@ -206,82 +173,87 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 	amountMinor := payment.FromMajor(chargeMajor, body.Currency).Minor()
 
-	// A deposit only tops up the wallet (create_pocket_deposit_v4); buying the plan from the
-	// topped-up balance is a separate step (POST /v1/billing/payments → create_or_replace_payment).
-	var rpcResult json.RawMessage
-	depositArgs := map[string]any{
-		"email":         email,
-		"amount":        amountMinor,
-		"currency":      body.Currency,
-		"provider":      body.Provider,
-		"metadata":      body.Metadata,
-		"discount_code": body.DiscountCode,
-		"credit_grant":  creditGrant,
+	// create_payment_session creates (or reuses) a pending payment session and returns its
+	// metadata. When reused is true and charge_data is already stored, return it directly
+	// without re-calling the provider.
+	type sessionRow struct {
+		ID         int64           `json:"id"`
+		ChargeData json.RawMessage `json:"charge_data"`
+		Status     string          `json:"status"`
+		Reused     bool            `json:"reused"`
 	}
-	if err := h.pr.RPC(ctx, "create_pocket_deposit_v4", depositArgs, &rpcResult); err != nil {
+	sessionArgs := map[string]any{
+		"p_email":         email,
+		"p_plan_id":       body.PlanName,
+		"p_currency":      body.Currency,
+		"p_amount_minor":  amountMinor,
+		"p_credit":        creditGrant,
+		"p_provider":      body.Provider,
+		"p_discount_code": body.DiscountCode,
+	}
+	// create_payment_session RETURNS TABLE -> PostgREST returns a JSON array.
+	var sessionRows []sessionRow
+	if err := h.pr.RPC(ctx, "create_payment_session", sessionArgs, &sessionRows); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
-
-	// Parse the returned rows — each has {id, data}.
-	// For rows with empty data, fill checkout synchronously via the registry.
-	var rows []struct {
-		ID   int64           `json:"id"`
-		Data json.RawMessage `json:"data"`
+	if len(sessionRows) == 0 {
+		httpx.WriteError(w, http.StatusInternalServerError, "payment session not created")
+		return
 	}
-	if err := json.Unmarshal(rpcResult, &rows); err != nil {
-		// If the result is not an array (e.g. plain scalar), return as-is.
-		httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rpcResult})
+	sessionResult := sessionRows[0]
+
+	// If the session was reused and charge_data is already stored, return it immediately.
+	if sessionResult.Reused && len(sessionResult.ChargeData) > 0 && string(sessionResult.ChargeData) != "null" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":   sessionResult.ID,
+			"data": sessionResult.ChargeData,
+		})
 		return
 	}
 
-	if h.registry != nil {
-		for i := range rows {
-			if !dataIsEmpty(rows[i].Data) {
-				continue
-			}
-			// Load the full transaction to get all fields needed for checkout.
-			txn, loadErr := h.loadTransaction(ctx, rows[i].ID)
-			if loadErr != nil {
-				httpx.WriteUpstreamErr(w, loadErr)
-				return
-			}
-
-			ch, chErr := h.fillCheckout(ctx, txn, body.Method)
-			if chErr != nil {
-				httpx.WriteUpstreamErr(w, chErr)
-				return
-			}
-
-			// Build stored data generically; include redirect_url for requires_action/3DS flows.
-			out := map[string]any{"charge_id": ch.ID, "status": string(ch.Status)}
-			if ch.RedirectURL != "" {
-				out["redirect_url"] = ch.RedirectURL
-			}
-			if len(ch.Detail) > 0 {
-				out["detail"] = ch.Detail
-			}
-			dataBytes, err := json.Marshal(out)
-			if err != nil {
-				httpx.WriteUpstreamErr(w, err)
-				return
-			}
-			q := url.Values{}
-			q.Set("id", "eq."+strconv.FormatInt(rows[i].ID, 10))
-			if err := h.pr.Update(ctx, "transactions", q, map[string]any{"data": json.RawMessage(dataBytes)}, nil); err != nil {
-				httpx.WriteUpstreamErr(w, err)
-				return
-			}
-			rows[i].Data = dataBytes
-		}
+	// No stored charge — call the provider to open a new checkout.
+	if h.registry == nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "payment registry not configured")
+		return
 	}
 
-	enriched, err := json.Marshal(rows)
+	txn := txnRow{
+		ID:          sessionResult.ID,
+		UserEmail:   email,
+		Provider:    body.Provider,
+		Currency:    body.Currency,
+		AmountMinor: float64(amountMinor),
+	}
+	redirectMeta := rawJSON(body.Metadata)
+
+	ch, chErr := h.fillCheckout(ctx, txn, redirectMeta, body.Method)
+	if chErr != nil {
+		httpx.WriteUpstreamErr(w, chErr)
+		return
+	}
+
+	// Marshal the whole Charge struct as the canonical charge_data blob.
+	chBytes, err := json.Marshal(ch)
 	if err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": enriched})
+
+	// Persist the provider charge details back onto the session.
+	setArgs := map[string]any{
+		"p_id":          sessionResult.ID,
+		"p_charge_data": json.RawMessage(chBytes),
+	}
+	if err := h.pr.RPC(ctx, "set_session_charge", setArgs, nil); err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":   sessionResult.ID,
+		"data": json.RawMessage(chBytes),
+	})
 }
 
 func (h *Handler) DepositStatus(w http.ResponseWriter, r *http.Request) {
@@ -298,10 +270,10 @@ func (h *Handler) DepositStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
-	// p_email scopes the lookup to the caller's own transaction (the RPC runs as
+	// p_email scopes the lookup to the caller's own request (the RPC runs as
 	// service_role, so ownership is enforced in the function, not via RLS).
 	var out json.RawMessage
-	if err := h.pr.RPC(ctx, "get_transaction_status", map[string]any{"id": txID, "p_email": email}, &out); err != nil {
+	if err := h.pr.RPC(ctx, "get_request_status", map[string]any{"p_id": txID, "p_email": email}, &out); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
@@ -322,10 +294,10 @@ func (h *Handler) CancelDeposit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
-	// p_email scopes the cancel to the caller's own transaction; the RPC raises
+	// p_email scopes the cancel to the caller's own request; the RPC raises
 	// not-found on a mismatch so a user cannot cancel another user's checkout.
 	var out json.RawMessage
-	if err := h.pr.RPC(ctx, "cancel_transaction", map[string]any{"id": txID, "p_email": email}, &out); err != nil {
+	if err := h.pr.RPC(ctx, "cancel_request", map[string]any{"p_id": txID, "p_email": email}, &out); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
@@ -339,9 +311,9 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		PlanName      string  `json:"plan_name"`
-		ClusterDomain string  `json:"cluster_domain"`
-		Template      *string `json:"template"`
+		PlanName  string  `json:"plan_name"`
+		MachineID *int64  `json:"machine_id"` // optional: attach to existing machine
+		Template  *string `json:"template"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -355,34 +327,43 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingDepositTimeout)
 	defer cancel()
 
-	clusterDomain, err := h.resolveClusterDomain(ctx, body.ClusterDomain)
-	if err != nil {
+	// buy_plan atomically purchases the plan and provisions (or re-provisions) the machine.
+	// It replaces the old create_or_replace_payment + verify_all_payment_v2 pair.
+	buyArgs := map[string]any{
+		"p_email":   email,
+		"p_plan_id": body.PlanName,
+	}
+	if body.MachineID != nil {
+		buyArgs["p_machine_id"] = *body.MachineID
+	} else {
+		buyArgs["p_machine_id"] = nil
+	}
+	if body.Template != nil {
+		buyArgs["p_template"] = *body.Template
+	}
+	var machineID int64
+	if err := h.pr.RPC(ctx, "buy_plan", buyArgs, &machineID); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
 
-	// These RPCs return void; PostgREST replies with an empty body, so pass nil
-	// dest to skip decoding (decoding empty into json.RawMessage fails).
-	if err := h.pr.RPC(ctx, "pay_all_addon_charges", map[string]any{"email": email}, nil); err != nil {
+	// Sweep per-machine addon charges for all of the user's machines.
+	// getMachines returns the current machine list after buy_plan has run.
+	machines, err := h.getMachines(ctx, email)
+	if err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
-	args := map[string]any{
-		"email":          email,
-		"plan_name":      body.PlanName,
-		"cluster_domain": clusterDomain,
+	for _, m := range machines {
+		if err := h.pr.RPC(ctx, "pay_addon_charges", map[string]any{
+			"p_email":      email,
+			"p_machine_id": m.ID,
+		}, nil); err != nil {
+			httpx.WriteUpstreamErr(w, err)
+			return
+		}
 	}
-	if body.Template != nil {
-		args["template"] = *body.Template
-	}
-	if err := h.pr.RPC(ctx, "create_or_replace_payment", args, nil); err != nil {
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
-	if err := h.pr.RPC(ctx, "verify_all_payment_v2", map[string]any{}, nil); err != nil {
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
+
 	httpx.WriteData(w, true)
 }
 
@@ -414,9 +395,9 @@ func (h *Handler) ValidateDiscount(w http.ResponseWriter, r *http.Request) {
 
 	var rows json.RawMessage
 	if err := h.pr.RPC(ctx, "validate_discount_code", map[string]any{
-		"discount_code":  code,
-		"apply_for_type": body.ApplyForType,
-		"user_email":     email,
+		"p_code":      code,
+		"p_apply_for": body.ApplyForType,
+		"p_email":     email,
 	}, &rows); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
@@ -462,30 +443,36 @@ func (h *Handler) planCatalog(ctx context.Context, planName, currency string) (i
 }
 
 // walletBalance returns the caller's current CREDIT balance (0 if no wallet yet).
+// get_wallet_balance returns a bigint scalar.
 func (h *Handler) walletBalance(ctx context.Context, email string) (int64, error) {
-	var rows []struct {
-		Amount int64 `json:"amount"`
-	}
-	if err := h.pr.RPC(ctx, "get_pocket_balance", map[string]any{"email": email}, &rows); err != nil {
+	var balance int64
+	if err := h.pr.RPC(ctx, "get_wallet_balance", map[string]any{"p_email": email}, &balance); err != nil {
 		return 0, err
 	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	return rows[0].Amount, nil
+	return balance, nil
 }
 
-// addonChargeTotal returns the sum of the caller's pending addon charges, in CREDIT.
+// addonChargeTotal returns the sum of pending addon charges across all of the user's
+// machines, in CREDIT. Calls get_machines then list_addon_charges per machine.
 func (h *Handler) addonChargeTotal(ctx context.Context, email string) (int64, error) {
-	var rows []struct {
-		TotalAmount int64 `json:"total_amount"`
-	}
-	if err := h.pr.RPC(ctx, "list_addon_charges_v2", map[string]any{"input_email": email}, &rows); err != nil {
+	machines, err := h.getMachines(ctx, email)
+	if err != nil {
 		return 0, err
 	}
 	var total int64
-	for _, r := range rows {
-		total += r.TotalAmount
+	for _, m := range machines {
+		var charges []struct {
+			TotalAmount int64 `json:"total_amount"`
+		}
+		if err := h.pr.RPC(ctx, "list_addon_charges", map[string]any{
+			"p_email":      email,
+			"p_machine_id": m.ID,
+		}, &charges); err != nil {
+			return 0, err
+		}
+		for _, c := range charges {
+			total += c.TotalAmount
+		}
 	}
 	return total, nil
 }

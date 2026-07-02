@@ -3,11 +3,9 @@ package billing
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
@@ -15,153 +13,56 @@ import (
 	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 )
 
-// CreateSubscription starts a recurring, provider-hosted subscription for a plan.
-// It creates a pending local subscription row, then opens the provider checkout and returns
-// its redirect URL. The provider subscription id is linked back on the activation webhook.
+// CreateSubscription previously started a recurring, provider-hosted subscription.
+// Recurring subscriptions have been removed; renewals are now manual via buy_plan
+// (POST /v1/billing/payments). This endpoint returns 410 Gone.
 // POST /v1/billing/subscriptions
 func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
-	email, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
-	if !ok {
-		auth.WriteAuthErr(w, status, msg)
-		return
-	}
-	// NOTE: no Amount field — the charge price is resolved server-side from the
-	// plan (planChargeMoney). Any client-sent "amount" is silently dropped by the
-	// JSON decoder, which is intentional: the client must not influence the price.
-	var body struct {
-		PlanName      string         `json:"plan_name"`
-		ClusterDomain string         `json:"cluster_domain"`
-		Template      *string        `json:"template"`
-		Provider      string         `json:"provider"`
-		Currency      string         `json:"currency"`
-		Interval      string         `json:"interval"`
-		Metadata      map[string]any `json:"metadata"`
-		CustomerID    string         `json:"customer_id"` // test-only: bind to a Stripe test-clock customer (ignored unless test mode)
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.PlanName == "" || body.Provider == "" || body.Currency == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "plan_name, provider, and currency required")
-		return
-	}
-	if h.registry == nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "payment registry not configured")
-		return
-	}
-	client, found := h.registry.Get(body.Provider)
-	if !found {
-		httpx.WriteError(w, http.StatusBadRequest, "unsupported provider")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), billingDepositTimeout)
-	defer cancel()
-
-	clusterDomain, err := h.resolveClusterDomain(ctx, body.ClusterDomain)
-	if err != nil {
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
-
-	// Create the pending subscription intent; its id correlates the activation webhook.
-	template := "win11"
-	if body.Template != nil && *body.Template != "" {
-		template = *body.Template
-	}
-	var subID int64
-	if err := h.pr.RPC(ctx, "create_subscription_intent", map[string]any{
-		"p_email":          email,
-		"p_plan_name":      body.PlanName,
-		"p_cluster_domain": clusterDomain,
-		"p_template":       template,
-	}, &subID); err != nil {
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
-
-	// Resolve the charge amount SERVER-SIDE from the plan's per-currency catalog
-	// price. The client-supplied body.Amount is never trusted — otherwise a buyer
-	// could post amount=0.01 and receive a full-priced subscription.
-	money, err := h.planChargeMoney(ctx, body.PlanName, body.Currency)
-	if err != nil {
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
-
-	sub, err := client.Subscribe(ctx, payment.SubscribeParams{
-		IdempotencyKey: strconv.FormatInt(subID, 10),
-		Money:          money,
-		Interval:       body.Interval,
-		PlanRef:        body.PlanName,
-		CustomerEmail:  email,
-		CustomerID:     body.CustomerID,
-		Description:    body.PlanName,
-		ReturnURL:      buildRedirectURL(rawJSON(body.Metadata), metaReturnURL, "subscription_id", strconv.FormatInt(subID, 10)),
-	})
-	if err != nil {
-		if errors.Is(err, payment.ErrNotSupported) {
-			httpx.WriteError(w, http.StatusBadRequest, "provider does not support subscriptions")
-			return
-		}
-		httpx.WriteUpstreamErr(w, err)
-		return
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"data": map[string]any{
-			"subscription_id": subID,
-			"redirect_url":    sub.RedirectURL,
-		},
-	})
+	httpx.WriteError(w, http.StatusGone, "recurring subscriptions removed; use POST /v1/billing/payments")
 }
 
-// CancelSubscription cancels the auto-renew provider subscription of the authenticated user.
-// The provider's cancellation webhook settles the local status. DELETE /v1/billing/subscriptions
+// CancelSubscription cancels a specific machine for the authenticated user.
+// machine_id is taken from the query string (?machine_id=) or request body.
+// DELETE /v1/billing/subscriptions
 func (h *Handler) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	email, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
 	if !ok {
 		auth.WriteAuthErr(w, status, msg)
 		return
 	}
+
+	// Accept machine_id from query string first, then fall back to JSON body.
+	machineIDStr := strings.TrimSpace(r.URL.Query().Get("machine_id"))
+	if machineIDStr == "" {
+		var body struct {
+			MachineID int64 `json:"machine_id"`
+		}
+		// Best-effort decode; ignore EOF (empty body).
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.MachineID > 0 {
+			machineIDStr = fmt.Sprintf("%d", body.MachineID)
+		}
+	}
+	if machineIDStr == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "machine_id required")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
-	// Find the caller's active auto-renew subscription (user column holds the email).
-	var rows []struct {
-		Provider      string `json:"provider"`
-		ProviderSubID string `json:"provider_sub_id"`
-	}
-	q := url.Values{}
-	q.Set("select", "provider,provider_sub_id")
-	q.Set("user", "eq."+email)
-	q.Set("provider_sub_id", "not.is.null")
-	q.Set("cancelled_at", "is.null")
-	q.Set("order", "id.desc")
-	q.Set("limit", "1")
-	if err := h.pr.SelectService(ctx, "subscriptions", q, &rows); err != nil {
-		httpx.WriteUpstreamErr(w, err)
+	// Convert to int64 for the RPC; reuse fmt.Sscanf for simplicity.
+	var machineID int64
+	if _, err := fmt.Sscanf(machineIDStr, "%d", &machineID); err != nil || machineID <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "machine_id must be a positive integer")
 		return
 	}
-	if len(rows) == 0 || rows[0].ProviderSubID == "" {
-		httpx.WriteError(w, http.StatusNotFound, "no active subscription")
-		return
-	}
-	if h.registry == nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "payment registry not configured")
-		return
-	}
-	client, found := h.registry.Get(rows[0].Provider)
-	if !found {
-		httpx.WriteError(w, http.StatusBadRequest, "unsupported provider")
-		return
-	}
-	if err := client.CancelSubscription(ctx, rows[0].ProviderSubID); err != nil {
-		if errors.Is(err, payment.ErrNotSupported) {
-			httpx.WriteError(w, http.StatusBadRequest, "provider does not support subscriptions")
-			return
-		}
+
+	var out json.RawMessage
+	if err := h.pr.RPC(ctx, "cancel_machine", map[string]any{
+		"p_machine_id": machineID,
+		"p_email":      email,
+	}, &out); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}

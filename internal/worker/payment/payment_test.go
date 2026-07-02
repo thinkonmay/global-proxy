@@ -15,10 +15,10 @@ import (
 )
 
 func TestHandlePaymentEventSettlesOnce(t *testing.T) {
-	// F01 regression: duplicate webhook delivery must not double-settle a deposit.
+	// Regression: duplicate webhook delivery must not double-settle a request.
 	var calls int
 	rpc := func(ctx context.Context, fn string, args map[string]any) error {
-		if fn == "settle_transaction" {
+		if fn == "settle_request" {
 			calls++
 		}
 		return nil
@@ -32,30 +32,6 @@ func TestHandlePaymentEventSettlesOnce(t *testing.T) {
 	_ = h.handlePaymentEvent(context.Background(), ev) // duplicate delivery
 	if calls != 1 {
 		t.Fatalf("settle calls = %d, want 1 (idempotent)", calls)
-	}
-}
-
-func TestSettleSubscriptionIdempotent(t *testing.T) {
-	var calls int
-	h := &Handler{idem: idempotency.New(idempotency.NewMemStore()), settleRPC: func(ctx context.Context, fn string, args map[string]any) error {
-		if fn == "settle_subscription" {
-			calls++
-		}
-		return nil
-	}}
-	ev := model.PaymentMsg{
-		Provider: "stripe",
-		Event: payment.Event{
-			Kind:          payment.EventSubRenewed,
-			ProviderSubID: "sub_abc",
-			Status:        payment.StatusActive,
-			PeriodEnd:     1750000000,
-		},
-	}
-	_ = h.handlePaymentEvent(context.Background(), ev)
-	_ = h.handlePaymentEvent(context.Background(), ev)
-	if calls != 1 {
-		t.Fatalf("settle_subscription calls = %d, want 1", calls)
 	}
 }
 
@@ -90,7 +66,7 @@ func TestChargeEventAndPollRace(t *testing.T) {
 	h := &Handler{
 		idem: idempotency.New(idempotency.NewMemStore()),
 		settleRPC: func(_ context.Context, fn string, args map[string]any) error {
-			if fn == "settle_transaction" {
+			if fn == "settle_request" {
 				settled++
 			}
 			return nil
@@ -111,7 +87,7 @@ func TestChargeEventAndPollRace(t *testing.T) {
 		t.Fatal(err)
 	}
 	if settled != 1 {
-		t.Fatalf("settle_transaction calls = %d, want 1 (event + poll race)", settled)
+		t.Fatalf("settle_request calls = %d, want 1 (event + poll race)", settled)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -58,12 +59,16 @@ func TestCollectorTickPublishesAnalyticsAndBills(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"name": "gpu-worker-01", "cluster_id": float64(1), "active": true,
 			}})
-		case r.URL.Path == "/rpc/increment_subscription_usage":
+		case r.URL.Path == "/machines":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"id": "machine-uuid-0001",
+			}})
+		case r.URL.Path == "/rpc/increment_machine_usage":
 			rpcMu.Lock()
 			rpcCalls++
 			rpcMu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/rpc/increment_subscription_data_usage":
+		case r.URL.Path == "/rpc/increment_machine_data_usage":
 			rpcMu.Lock()
 			rpcCalls++
 			rpcMu.Unlock()
@@ -109,5 +114,22 @@ func TestCollectorTickPublishesAnalyticsAndBills(t *testing.T) {
 	pubMu.Unlock()
 	if n < 2 {
 		t.Fatalf("expected session+volume analytics events, got %d", n)
+	}
+
+	// Disk GB is priced per GB-hour, so the volume dedup key must carry the hourly
+	// bucket TTL (~2h) rather than the 5m session TTL (~11m). Otherwise the 5-minute
+	// session ticks would re-accrue total_data_credit ~12x/hour and overcharge storage.
+	db := mr.DB(1) // client connects to redis DB 1 (see RedisURL above)
+	var volTTL time.Duration
+	for _, k := range db.Keys() {
+		if strings.HasPrefix(k, dedupKeyPrefix+"vol:") {
+			volTTL = db.TTL(k)
+		}
+	}
+	if volTTL == 0 {
+		t.Fatal("expected a volume dedup key to be claimed")
+	}
+	if volTTL <= time.Hour {
+		t.Fatalf("volume dedup TTL = %v, want > 1h (hourly cadence)", volTTL)
 	}
 }

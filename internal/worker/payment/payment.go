@@ -1,6 +1,6 @@
-// Package payment settles payment transactions and subscription lifecycle events off the
-// bus and via a polling fallback. Settlement is idempotent so redeliveries and poll/event
-// races dedup — charges on (provider, txn, status), subscriptions on (sub id, status, period).
+// Package payment settles payment requests off the bus and via a polling fallback.
+// Settlement is idempotent so redeliveries and poll/event races dedup on
+// (provider, request id, status).
 package payment
 
 import (
@@ -10,7 +10,6 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/idempotency"
-	payment "github.com/thinkonmay/global-proxy/api/pkg/payment"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
@@ -21,7 +20,6 @@ type Handler struct {
 	eventBus    bus.Client
 	settleRPC   func(ctx context.Context, fn string, args map[string]any) error
 	listPending func(ctx context.Context) ([]pendingTxn, error)
-	listSubs    func(ctx context.Context) ([]pendingSub, error)
 	lookupEmail func(ctx context.Context, txnID string) string
 }
 
@@ -90,33 +88,27 @@ func (h *Handler) depositOwnerEmail(ctx context.Context, txnID string) string {
 	q.Set("select", "email")
 	q.Set("id", "eq."+txnID)
 	q.Set("limit", "1")
-	if err := h.pr.SelectService(ctx, "transactions", q, &rows); err != nil || len(rows) == 0 {
+	if err := h.pr.SelectService(ctx, "requests", q, &rows); err != nil || len(rows) == 0 {
 		return ""
 	}
 	return rows[0].Email
 }
 
-// handlePaymentEvent routes an event to the charge or subscription settle path by Kind.
+// handlePaymentEvent settles a charge event. Provider-recurring subscription
+// events are no longer processed (provider subscriptions removed).
 func (h *Handler) handlePaymentEvent(ctx context.Context, ev model.PaymentMsg) error {
-	switch ev.Kind {
-	case payment.EventSubActivated, payment.EventSubRenewed, payment.EventSubCanceled:
-		return h.settleSubscription(ctx, ev)
-	case payment.EventCharge:
-		return h.settleCharge(ctx, ev)
-	default:
-		return fmt.Errorf("unhandled payment event kind %q", ev.Kind)
-	}
+	return h.settleCharge(ctx, ev)
 }
 
-// settleCharge settles a one-time transaction idempotently. The idempotency guard
-// dedups redeliveries and poll/event races on provider + txn id + status.
+// settleCharge settles a one-time payment request idempotently. The idempotency guard
+// dedups redeliveries and poll/event races on provider + request id + status.
 func (h *Handler) settleCharge(ctx context.Context, ev model.PaymentMsg) error {
 	if ev.RefID == "" {
-		return fmt.Errorf("payment event missing txn id (charge %s)", ev.ProviderID)
+		return fmt.Errorf("payment event missing request id (charge %s)", ev.ProviderID)
 	}
 	key := fmt.Sprintf("settle:%s:%s:%s", ev.Provider, ev.RefID, ev.Status)
 	return h.idem.Run(ctx, key, func(ctx context.Context) error {
-		if err := h.settleRPC(ctx, "settle_transaction", map[string]any{
+		if err := h.settleRPC(ctx, "settle_request", map[string]any{
 			"p_id":     ev.RefID,
 			"p_status": ev.Status,
 		}); err != nil {
@@ -124,27 +116,5 @@ func (h *Handler) settleCharge(ctx context.Context, ev model.PaymentMsg) error {
 		}
 		h.notifyDepositSettled(ctx, ev.RefID, string(ev.Status))
 		return nil
-	})
-}
-
-// settleSubscription applies a subscription lifecycle event idempotently. Activation carries
-// RefID (local subscription-intent id) to link the provider subscription; renewals and cancels
-// are keyed by provider subscription id. Dedup includes period end so each cycle settles once.
-func (h *Handler) settleSubscription(ctx context.Context, ev model.PaymentMsg) error {
-	if ev.ProviderSubID == "" {
-		return fmt.Errorf("subscription event missing provider subscription id (ref %q)", ev.RefID)
-	}
-	key := fmt.Sprintf("settle_sub:%s:%s:%s:%d", ev.Provider, ev.ProviderSubID, ev.Status, ev.PeriodEnd)
-	return h.idem.Run(ctx, key, func(ctx context.Context) error {
-		args := map[string]any{
-			"p_provider":        ev.Provider,
-			"p_provider_sub_id": ev.ProviderSubID,
-			"p_status":          ev.Status,
-			"p_period_end":      ev.PeriodEnd,
-		}
-		if ev.RefID != "" {
-			args["p_ref_id"] = ev.RefID
-		}
-		return h.settleRPC(ctx, "settle_subscription", args)
 	})
 }

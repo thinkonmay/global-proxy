@@ -110,6 +110,7 @@ func (c *Client) Charge(ctx context.Context, args payment.ChargeParams) (payment
 		ID:          args.IdempotencyKey,
 		Status:      payment.StatusPending,
 		RedirectURL: resp.CheckoutUrl,
+		QRCode:      resp.QrCode,
 		Detail:      b,
 	}, nil
 }

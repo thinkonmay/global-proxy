@@ -3,12 +3,24 @@ package billing
 import (
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
 
+// buildReturnURL is a test-local helper that replicates what fillCheckout does:
+// resolve the return URL from request-body metadata, tagging it with the txn ID.
+func buildReturnURL(meta json.RawMessage, id int64) string {
+	return buildRedirectURL(meta, metaReturnURL, "transaction_id", strconv.FormatInt(id, 10))
+}
+
+// buildCancelURL is a test-local helper that replicates the cancel URL path.
+func buildCancelURL(meta json.RawMessage) string {
+	return buildRedirectURL(meta, metaCancelURL, "", "")
+}
+
 func TestReturnURLForTxn_DefaultBaseTagsTxnID(t *testing.T) {
-	got := returnURLForTxn(txnRow{ID: 42})
+	got := buildReturnURL(nil, 42)
 	if !strings.HasPrefix(got, "https://thinkmay.net?") {
 		t.Fatalf("want default base, got %q", got)
 	}
@@ -23,7 +35,7 @@ func TestReturnURLForTxn_HonorsAbsoluteReturnURL(t *testing.T) {
 		"return_url": "https://app.example.com/en/payment/success",
 		"plan_name":  "month1",
 	})
-	got := returnURLForTxn(txnRow{ID: 7, Metadata: meta})
+	got := buildReturnURL(meta, 7)
 	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +57,7 @@ func TestReturnURLForTxn_HonorsAbsoluteReturnURL(t *testing.T) {
 
 func TestReturnURLForTxn_RejectsNonAbsoluteReturnURL(t *testing.T) {
 	meta, _ := json.Marshal(map[string]any{"return_url": "javascript:alert(1)"})
-	got := returnURLForTxn(txnRow{ID: 1, Metadata: meta})
+	got := buildReturnURL(meta, 1)
 	if !strings.HasPrefix(got, "https://thinkmay.net") {
 		t.Fatalf("non-absolute return_url should fall back to default base, got %q", got)
 	}
@@ -56,7 +68,7 @@ func TestCancelURLForTxn_HonorsCancelURLNoTxnID(t *testing.T) {
 		"return_url": "https://app.example.com/en/payment/success",
 		"cancel_url": "https://app.example.com/en/payment",
 	})
-	got := cancelURLForTxn(txnRow{ID: 5, Metadata: meta})
+	got := buildCancelURL(meta)
 	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +87,7 @@ func TestReturnURLForTxn_StripsCancelURLFromQuery(t *testing.T) {
 		"return_url": "https://app.example.com/en/payment/success",
 		"cancel_url": "https://app.example.com/en/payment",
 	})
-	got := returnURLForTxn(txnRow{ID: 9, Metadata: meta})
+	got := buildReturnURL(meta, 9)
 	if strings.Contains(got, "cancel_url") {
 		t.Fatalf("cancel_url leaked into success query: %q", got)
 	}

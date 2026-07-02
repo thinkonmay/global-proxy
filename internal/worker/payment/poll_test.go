@@ -59,8 +59,8 @@ func TestPollUsesStoredChargeID(t *testing.T) {
 		idem:      idempotency.New(idempotency.NewMemStore()),
 		settleRPC: func(_ context.Context, _ string, _ map[string]any) error { return nil },
 		listPending: func(_ context.Context) ([]pendingTxn, error) {
-			data, _ := json.Marshal(map[string]any{"charge_id": "cs_test_123"})
-			return []pendingTxn{{ID: 7, Provider: "payos", Data: data}}, nil
+			data, _ := json.Marshal(map[string]any{"id": "cs_test_123"})
+			return []pendingTxn{{ID: 7, Provider: "payos", ChargeData: data}}, nil
 		},
 	}
 	reg := registry.NewRegistryWith(map[string]payment.Client{
@@ -74,7 +74,7 @@ func TestPollUsesStoredChargeID(t *testing.T) {
 	}
 }
 
-// A transaction past expire_at by more than failExpireGrace, still reported non-terminal
+// A request past expire_at by more than failExpireGrace, still reported non-terminal
 // by the provider, must settle as failed so it does not linger forever.
 func TestPollFailsExpiredPending(t *testing.T) {
 	var settled []string
@@ -100,63 +100,7 @@ func TestPollFailsExpiredPending(t *testing.T) {
 	}
 }
 
-type fakeGetSubscriber struct {
-	payment.Client
-	sub payment.Subscription
-	err error
-}
-
-func (f fakeGetSubscriber) Name() string { return "stripe" }
-func (f fakeGetSubscriber) GetSubscription(_ context.Context, _ string) (payment.Subscription, error) {
-	return f.sub, f.err
-}
-
-// An active provider subscription reconciles to a settle with its live period end.
-func TestPollSubsSettlesActive(t *testing.T) {
-	var got map[string]any
-	h := &Handler{
-		idem: idempotency.New(idempotency.NewMemStore()),
-		settleRPC: func(_ context.Context, _ string, args map[string]any) error {
-			got = args
-			return nil
-		},
-		listSubs: func(_ context.Context) ([]pendingSub, error) {
-			return []pendingSub{{ID: 1, Provider: "stripe", ProviderSubID: "sub_123"}}, nil
-		},
-	}
-	reg := registry.NewRegistryWith(map[string]payment.Client{
-		"stripe": fakeGetSubscriber{sub: payment.Subscription{Status: payment.StatusActive, PeriodEnd: 1750000000}},
-	})
-	if err := h.pollSubsOnce(context.Background(), reg); err != nil {
-		t.Fatal(err)
-	}
-	if got["p_status"] != "active" || got["p_period_end"] != int64(1750000000) || got["p_provider_sub_id"] != "sub_123" {
-		t.Fatalf("settle args = %v", got)
-	}
-}
-
-// A pending (not-yet-activated) subscription has nothing to reconcile.
-func TestPollSubsSkipsPending(t *testing.T) {
-	settled := false
-	h := &Handler{
-		idem:      idempotency.New(idempotency.NewMemStore()),
-		settleRPC: func(_ context.Context, _ string, _ map[string]any) error { settled = true; return nil },
-		listSubs: func(_ context.Context) ([]pendingSub, error) {
-			return []pendingSub{{ID: 2, Provider: "stripe", ProviderSubID: "sub_x"}}, nil
-		},
-	}
-	reg := registry.NewRegistryWith(map[string]payment.Client{
-		"stripe": fakeGetSubscriber{sub: payment.Subscription{Status: payment.StatusPending}},
-	})
-	if err := h.pollSubsOnce(context.Background(), reg); err != nil {
-		t.Fatal(err)
-	}
-	if settled {
-		t.Fatal("pending subscription must not settle")
-	}
-}
-
-// A transaction expired within failExpireGrace must NOT be force-failed yet: the poller
+// A request expired within failExpireGrace must NOT be force-failed yet: the poller
 // keeps trusting the provider so a late-recorded payment (settle lag) is still captured.
 func TestPollKeepsRecentlyExpiredWithinFailGrace(t *testing.T) {
 	var settled []string
@@ -182,7 +126,7 @@ func TestPollKeepsRecentlyExpiredWithinFailGrace(t *testing.T) {
 	}
 }
 
-// A non-expired pending transaction must NOT be settled — keep polling.
+// A non-expired pending request must NOT be settled — keep polling.
 func TestPollSkipsNonExpiredPending(t *testing.T) {
 	var settled []string
 	future := time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339)

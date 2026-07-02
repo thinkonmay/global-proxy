@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
@@ -187,6 +188,14 @@ func (c *Collector) tick(ctx context.Context) {
 		}
 	}
 
+	// Disk usage is priced per GB-hour (plan price.storage.per_quantity == 720,
+	// i.e. hours/month), so total_data_credit must accrue at most one GB sample
+	// per hour per volume. This loop runs on every session tick (5m), so bill the
+	// volume on the hourly addon bucket instead of the session bucket: the dedup
+	// claim then collapses the ~12 intra-hour session ticks into a single hourly
+	// sample, keeping the accumulator in true GB-hours.
+	volumeBucket := TickBucket(now.Unix(), int64(c.addonInterval.Seconds()))
+	volumeDedupTTL := c.addonInterval*2 + time.Minute
 	for _, vol := range ExtractVolumeTicks(parsed) {
 		stats.volumeTicks++
 		owner, ok := c.catalog.VolumeOwner(ctx, vol.VolumeID)
@@ -197,8 +206,8 @@ func (c *Collector) tick(ctx context.Context) {
 		if vol.SizeGB <= 0 {
 			continue
 		}
-		dedupKey := fmt.Sprintf("vol:%s:%d", vol.VolumeID, bucket)
-		claimed, err := c.dedup.Claim(ctx, dedupKey, dedupTTL)
+		dedupKey := fmt.Sprintf("vol:%s:%d", vol.VolumeID, volumeBucket)
+		claimed, err := c.dedup.Claim(ctx, dedupKey, volumeDedupTTL)
 		if err != nil {
 			c.log.Warn("usage tick: dedup volume", "err", err)
 			stats.errors++
@@ -209,7 +218,7 @@ func (c *Collector) tick(ctx context.Context) {
 			continue
 		}
 		cluster := c.catalog.ClusterDomain(ctx, vol.Node)
-		if err := c.applyVolumeUsage(ctx, owner.Email, cluster, vol, now, bucket, &stats); err != nil {
+		if err := c.applyVolumeUsage(ctx, owner.Email, cluster, vol, now, volumeBucket, &stats); err != nil {
 			c.log.Warn("usage tick: volume", "email", owner.Email, "volume", vol.VolumeID, "err", err)
 			stats.errors++
 		}
@@ -230,10 +239,58 @@ func (c *Collector) tick(ctx context.Context) {
 	)
 }
 
+// resolveMachineIDByVolume looks up the machine id for the given volume_id.
+// Returns "" if no active machine is found.
+func (c *Collector) resolveMachineIDByVolume(ctx context.Context, volumeID string) string {
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	q := url.Values{}
+	q.Set("select", "id")
+	q.Set("volume_id", "eq."+volumeID)
+	q.Set("status", "eq.active")
+	q.Set("order", "created_at.desc")
+	q.Set("limit", "1")
+	if err := c.pr.SelectService(ctx, "machines", q, &rows); err != nil || len(rows) == 0 {
+		return ""
+	}
+	return rows[0].ID
+}
+
+// resolveMachineIDByEmail looks up the most recently created active machine for
+// the given user email. Returns "" if no active machine is found.
+func (c *Collector) resolveMachineIDByEmail(ctx context.Context, email string) string {
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	q := url.Values{}
+	q.Set("select", "id")
+	q.Set("user_email", "eq."+email)
+	q.Set("status", "eq.active")
+	q.Set("order", "created_at.desc")
+	q.Set("limit", "1")
+	if err := c.pr.SelectService(ctx, "machines", q, &rows); err != nil || len(rows) == 0 {
+		return ""
+	}
+	return rows[0].ID
+}
+
 func (c *Collector) applySessionUsage(ctx context.Context, email, cluster string, tick SessionTick, at time.Time, bucket int64, stats *tickStats) error {
-	if err := c.pr.RPC(ctx, "increment_subscription_usage", map[string]any{
-		"p_email":   email,
-		"p_minutes": c.sessionMins,
+	// Prefer the machine associated with the session's volume; fall back to the
+	// most recent active machine for the user when no volume match is found.
+	machineID := ""
+	if tick.VolumeID != "" {
+		machineID = c.resolveMachineIDByVolume(ctx, tick.VolumeID)
+	}
+	if machineID == "" {
+		machineID = c.resolveMachineIDByEmail(ctx, email)
+	}
+	if machineID == "" {
+		return fmt.Errorf("no active machine found for session %s (email %s, volume %s)", tick.SessionID, email, tick.VolumeID)
+	}
+	if err := c.pr.RPC(ctx, "increment_machine_usage", map[string]any{
+		"p_machine_id": machineID,
+		"p_minutes":    c.sessionMins,
 	}, nil); err != nil {
 		return err
 	}
@@ -254,9 +311,16 @@ func (c *Collector) applySessionUsage(ctx context.Context, email, cluster string
 }
 
 func (c *Collector) applyVolumeUsage(ctx context.Context, email, cluster string, tick VolumeTick, at time.Time, bucket int64, stats *tickStats) error {
-	if err := c.pr.RPC(ctx, "increment_subscription_data_usage", map[string]any{
-		"p_email":    email,
-		"p_size_gb":  tick.SizeGB,
+	// Volume usage is billed against the machine that owns this volume.
+	// Skip silently when no machine is found — the volume may not yet be
+	// attached to a machine row (e.g. during provisioning).
+	machineID := c.resolveMachineIDByVolume(ctx, tick.VolumeID)
+	if machineID == "" {
+		return nil
+	}
+	if err := c.pr.RPC(ctx, "increment_machine_data_usage", map[string]any{
+		"p_machine_id": machineID,
+		"p_size_gb":    tick.SizeGB,
 	}, nil); err != nil {
 		return err
 	}

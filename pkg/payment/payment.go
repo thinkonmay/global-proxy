@@ -38,10 +38,11 @@ type Money struct {
 
 // Charge is the result of a charge operation, keyed by ID.
 type Charge struct {
-	ID          string
-	Status      Status
-	RedirectURL string          // hosted checkout redirect URL
-	Detail      json.RawMessage // provider-specific client payload (raw provider response)
+	ID          string          `json:"id"`
+	Status      Status          `json:"status"`
+	RedirectURL string          `json:"redirect_url,omitempty"` // hosted checkout redirect URL
+	QRCode      string          `json:"qr_code,omitempty"`      // QR code string for QR-based flows (PayOS, SePay)
+	Detail      json.RawMessage `json:"detail,omitempty"`       // provider-specific client payload (raw provider response)
 }
 
 // ChargeParams initiates a one-time hosted-checkout charge.

@@ -18,12 +18,12 @@ func (h *Handler) Wallet(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), billingQueryTimeout)
 	defer cancel()
 
-	var rows json.RawMessage
-	if err := h.pr.RPC(ctx, "get_pocket_balance", map[string]any{"email": email}, &rows); err != nil {
+	var balance json.RawMessage
+	if err := h.pr.RPC(ctx, "get_wallet_balance", map[string]any{"p_email": email}, &balance); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rows})
+	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": balance})
 }
 
 func (h *Handler) Subscription(w http.ResponseWriter, r *http.Request) {
@@ -36,10 +36,9 @@ func (h *Handler) Subscription(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var rows json.RawMessage
-	if err := h.pr.RPC(ctx, "get_subscription_v3", map[string]any{"email": email}, &rows); err != nil {
+	if err := h.pr.RPC(ctx, "get_machines", map[string]any{"p_email": email}, &rows); err != nil {
 		httpx.WriteUpstreamErr(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]json.RawMessage{"data": rows})
 }
-
