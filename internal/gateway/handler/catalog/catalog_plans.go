@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/httpx"
@@ -24,7 +23,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{}
 	q.Set("select", strings.Join([]string{
 		"name", "type", "extendable", "total_hours", "total_days", "credit", "active",
-		"configuration->max_duration",
+		"max_duration",
 		"policy->v4_policy->>CPU",
 		"policy->v4_policy->>RAM",
 		"policy->v4_policy->>GPU",
@@ -94,13 +93,13 @@ func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	switch view {
 	case "policy":
 		q := url.Values{}
-		q.Set("select", "total_days,disk:configuration->>disk")
+		q.Set("select", "total_days,disk")
 		q.Set("active", "eq.true")
 		q.Set("name", "eq."+planName)
 		q.Set("limit", "1")
 		var rows []struct {
 			TotalDays *float64 `json:"total_days"`
-			Disk      *string  `json:"disk"`
+			Disk      *float64 `json:"disk"`
 		}
 		if err := h.pr.Select(ctx, "plans", q, &rows); err != nil {
 			httpx.WritePostgrestErr(w, err)
@@ -112,7 +111,7 @@ func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
 		}
 		disk := float64(0)
 		if rows[0].Disk != nil {
-			disk, _ = strconv.ParseFloat(*rows[0].Disk, 64)
+			disk = *rows[0].Disk
 		}
 		httpx.WriteData(w, map[string]any{"total_days": rows[0].TotalDays, "disk": disk})
 	case "price":
@@ -166,7 +165,7 @@ func (h *Handler) GetPlan(w http.ResponseWriter, r *http.Request) {
 		q := url.Values{}
 		q.Set("select", strings.Join([]string{
 			"name", "extendable", "total_hours", "total_days", "credit",
-			"configuration->max_duration",
+			"max_duration",
 			"policy->v4_policy->>CPU",
 			"policy->v4_policy->>RAM",
 			"policy->v4_policy->>GPU",
