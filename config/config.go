@@ -374,9 +374,10 @@ func defaultCorazaSkipPaths() []string {
 		"/auth/v1/",
 		"/storage/v1/",
 		"/vault/v1/",
-		// Long-lived SSE stream: the WAF response interceptor buffers/finalizes
-		// the response and tears the stream down early, so it must bypass the WAF.
-		"/v1/sse",
+		// Long-lived per-domain SSE streams: the WAF response interceptor
+		// buffers/finalizes the response and tears the stream down early, so
+		// they must bypass the WAF.
+		"/v1/event/",
 		"/v1/metrics/push",
 		"/v1/logs/push",
 		"/v1/analytics/process/push",

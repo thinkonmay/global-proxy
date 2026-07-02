@@ -367,6 +367,43 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteData(w, true)
 }
 
+// BuyHours refills an active machine's hour quota from an hours_pack, paid from the
+// user's wallet credit. It does not extend the day window. Returns the machine's new
+// usage_limit. Errors (insufficient funds, non-active machine) surface from buy_hours.
+func (h *Handler) BuyHours(w http.ResponseWriter, r *http.Request) {
+	email, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
+	if !ok {
+		auth.WriteAuthErr(w, status, msg)
+		return
+	}
+	var body struct {
+		MachineID int64  `json:"machine_id"`
+		PackID    string `json:"pack_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.MachineID == 0 || body.PackID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "machine_id and pack_id required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), billingDepositTimeout)
+	defer cancel()
+
+	var newLimit int64
+	if err := h.pr.RPC(ctx, "buy_hours", map[string]any{
+		"p_email":      email,
+		"p_machine_id": body.MachineID,
+		"p_pack_id":    body.PackID,
+	}, &newLimit); err != nil {
+		httpx.WriteUpstreamErr(w, err)
+		return
+	}
+	httpx.WriteData(w, newLimit)
+}
+
 func (h *Handler) ValidateDiscount(w http.ResponseWriter, r *http.Request) {
 	email, ok, status, msg := auth.RequireUser(r.Context(), r, h.transport)
 	if !ok {

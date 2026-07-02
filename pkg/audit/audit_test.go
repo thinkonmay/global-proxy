@@ -39,7 +39,7 @@ func TestStatusWriterImplementsFlusher(t *testing.T) {
 		_, flusherOK = w.(http.Flusher)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/sse", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/event/payment", nil)
 	recorder := httptest.NewRecorder()
 	h.ServeHTTP(recorder, req)
 

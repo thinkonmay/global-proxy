@@ -7,12 +7,13 @@ import (
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/cors"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/event"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/cdp"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/clusterrouting"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/catalog"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/files"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/gamification"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/grant"
@@ -20,11 +21,11 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/logingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ops"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
@@ -32,7 +33,6 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/vaultproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/webhook"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/upstream"
 	"github.com/thinkonmay/global-proxy/api/pkg/admingate"
 	"github.com/thinkonmay/global-proxy/api/pkg/audit"
@@ -52,7 +52,7 @@ var ipBlacklist = []string{}
 
 func newMux(
 	h *handler.Handler,
-	hub *sse.Hub,
+	hub *event.Hub,
 	catalogH *catalog.Handler,
 	opsH *ops.Handler,
 	otaH *ota.Handler,
@@ -130,19 +130,24 @@ func newMux(
 	}
 	webhook.RegisterPaymentWebhooks(mux, payReg, eventBus)
 
-	// SSE: one authenticated stream per user; clients discriminate by msg.type
-	// and any ids carried in the payload over this single connection.
-	sseHandler := func(w http.ResponseWriter, r *http.Request) {
-		auth.PromoteQueryToken(r)
-		email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
-		if !ok {
-			auth.WriteAuthErr(w, status, msg)
-			return
+	// Per-domain SSE: one authenticated stream per (domain, user). A client
+	// subscribes by connecting to /v1/event/{domain} and the hub fans that
+	// domain's events out to the user's stream. See handler/runtime for
+	// /event/machine, served from the daemon gRPC info relay.
+	eventStream := func(domain string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			auth.PromoteQueryToken(r)
+			email, ok, status, msg := auth.RequireUser(r.Context(), r, rt)
+			if !ok {
+				auth.WriteAuthErr(w, status, msg)
+				return
+			}
+			hub.ServeFor(w, r, domain, email)
 		}
-		hub.ServeFor(w, r, email)
 	}
 	v1 := router.V1(mux)
-	v1.GET("/sse", sseHandler)
+	v1.GET("/event/payment", eventStream("payment"))
+	v1.GET("/event/volume", eventStream("volume"))
 
 	adminhost.RegisterInternalRoutes(mux, gate)
 	if gate != nil {

@@ -23,7 +23,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 
 	q := url.Values{}
 	q.Set("select", strings.Join([]string{
-		"name", "extendable", "total_hours", "total_days", "credit", "active",
+		"name", "type", "extendable", "total_hours", "total_days", "credit", "active",
 		"configuration->max_duration",
 		"policy->v4_policy->>CPU",
 		"policy->v4_policy->>RAM",
@@ -36,7 +36,14 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		"price->USD",
 		"price->IDR",
 	}, ", "))
-	q.Set("metadata->v4_hide", "is.null")
+	// Filter by plan type. Default to subscription so the plan grid excludes top-up
+	// and hours-pack products; callers request another type explicitly (e.g. hours_pack
+	// for the "buy more hours" modal).
+	planType := strings.TrimSpace(r.URL.Query().Get("type"))
+	if planType == "" {
+		planType = "subscription"
+	}
+	q.Set("type", "eq."+planType)
 	if active := strings.TrimSpace(r.URL.Query().Get("active")); active == "" || active == "true" {
 		q.Set("active", "eq.true")
 	}

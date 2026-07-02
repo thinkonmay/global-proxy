@@ -13,6 +13,7 @@ import (
 
 	"github.com/thinkonmay/global-proxy/api/config"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/adminhost"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/event"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/auth"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/billing"
@@ -26,21 +27,20 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/logingest"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/mail"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/metricsingest"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/noderuntime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ops"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/ota"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/persona"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/processanalytics"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/streammtls"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/vaultproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
-	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
-	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	eslog "github.com/thinkonmay/global-proxy/api/pkg/logingest"
@@ -95,9 +95,9 @@ func Run() error {
 		defer func() { _ = eventBus.Close() }()
 	}
 
-	hub := sse.NewHub()
+	hub := event.NewHub()
 	if eventBus != nil {
-		bus.Subscribe(eventBus, model.TopicSSE, "gateway-sse", hub.Dispatch)
+		bus.Subscribe(eventBus, model.TopicEvent, "gateway-event", hub.Dispatch)
 	}
 
 	h := handler.NewHandler(eventBus)

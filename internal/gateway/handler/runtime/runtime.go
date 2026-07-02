@@ -53,7 +53,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1 := router.V1(mux)
 	v1.Handle(http.MethodGet, "/runtime/info", h.handleInfo)
 	v1.Handle(http.MethodGet, "/runtime/volumes", h.handleListVolumes)
-	v1.Handle(http.MethodGet, "/runtime/info/sse", h.handleInfoSSE)
+	v1.Handle(http.MethodGet, "/event/machine", h.handleMachineEvent)
 	v1.Handle(http.MethodPost, "/runtime/new", h.handleNew)
 	v1.Handle(http.MethodDelete, "/runtime/close", h.handleClose)
 	v1.Handle(http.MethodPost, "/runtime/restart", h.handleRestart)
@@ -110,7 +110,9 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, info)
 }
 
-func (h *Handler) handleInfoSSE(w http.ResponseWriter, r *http.Request) {
+// handleMachineEvent serves /v1/event/machine: a live SSE stream of the user's
+// machine (worker) info, relayed from the daemon gRPC InfoStream.
+func (h *Handler) handleMachineEvent(w http.ResponseWriter, r *http.Request) {
 	// Fans out InfoStream across all clusters in user_v2; ?cluster= is ignored.
 	if !h.requireDaemon(w) {
 		return

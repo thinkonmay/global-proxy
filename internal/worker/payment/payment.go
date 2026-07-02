@@ -23,12 +23,10 @@ type Handler struct {
 	lookupEmail func(ctx context.Context, txnID string) string
 }
 
-// ssePaymentType tags a deposit-settled SSE event so the client can switch on it.
-const ssePaymentType = "payment"
-
-// paymentSSE is the SSEMsg.Data payload for a deposit settle: the client matches
-// it by transaction id. Lives here (the producer), not in the generic SSE model.
-type paymentSSE struct {
+// paymentEvent is the payload for the /v1/event/payment stream: the client
+// matches a deposit settle by transaction id. Lives here (the producer), not in
+// the generic event model.
+type paymentEvent struct {
 	TransactionID string `json:"transaction_id"`
 	Status        string `json:"status"`
 }
@@ -42,7 +40,7 @@ func New(idem *idempotency.Guard, pr *postgrest.Client) *Handler {
 }
 
 // Init subscribes the handler to the payment-event topic and keeps the bus for
-// publishing settle notifications (TopicSSE) the gateway fans out to clients.
+// publishing settle notifications (TopicEvent) the gateway fans out to clients.
 func (h *Handler) Init(eventBus bus.Client) {
 	h.eventBus = eventBus
 	bus.Subscribe(
@@ -55,10 +53,10 @@ func (h *Handler) Init(eventBus bus.Client) {
 	)
 }
 
-// notifyDepositSettled best-effort publishes a deposit's settled status to
-// TopicSSE, routed to its owner; the gateway fans it out to that user's SSE
-// stream so the client need not poll. Never fails the settle — a missed event
-// falls back to the client's poll / initial-status read.
+// notifyDepositSettled best-effort publishes a deposit's settled status to the
+// payment domain, routed to its owner; the gateway fans it out to that user's
+// /v1/event/payment stream so the client need not poll. Never fails the settle —
+// a missed event falls back to the client's poll / initial-status read.
 func (h *Handler) notifyDepositSettled(ctx context.Context, txnID, status string) {
 	if h.eventBus == nil {
 		return
@@ -71,10 +69,9 @@ func (h *Handler) notifyDepositSettled(ctx context.Context, txnID, status string
 	if email == "" {
 		return // can't route without the owner; client poll covers it
 	}
-	_ = model.PublishSSE(ctx, h.eventBus, model.SSEMsg[paymentSSE]{
-		Type:      ssePaymentType,
-		Recipient: email,
-		Data:      paymentSSE{TransactionID: txnID, Status: status},
+	_ = model.PublishEvent(ctx, h.eventBus, "payment", email, paymentEvent{
+		TransactionID: txnID,
+		Status:        status,
 	})
 }
 

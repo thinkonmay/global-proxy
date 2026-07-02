@@ -196,15 +196,11 @@ func (h *Handler) notifyJobFinished(ctx context.Context, jobID int64, success bo
 	if len(content) > 0 {
 		_ = json.Unmarshal(content, &result)
 	}
-	_ = model.PublishSSE(ctx, h.eventBus, model.SSEMsg[map[string]any]{
-		Type:      "job",
-		Recipient: email,
-		Data: map[string]any{
-			"job_id":   jobID,
-			"success":  success,
-			"finished": true,
-			"result":   result,
-		},
+	_ = model.PublishEvent(ctx, h.eventBus, "volume", email, map[string]any{
+		"job_id":   jobID,
+		"success":  success,
+		"finished": true,
+		"result":   result,
 	})
 }
 

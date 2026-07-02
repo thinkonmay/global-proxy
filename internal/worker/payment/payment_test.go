@@ -91,13 +91,14 @@ func TestChargeEventAndPollRace(t *testing.T) {
 	}
 }
 
-// On a successful charge settle, the worker publishes the status to TopicSSE
-// routed to the deposit owner, so the gateway can push it to that user's stream.
-func TestSettleChargePublishesSSE(t *testing.T) {
+// On a successful charge settle, the worker publishes the status to TopicEvent
+// on the payment domain, routed to the deposit owner, so the gateway can push it
+// to that user's /v1/event/payment stream.
+func TestSettleChargePublishesEvent(t *testing.T) {
 	eventBus := busmemory.New(nil)
 	var mu sync.Mutex
-	var got model.SSERaw
-	bus.Subscribe(eventBus, model.TopicSSE, "test-sse", func(_ context.Context, m model.SSERaw) error {
+	var got model.EventRaw
+	bus.Subscribe(eventBus, model.TopicEvent, "test-event", func(_ context.Context, m model.EventRaw) error {
 		mu.Lock()
 		got = m
 		mu.Unlock()
@@ -118,13 +119,13 @@ func TestSettleChargePublishesSSE(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if got.Type != ssePaymentType {
-		t.Fatalf("type = %q, want %q", got.Type, ssePaymentType)
+	if got.Domain != "payment" {
+		t.Fatalf("domain = %q, want %q", got.Domain, "payment")
 	}
 	if got.Recipient != "user@example.com" {
 		t.Fatalf("recipient = %q, want user@example.com", got.Recipient)
 	}
-	var p paymentSSE
+	var p paymentEvent
 	if err := json.Unmarshal(got.Data, &p); err != nil {
 		t.Fatal(err)
 	}

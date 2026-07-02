@@ -17,7 +17,7 @@ func TestIsGatewayAPIPath(t *testing.T) {
 		"/v1/billing/wallet",
 		"/v1/files/list/foo",
 		"/v1/volumes/snapshots",
-		"/v1/sse",
+		"/v1/event/payment",
 		"/health",
 		"/jobs",
 	}

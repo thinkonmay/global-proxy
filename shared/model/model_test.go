@@ -12,7 +12,7 @@ import (
 func TestTopicNames(t *testing.T) {
 	cases := map[string]string{
 		"payment":   TopicPayment.Name,
-		"sse":       TopicSSE.Name,
+		"event":     TopicEvent.Name,
 		"usage":     TopicUsage.Name,
 		"app_usage": TopicAppUsage.Name,
 		"volume":    TopicVolumeJob.Name,
@@ -21,7 +21,7 @@ func TestTopicNames(t *testing.T) {
 	}
 	want := map[string]string{
 		"payment":   "billing.payment.event",
-		"sse":       "sse",
+		"event":     "event",
 		"usage":     "usage.snapshot",
 		"app_usage": "usage.app_snapshot",
 		"volume":    "jobs.volume",
@@ -35,27 +35,27 @@ func TestTopicNames(t *testing.T) {
 	}
 }
 
-// Empty Recipient/Data must drop from the wire (omitempty) so a broadcast and a
-// targeted message are distinguishable downstream.
-func TestSSEMsgOmitsEmptyFields(t *testing.T) {
-	b, err := json.Marshal(SSERaw{Type: "notification"})
+// Empty Recipient/Data must drop from the bus envelope (omitempty) so a
+// broadcast and a targeted message are distinguishable downstream.
+func TestEventRawOmitsEmptyFields(t *testing.T) {
+	b, err := json.Marshal(EventRaw{Domain: "payment"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	s := string(b)
 	for _, banned := range []string{"recipient", "data"} {
 		if strings.Contains(s, banned) {
-			t.Errorf("broadcast SSEMsg must omit %q, got %s", banned, s)
+			t.Errorf("broadcast EventRaw must omit %q, got %s", banned, s)
 		}
 	}
-	if !strings.Contains(s, `"type":"notification"`) {
-		t.Errorf("SSEMsg missing type, got %s", s)
+	if !strings.Contains(s, `"domain":"payment"`) {
+		t.Errorf("EventRaw missing domain, got %s", s)
 	}
 }
 
-func TestSSEMsgRoundTrip(t *testing.T) {
-	in := SSERaw{
-		Type:      "payment",
+func TestEventRawRoundTrip(t *testing.T) {
+	in := EventRaw{
+		Domain:    "payment",
 		Recipient: "user@example.com",
 		Data:      json.RawMessage(`{"k":"v"}`),
 	}
@@ -63,11 +63,11 @@ func TestSSEMsgRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out SSERaw
+	var out EventRaw
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out.Type != in.Type || out.Recipient != in.Recipient {
+	if out.Domain != in.Domain || out.Recipient != in.Recipient {
 		t.Errorf("round-trip mismatch: got %+v want %+v", out, in)
 	}
 	if string(out.Data) != string(in.Data) {
