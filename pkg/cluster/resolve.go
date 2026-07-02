@@ -9,8 +9,10 @@ import (
 )
 
 // ResolveGrantDomain picks the cluster domain for addon grants and user file buckets (D30).
-// When volumeID is set, uses that volume's cluster; otherwise prefers the active
-// subscription cluster, then the user's sole cluster.
+// When volumeID is set, uses that volume's cluster; otherwise falls back to the user's
+// sole cluster. Machines no longer carry a cluster (provisioning jobs are emitted
+// cluster-less and resolved from the user's volume), so there is no subscription-cluster
+// step here.
 func ResolveGrantDomain(ctx context.Context, pr *postgrest.Client, email, volumeID string) (string, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
@@ -22,9 +24,6 @@ func ResolveGrantDomain(ctx context.Context, pr *postgrest.Client, email, volume
 			return "", err
 		}
 		return domainForClusterID(ctx, pr, cid)
-	}
-	if domain, err := subscriptionClusterDomain(ctx, pr, email); err == nil && domain != "" {
-		return domain, nil
 	}
 	cid, err := PrimaryCluster(ctx, pr, email)
 	if err != nil {
@@ -41,23 +40,6 @@ func domainForClusterID(ctx context.Context, pr *postgrest.Client, id int64) (st
 	domain := NormalizeHost(info.Domain)
 	if domain == "" {
 		return "", fmt.Errorf("cluster domain missing")
-	}
-	return domain, nil
-}
-
-func subscriptionClusterDomain(ctx context.Context, pr *postgrest.Client, email string) (string, error) {
-	var rows []struct {
-		Cluster string `json:"cluster"`
-	}
-	if err := pr.RPC(ctx, "get_subscription_v3", map[string]any{"email": email}, &rows); err != nil {
-		return "", err
-	}
-	if len(rows) == 0 {
-		return "", fmt.Errorf("no subscription")
-	}
-	domain := NormalizeHost(rows[0].Cluster)
-	if domain == "" {
-		return "", fmt.Errorf("subscription cluster empty")
 	}
 	return domain, nil
 }

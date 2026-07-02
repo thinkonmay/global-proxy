@@ -66,20 +66,20 @@ func (h *Handler) ListReferrals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A paid referral = a referred user who owns a machine (active or expired),
+	// i.e. has bought a plan. Mirrors get_user_missions_v2's referral-payment count.
 	paid := make(map[string]struct{})
 	payQ := url.Values{}
-	payQ.Set("select", "subscription!inner(user)")
-	payQ.Set("subscription.user", "in.("+quoteInFilter(referred)+")")
-	payQ.Set("verified_at", "not.is.null")
+	payQ.Set("select", "user_email")
+	payQ.Set("user_email", "in.("+quoteInFilter(referred)+")")
+	payQ.Set("status", "in.(active,expired)")
 	var payments []struct {
-		Subscription struct {
-			User string `json:"user"`
-		} `json:"subscription"`
+		UserEmail string `json:"user_email"`
 	}
-	_ = h.pr.Select(ctx, "entitlements", payQ, &payments)
+	_ = h.pr.Select(ctx, "machines", payQ, &payments)
 	for _, p := range payments {
-		if p.Subscription.User != "" {
-			paid[p.Subscription.User] = struct{}{}
+		if p.UserEmail != "" {
+			paid[p.UserEmail] = struct{}{}
 		}
 	}
 

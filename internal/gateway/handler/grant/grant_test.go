@@ -17,9 +17,13 @@ func TestStorageGrantSuccess(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/rpc/get_subscription_v3":
+		case "/user_v2":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"cluster": "node1.thinkmay.net"},
+				{"cluster_id": 1, "volume_id": "vol-1"},
+			})
+		case "/clusters":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 1, "domain": "node1.thinkmay.net"},
 			})
 		case "/rpc/grant_bucket_access_v1":
 			_ = json.NewEncoder(w).Encode(map[string]any{"bucket_name": "test-bucket"})
@@ -70,9 +74,13 @@ func TestStorageGrantGlobalUnavailable(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/rpc/get_subscription_v3":
+		case "/user_v2":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"cluster": "node1.thinkmay.net"},
+				{"cluster_id": 1, "volume_id": "vol-1"},
+			})
+		case "/clusters":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 1, "domain": "node1.thinkmay.net"},
 			})
 		case "/rpc/grant_bucket_access_v1":
 			http.Error(w, "busy", http.StatusServiceUnavailable)

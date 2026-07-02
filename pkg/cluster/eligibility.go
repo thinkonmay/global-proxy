@@ -28,11 +28,11 @@ func UserEligibleForRuntimeStream(ctx context.Context, pr *postgrest.Client, ema
 		return true, nil
 	}
 
-	var subs []struct {
-		Cluster string `json:"cluster"`
+	var machines []struct {
+		ID int64 `json:"id"`
 	}
-	if err := pr.RPC(ctx, "get_subscription_v3", map[string]any{"email": email}, &subs); err != nil {
+	if err := pr.RPC(ctx, "get_machines", map[string]any{"p_email": email}, &machines); err != nil {
 		return false, err
 	}
-	return len(subs) > 0, nil
+	return len(machines) > 0, nil
 }

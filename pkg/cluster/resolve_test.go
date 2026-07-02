@@ -38,12 +38,18 @@ func TestResolveGrantDomainByVolume(t *testing.T) {
 	}
 }
 
-func TestResolveGrantDomainFromSubscription(t *testing.T) {
+// With no volume specified, resolution falls back to the user's sole cluster
+// (machines no longer carry a cluster, so there is no subscription-cluster path).
+func TestResolveGrantDomainFromPrimaryCluster(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/rpc/get_subscription_v3":
+		case "/user_v2":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"cluster": "saigon2.thinkmay.net"},
+				{"cluster_id": 5, "volume_id": "vol-x"},
+			})
+		case "/clusters":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 5, "domain": "saigon2.thinkmay.net"},
 			})
 		default:
 			http.NotFound(w, r)

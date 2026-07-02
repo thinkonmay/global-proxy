@@ -13,8 +13,8 @@ import (
 
 func TestUserEligibleForRuntimeStreamWithVolume(t *testing.T) {
 	pr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/rpc/get_subscription_v3") {
-			t.Fatal("subscription RPC should not run when volumes exist")
+		if strings.Contains(r.URL.Path, "/rpc/get_machines") {
+			t.Fatal("machines RPC should not run when volumes exist")
 		}
 		_, _ = w.Write([]byte(`[{"cluster_id":1,"volume_id":"vol-1"}]`))
 	}))
@@ -33,13 +33,13 @@ func TestUserEligibleForRuntimeStreamWithVolume(t *testing.T) {
 	}
 }
 
-func TestUserEligibleForRuntimeStreamWithSubscriptionOnly(t *testing.T) {
+func TestUserEligibleForRuntimeStreamWithMachineOnly(t *testing.T) {
 	pr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/user_v2"):
 			_, _ = w.Write([]byte("[]"))
-		case strings.Contains(r.URL.Path, "/rpc/get_subscription_v3"):
-			_, _ = w.Write([]byte(`[{"cluster":"haiphong.thinkmay.net"}]`))
+		case strings.Contains(r.URL.Path, "/rpc/get_machines"):
+			_, _ = w.Write([]byte(`[{"id":1}]`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -55,7 +55,7 @@ func TestUserEligibleForRuntimeStreamWithSubscriptionOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !ok {
-		t.Fatal("expected eligible with subscription")
+		t.Fatal("expected eligible with a machine")
 	}
 }
 
@@ -64,7 +64,7 @@ func TestUserEligibleForRuntimeStreamNeither(t *testing.T) {
 		switch {
 		case strings.Contains(r.URL.Path, "/user_v2"):
 			_, _ = w.Write([]byte("[]"))
-		case strings.Contains(r.URL.Path, "/rpc/get_subscription_v3"):
+		case strings.Contains(r.URL.Path, "/rpc/get_machines"):
 			_, _ = w.Write([]byte("[]"))
 		default:
 			http.NotFound(w, r)
@@ -81,6 +81,6 @@ func TestUserEligibleForRuntimeStreamNeither(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ok {
-		t.Fatal("expected ineligible without subscription or volume")
+		t.Fatal("expected ineligible without a machine or volume")
 	}
 }

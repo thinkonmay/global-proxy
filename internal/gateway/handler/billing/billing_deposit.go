@@ -203,12 +203,15 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionResult := sessionRows[0]
 
+	// Response is a single-element array {id,data}: the client destructures [{...}] and
+	// the shared gateway client unwraps any top-level {data:…} as an envelope, so a bare
+	// object would be misread — an array sidesteps both.
 	// If the session was reused and charge_data is already stored, return it immediately.
 	if sessionResult.Reused && len(sessionResult.ChargeData) > 0 && string(sessionResult.ChargeData) != "null" {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, []map[string]any{{
 			"id":   sessionResult.ID,
 			"data": sessionResult.ChargeData,
-		})
+		}})
 		return
 	}
 
@@ -250,10 +253,10 @@ func (h *Handler) CreateDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, []map[string]any{{
 		"id":   sessionResult.ID,
 		"data": json.RawMessage(chBytes),
-	})
+	}})
 }
 
 func (h *Handler) DepositStatus(w http.ResponseWriter, r *http.Request) {
