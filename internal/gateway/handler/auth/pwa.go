@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// PWAUser is the authenticated subject for legacy /api/pwa/* routes.
+// PWAUser is the authenticated subject for PWA-facing routes (search/ai, persona reads).
 type PWAUser struct {
 	Email  string
 	UserID string

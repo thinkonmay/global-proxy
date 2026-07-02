@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/router"
 )
 
@@ -22,10 +23,10 @@ var internalOnlySupabaseMsg = []byte(`{"message":"Supabase data APIs are interna
 // RegisterKong mounts public-edge Supabase-related routes on thinkmay-gateway.
 // Internal Kong (compose network) serves /rest/v1, /storage/v1, and /pg for
 // Studio and backend services; the public hostname does not proxy them (D22).
-func RegisterKong(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper) {
+func RegisterKong(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper, rec *audit.Recorder) {
 	registerRemovedPublicRPCRoutes(mux)
 
-	gotrueEnabled := registerGoTrueRoute(mux, cfg, rt)
+	gotrueEnabled := registerGoTrueRoute(mux, cfg, rt, rec)
 	registerDeniedInternalSupabasePaths(mux)
 	registerRemovedRoutes(mux, gotrueEnabled)
 	registerBlockedRoutes(mux)

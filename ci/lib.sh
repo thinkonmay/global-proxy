@@ -20,6 +20,7 @@ ci_gateway_test_packages() {
 ./config
 ./internal/gateway
 ./internal/gateway/handler
+./internal/gateway/handler/streammtls
 ./internal/worker
 ./internal/worker/usage
 ./pkg/bus
@@ -27,6 +28,8 @@ ci_gateway_test_packages() {
 ./pkg/bus/nats
 ./pkg/cache
 ./pkg/cache/memory
+./pkg/audit
+./pkg/streammtls
 ./pkg/admingate
 ./pkg/metricsagg
 ./pkg/usage

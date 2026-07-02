@@ -5,8 +5,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/thinkshare-daemon/persistent"
+	"google.golang.org/grpc/metadata"
 )
+
+func traceCtx(ctx context.Context) context.Context {
+	return audit.OutgoingGRPCMetadata(ctx)
+}
 
 // Daemon returns a gRPC client for clusterID.
 func (c *Client) Daemon(ctx context.Context, clusterID int64) (persistent.DaemonClient, error) {
@@ -28,15 +34,20 @@ func (c *Client) NewStream(ctx context.Context, clusterID int64, session *persis
 	if err != nil {
 		return nil, err
 	}
-	return cli.NewStream(ctx, session)
+	return cli.NewStream(traceCtx(ctx), session)
 }
 
-// CloseSession ends a VM session on clusterID.
+// CloseSession ends a VM session on clusterID with user-close audit metadata (AUD-T2).
 func (c *Client) CloseSession(ctx context.Context, clusterID int64, session *persistent.WorkerSession) (*persistent.WorkerInfor, error) {
 	cli, err := c.Daemon(ctx, clusterID)
 	if err != nil {
 		return nil, err
 	}
+	ctx = traceCtx(ctx)
+	ctx = metadata.AppendToOutgoingContext(ctx,
+		"x-session-close-initiator", "user",
+		"x-session-audit-event-type", "session.user_close",
+	)
 	return cli.Close(ctx, session)
 }
 
@@ -46,7 +57,7 @@ func (c *Client) RestartSession(ctx context.Context, clusterID int64, session *p
 	if err != nil {
 		return err
 	}
-	_, err = cli.Restart(ctx, session)
+	_, err = cli.Restart(traceCtx(ctx), session)
 	return err
 }
 
@@ -56,7 +67,7 @@ func (c *Client) AllocateStream(ctx context.Context, clusterID int64, req *persi
 	if err != nil {
 		return nil, err
 	}
-	return cli.Allocate(ctx, req)
+	return cli.Allocate(traceCtx(ctx), req)
 }
 
 // ListSnapshots lists MFS snapshots for a volume.
@@ -65,7 +76,7 @@ func (c *Client) ListSnapshots(ctx context.Context, clusterID int64, volumeID st
 	if err != nil {
 		return nil, err
 	}
-	return cli.ListSnapshots(ctx, &persistent.SnapshotRequest{VolumeId: volumeID})
+	return cli.ListSnapshots(traceCtx(ctx), &persistent.SnapshotRequest{VolumeId: volumeID})
 }
 
 // RestoreSnapshot restores a named snapshot.
@@ -74,7 +85,7 @@ func (c *Client) RestoreSnapshot(ctx context.Context, clusterID int64, volumeID,
 	if err != nil {
 		return err
 	}
-	_, err = cli.RestoreSnapshot(ctx, &persistent.RestoreRequest{
+	_, err = cli.RestoreSnapshot(traceCtx(ctx), &persistent.RestoreRequest{
 		VolumeId:     volumeID,
 		SnapshotName: snapshotName,
 	})
@@ -101,7 +112,7 @@ func (c *Client) DeallocateVolume(ctx context.Context, clusterID int64, volumeID
 	if err != nil {
 		return err
 	}
-	_, err = cli.Deallocate(ctx, source)
+	_, err = cli.Deallocate(traceCtx(ctx), source)
 	return err
 }
 
@@ -114,7 +125,7 @@ func (c *Client) SnapshotAll(ctx context.Context, clusterID int64, volumeIDs []s
 	if err != nil {
 		return err
 	}
-	_, err = cli.SnapshotAll(ctx, &persistent.SnapshotAllRequest{VolumeIds: volumeIDs})
+	_, err = cli.SnapshotAll(traceCtx(ctx), &persistent.SnapshotAllRequest{VolumeIds: volumeIDs})
 	return err
 }
 
@@ -124,7 +135,7 @@ func (c *Client) SnapshotVolume(ctx context.Context, clusterID int64, volumeID s
 	if err != nil {
 		return err
 	}
-	_, err = cli.SnapshotVolume(ctx, &persistent.SnapshotRequest{VolumeId: volumeID})
+	_, err = cli.SnapshotVolume(traceCtx(ctx), &persistent.SnapshotRequest{VolumeId: volumeID})
 	return err
 }
 
@@ -134,7 +145,7 @@ func (c *Client) InfoStream(ctx context.Context, clusterID int64) (persistent.Da
 	if err != nil {
 		return nil, err
 	}
-	return cli.InfoStream(ctx, &persistent.Empty{})
+	return cli.InfoStream(traceCtx(ctx), &persistent.Empty{})
 }
 
 // Rename renames a volume on clusterID.
@@ -143,7 +154,7 @@ func (c *Client) Rename(ctx context.Context, clusterID int64, req *persistent.Re
 	if err != nil {
 		return err
 	}
-	_, err = cli.Rename(ctx, req)
+	_, err = cli.Rename(traceCtx(ctx), req)
 	return err
 }
 
@@ -153,7 +164,7 @@ func (c *Client) Deallocate(ctx context.Context, clusterID int64, vol *persisten
 	if err != nil {
 		return err
 	}
-	_, err = cli.Deallocate(ctx, vol)
+	_, err = cli.Deallocate(traceCtx(ctx), vol)
 	return err
 }
 

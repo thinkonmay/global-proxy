@@ -39,6 +39,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	v1.GET("/gamification/heatmap", h.Heatmap)
 	v1.GET("/gamification/stars/leaderboard", h.Leaderboard)
 	v1.GET("/gamification/rank-rewards", h.RankRewards)
+	v1.POST("/gamification/referrals", h.ListReferrals)
 }
 
 func (h *Handler) ListMissions(w http.ResponseWriter, r *http.Request) {

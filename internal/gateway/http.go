@@ -28,12 +28,14 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/streammtls"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/vaultproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/webhook"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/upstream"
 	"github.com/thinkonmay/global-proxy/api/pkg/admingate"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	registry "github.com/thinkonmay/global-proxy/api/pkg/payment/registry"
@@ -60,6 +62,7 @@ func newMux(
 	grants *grant.Handler,
 	filesH *files.Handler,
 	runtimeH *runtime.Handler,
+	streamMTLSH *streammtls.Handler,
 	personaHTTP *persona.Handler,
 	nodeRuntime *noderuntime.Handler,
 	vaultProxy *vaultproxy.Handler,
@@ -78,6 +81,7 @@ func newMux(
 	gate *admingate.Gate,
 	payReg *registry.Registry,
 	eventBus bus.Client,
+	auditRec *audit.Recorder,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -116,6 +120,9 @@ func newMux(
 	grants.Register(mux)
 	filesH.Register(mux)
 	runtimeH.Register(mux)
+	if streamMTLSH != nil {
+		streamMTLSH.Register(mux)
+	}
 	personaHTTP.Register(mux)
 	nodeRuntime.Register(mux)
 	if vaultProxy != nil {
@@ -139,12 +146,15 @@ func newMux(
 
 	adminhost.RegisterInternalRoutes(mux, gate)
 	if gate != nil {
+		gate.SetRecorder(auditRec)
 		gate.RegisterPublicAccessRoutes(mux)
 	}
 	upstream.RegisterRybbitIngest(mux, cfg, rt)
-	upstream.RegisterKong(mux, cfg, rt)
+	upstream.RegisterKong(mux, cfg, rt, auditRec)
 
 	chain := []guard.Middleware{
+		audit.Middleware(auditRec),
+		auth.UserContextMiddleware(rt),
 		guard.Denylist(guard.IPSet(ipBlacklist...)),
 		cors.Middleware(cfg),
 		guard.Allowlist(guard.IPSet(cfg.WAF.AllowedIPs...)),

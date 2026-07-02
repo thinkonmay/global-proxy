@@ -2,6 +2,8 @@ package metricsagg
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +67,40 @@ func TestRequireVirtdaemonMTLS(t *testing.T) {
 	handler(rec, req)
 	if rec.Code != http.StatusUnauthorized || called {
 		t.Fatalf("expected 401 without TLS client cert, got %d called=%v", rec.Code, called)
+	}
+}
+
+// TestRequireVirtdaemonMTLSAllowsPeerCert: a request that carries a verified
+// peer certificate (gateway TLS listener used VerifyClientCertIfGiven against the
+// Vault CA) passes through to the protected handler.
+func TestRequireVirtdaemonMTLSAllowsPeerCert(t *testing.T) {
+	called := false
+	handler := RequireVirtdaemonMTLS(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{{}},
+	}
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	if rec.Code != http.StatusAccepted || !called {
+		t.Fatalf("expected 202 with verified peer cert, got %d called=%v", rec.Code, called)
+	}
+}
+
+// TestRequireVirtdaemonMTLSRejectsNoTLS: a plaintext request (no TLS state) is rejected.
+func TestRequireVirtdaemonMTLSRejectsNoTLS(t *testing.T) {
+	handler := RequireVirtdaemonMTLS(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.TLS = &tls.ConnectionState{} // TLS but no client cert presented
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with TLS but no peer cert, got %d", rec.Code)
 	}
 }
 

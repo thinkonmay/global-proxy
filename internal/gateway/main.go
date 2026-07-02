@@ -34,11 +34,13 @@ import (
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/pwa"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/runtime"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/store"
+	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/streammtls"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/vaultproxy"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/handler/volume"
 	"github.com/thinkonmay/global-proxy/api/internal/gateway/sse"
 	"github.com/thinkonmay/global-proxy/api/pkg/bus"
 	busnats "github.com/thinkonmay/global-proxy/api/pkg/bus/nats"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/daemonclient"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 	eslog "github.com/thinkonmay/global-proxy/api/pkg/logingest"
@@ -49,6 +51,7 @@ import (
 	"github.com/thinkonmay/global-proxy/api/pkg/storj"
 	"github.com/thinkonmay/global-proxy/api/pkg/usage"
 	"github.com/thinkonmay/global-proxy/api/pkg/vaultpki"
+	"github.com/thinkonmay/global-proxy/api/pkg/vaultsecrets"
 	"github.com/thinkonmay/global-proxy/api/shared/model"
 )
 
@@ -65,6 +68,13 @@ func Run() error {
 	}
 	config.ApplyGatewayLLMConfig(cfg)
 	cfg.SetupLogger()
+
+	if jwtSecret, err := vaultsecrets.LoadGoTrueJWTSecret(context.Background(), cfg.Upstreams.Vault); err != nil {
+		return fmt.Errorf("vault gotrue jwt: %w", err)
+	} else if jwtSecret != "" {
+		cfg.Supabase.JWTSecret = jwtSecret
+		slog.Info("loaded GoTrue JWT secret from Vault AppRole")
+	}
 
 	bt := guard.New(nil, guard.Config{MaxFailures: 5, Cooldown: 30 * time.Second, MaxConcurrent: 64})
 
@@ -209,7 +219,21 @@ func Run() error {
 	routingHTTP := clusterrouting.New(routingStore, eventBus, routingWatch)
 	routingHTTP.InitSubscriptions()
 
-	mux := newMux(h, hub, catalogHTTP, opsHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus)
+	auditRec := audit.NewRecorder(cfg.Logs.ElasticsearchURL)
+	defer auditRec.Close()
+
+	streamMTLSHTTP := streammtls.New(streammtls.Config{
+		VaultURL:      cfg.Upstreams.Vault,
+		VaultUsername: cfg.Runtime.Ops.VaultUsername,
+		VaultPassword: cfg.Runtime.Ops.VaultPassword,
+		PKIMount:      cfg.Runtime.Grpc.PKIMount,
+		PKIRole:       cfg.Runtime.Stream.PKIRole,
+		CertTTL:       cfg.Runtime.Stream.CertTTL,
+		Recorder:      auditRec,
+		Transport:     bt,
+	})
+
+	mux := newMux(h, hub, catalogHTTP, opsHTTP, otaHTTP, gamificationHTTP, billingHTTP, storeHTTP, grantsHTTP, filesHTTP, runtimeHTTP, streamMTLSHTTP, personaHTTP, nodeRuntimeHTTP, vaultProxyHTTP, pwaHTTP, volumeHTTP, mailHTTP, jobsHTTP, metricsIngest, processAnalyticsHTTP, cdpHTTP, logIngest, routingHTTP, cfg, bt, coraza, gate, payReg, eventBus, auditRec)
 
 	clientCAs, err := virtdaemonClientCAs(context.Background(), cfg)
 	if err != nil {

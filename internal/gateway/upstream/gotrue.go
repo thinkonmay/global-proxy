@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thinkonmay/global-proxy/api/config"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/guard"
 )
 
@@ -22,7 +23,7 @@ var authRateLimit = guard.RateLimitConfig{RPS: 10, Burst: 20}
 // registerGoTrueRoute proxies public /auth/v1/* to internal Kong (D28 / Track C1).
 // Traffic MUST NOT bypass Kong to reach GoTrue directly.
 // Returns true when the route was registered.
-func registerGoTrueRoute(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper) bool {
+func registerGoTrueRoute(mux *http.ServeMux, cfg *config.Config, rt http.RoundTripper, rec *audit.Recorder) bool {
 	raw := strings.TrimSpace(cfg.Upstreams.Kong)
 	if raw == "" {
 		raw = strings.TrimSpace(cfg.Upstreams.GoTrue) // backward compat
@@ -47,7 +48,7 @@ func registerGoTrueRoute(mux *http.ServeMux, cfg *config.Config, rt http.RoundTr
 
 	chain := guard.Chain(
 		timed(proxy, authProxyTimeout),
-		authAuditLog,
+		authAuditLog(rec),
 		guard.RateLimit(authRateLimit),
 	)
 
@@ -73,15 +74,11 @@ func isDirectGoTrueUpstream(raw string) bool {
 	return host == "auth" || strings.HasPrefix(host, "supabase-auth")
 }
 
-func authAuditLog(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("auth_proxy",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"remote", r.RemoteAddr,
-			"forwarded_for", r.Header.Get("X-Forwarded-For"),
-			"user_agent", r.Header.Get("User-Agent"),
-		)
-		next.ServeHTTP(w, r)
-	})
+func authAuditLog(rec *audit.Recorder) guard.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			audit.RecordAuthProxy(rec, r)
+			next.ServeHTTP(w, r)
+		})
+	}
 }

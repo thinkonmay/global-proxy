@@ -10,6 +10,7 @@ import (
 
 	"github.com/thinkonmay/thinkshare-daemon/persistent"
 	"github.com/thinkonmay/global-proxy/api/pkg/cluster"
+	"github.com/thinkonmay/global-proxy/api/pkg/audit"
 	"github.com/thinkonmay/global-proxy/api/pkg/postgrest"
 	"github.com/thinkonmay/global-proxy/api/pkg/vaultpki"
 	"github.com/thinkonmay/global-proxy/api/pkg/workerinfor"
@@ -176,7 +177,7 @@ func (c *Client) infoCluster(ctx context.Context, clusterID int64) (*persistent.
 	if err != nil {
 		return nil, err
 	}
-	return persistent.NewDaemonClient(conn).Info(ctx, &persistent.Empty{})
+	return persistent.NewDaemonClient(conn).Info(audit.OutgoingGRPCMetadata(ctx), &persistent.Empty{})
 }
 
 func (c *Client) conn(ctx context.Context, clusterID int64) (*grpc.ClientConn, error) {

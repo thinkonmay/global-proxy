@@ -52,6 +52,7 @@ func New(cfg Config) *Handler {
 func (h *Handler) Register(mux *http.ServeMux) {
 	v1 := router.V1(mux)
 	v1.Handle(http.MethodGet, "/runtime/info", h.handleInfo)
+	v1.Handle(http.MethodGet, "/runtime/volumes", h.handleListVolumes)
 	v1.Handle(http.MethodGet, "/runtime/info/sse", h.handleInfoSSE)
 	v1.Handle(http.MethodPost, "/runtime/new", h.handleNew)
 	v1.Handle(http.MethodDelete, "/runtime/close", h.handleClose)
